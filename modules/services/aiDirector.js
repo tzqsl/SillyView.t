@@ -111,6 +111,12 @@ export class AIDirector {
                 contextLines.push(`- ${assetDef.name} (${code}): ${assetData.current_price.toFixed(4)}`);
             }
         }
+
+        const marketWorldbookContext = await this.data.getMarketWorldbookContext();
+        if (marketWorldbookContext) {
+            contextLines.push('附加市场世界书上下文（必须纳入市场叙事与判断）:');
+            contextLines.push(marketWorldbookContext);
+        }
         
         // NEW: Macro Event System Integration
         if (globalMarket && globalMarket.current_time_index % 2 === 0) {

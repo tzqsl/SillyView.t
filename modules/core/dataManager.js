@@ -268,6 +268,40 @@ export class DataManager {
         }));
     }
 
+    async getMarketWorldbookContext() {
+        const targetNames = this.config.market_context_worldbooks || [];
+        if (targetNames.length === 0) return '';
+
+        try {
+            const charBooks = await this.th.getCharWorldbookNames('current');
+            const attachedNames = [
+                charBooks.primary,
+                ...(charBooks.additional || []),
+            ].filter(Boolean);
+
+            const allWorldbooks = await this.th.getWorldbookNames();
+            const namesToRead = targetNames.filter(name => attachedNames.includes(name) || allWorldbooks.includes(name));
+
+            const chunks = [];
+            for (const worldbookName of namesToRead) {
+                const entries = await this.th.getWorldbook(worldbookName);
+                const enabledEntries = entries.filter(entry => entry.enabled && entry.content?.trim());
+                const sourceEntries = enabledEntries.length > 0
+                    ? enabledEntries
+                    : entries.filter(entry => entry.content?.trim());
+
+                sourceEntries.forEach(entry => {
+                    chunks.push(`### ${worldbookName} / ${entry.name}\n${entry.content.trim()}`);
+                });
+            }
+
+            return chunks.join('\n\n').slice(0, 12000);
+        } catch (error) {
+            this.logger.warn('读取市场附加世界书失败:', error);
+            return '';
+        }
+    }
+
     getActionsThisTurn() {
         const portfolio = this._stateCache.get(this.config.world_book_keys.player_portfolio);
         return portfolio?.actions_this_turn || [];

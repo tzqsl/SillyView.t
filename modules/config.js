@@ -165,6 +165,7 @@ export const SillyViewConfig = {
     // Expose asset definitions for other modules
     asset_definitions: ASSET_DEFINITIONS,
     background_ai_defaults: DEFAULT_BACKGROUND_AI_SETTINGS,
+    market_context_worldbooks: ['SillyView_fx'],
     
     macro_event_system: MACRO_EVENT_SYSTEM,
 
