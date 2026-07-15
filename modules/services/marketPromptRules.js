@@ -44,11 +44,17 @@ function getBlockRank(block, originalIndex) {
 }
 
 export function sortMarketPromptText(text) {
-    return splitPromptBlocks(text)
+    return splitPromptBlocks(stripNonMarketPromptSections(text))
         .map((block, index) => ({ block, ...getBlockRank(block, index) }))
         .sort((a, b) => (a.rank - b.rank) || (a.originalIndex - b.originalIndex))
         .map(item => item.block)
         .join('\n\n');
+}
+
+function stripNonMarketPromptSections(text) {
+    return text
+        .replace(/\n## 3\. 生活与财务指令 \(Life & Finance Commands\)[\s\S]*?(?=\n---\n\n## 4\. 核心原则)/, '\n')
+        .replace(/\n#### 初始设置示例:[\s\S]*$/m, '');
 }
 
 export async function loadMarketDirectorRules() {

@@ -42,6 +42,7 @@ export class DataManager {
         if (this.hasGameBook) {
             this.logger.log(`游戏世界书 "${lorebookName}" 已找到，正在加载数据...`);
             await this.loadAllEntries(lorebookName);
+            await this.ensureLifeWorldbookBound();
             this.ui.renderMainInterface();
         } else {
             this.logger.log("未找到游戏世界书，渲染创建界面。");
@@ -156,6 +157,7 @@ export class DataManager {
         });
 
         await this.th.createOrReplaceWorldbook(lorebookName, entriesTemplate);
+        await this.ensureLifeWorldbookBound();
 
         const charBooks = await this.th.getCharWorldbookNames('current');
         if (!charBooks.additional.includes(lorebookName)) {
@@ -172,6 +174,31 @@ export class DataManager {
         this.hasGameBook = true;
         await this.updateAIContext();
         this.ui.renderMainInterface();
+    }
+
+    async ensureLifeWorldbookBound() {
+        const worldbookName = this.config.life_worldbook_name;
+        const entries = this.config.life_worldbook_entries || [];
+        if (!worldbookName || entries.length === 0) return;
+
+        try {
+            const allBooks = await this.th.getWorldbookNames();
+            if (!allBooks.includes(worldbookName)) {
+                await this.th.createWorldbook(worldbookName, entries);
+                this.logger.success(`已创建生活财务世界书 "${worldbookName}"。`);
+            }
+
+            const charBooks = await this.th.getCharWorldbookNames('current');
+            if (!charBooks.additional.includes(worldbookName)) {
+                await this.th.rebindCharWorldbooks('current', {
+                    primary: charBooks.primary,
+                    additional: [...charBooks.additional, worldbookName],
+                });
+                this.logger.success(`已将 "${worldbookName}" 绑定到当前角色卡附加世界书。`);
+            }
+        } catch (error) {
+            this.logger.warn(`创建或绑定生活财务世界书 "${worldbookName}" 失败:`, error);
+        }
     }
     
     async resetAllData() {
