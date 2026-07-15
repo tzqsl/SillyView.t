@@ -10,6 +10,7 @@ import { SillyViewConfig } from './modules/config.js';
 import { DataManager } from './modules/core/dataManager.js';
 import { CommandParser } from './modules/core/commandParser.js';
 import { AIDirector } from './modules/services/aiDirector.js';
+import { BackgroundAIService } from './modules/services/backgroundAIService.js';
 import { MarketSimulator } from './modules/services/marketSimulator.js';
 import { PositionCalculator } from './modules/services/positionCalculator.js';
 import { UIRenderer } from './modules/ui/uiRenderer.js';
@@ -73,6 +74,7 @@ async function mainInitialize() {
         const positionCalculator = new PositionCalculator(baseDependencies);
         const data = new DataManager({ ...baseDependencies, positionCalculator });
         const marketSimulator = new MarketSimulator({ ...baseDependencies, data });
+        const backgroundAI = new BackgroundAIService({ ...baseDependencies, data });
 
         const tradeView = new TradeView({ ...baseDependencies, data, positionCalculator });
         const assetsView = new AssetsView({ ...baseDependencies, data, positionCalculator });
@@ -103,6 +105,7 @@ async function mainInitialize() {
             events,
             commandParser,
             aiDirector,
+            backgroundAI,
             marketSimulator,
             positionCalculator,
             modals,

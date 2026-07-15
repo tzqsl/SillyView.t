@@ -111,7 +111,7 @@ export class EventHandler {
 
         // Sidebar Delegated Events
         if (sidebar) {
-            sidebar.addEventListener('click', (event) => {
+            sidebar.addEventListener('click', async (event) => {
                 const target = event.target;
                 const tabButton = target.closest('.sv-sidebar-tab');
                 const loanBtn = target.closest('#sv-loan-btn');
@@ -119,6 +119,7 @@ export class EventHandler {
                 const buyBtn = target.closest('#sillyview-buy-btn');
                 const sellBtn = target.closest('#sillyview-sell-btn');
                 const resetBtn = target.closest('#sv-reset-data-btn');
+                const saveBgAiBtn = target.closest('#sv-save-bg-ai-btn');
 
                 if (tabButton) {
                     this.ui.switchSidebarTab(tabButton.dataset.tab);
@@ -130,6 +131,14 @@ export class EventHandler {
                     this.ui.initiateTrade('buy');
                 } else if (sellBtn) {
                     this.ui.initiateTrade('sell');
+                } else if (saveBgAiBtn) {
+                    const settings = this.ui.collectBackgroundAISettings();
+                    await this.data.updateState(this.dependencies.config.world_book_keys.config, config => {
+                        config.background_ai = settings;
+                        return config;
+                    });
+                    this.dependencies.win.toastr.success("后台模型设置已保存。");
+                    this.ui.renderAll();
                 } else if (resetBtn) {
                     this.modals.showConfirmation(
                         `<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: var(--red-400);">确认重置？</h3><p>此操作将永久删除当前角色的所有SillyView数据并重新开始。此操作无法撤销。</p>`,

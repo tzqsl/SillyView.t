@@ -81,6 +81,17 @@ const ASSET_DEFINITIONS = {
     }
 };
 
+const DEFAULT_BACKGROUND_AI_SETTINGS = {
+    enabled: false,
+    source: 'openai',
+    apiurl: '',
+    key: '',
+    model: '',
+    proxy_preset: '',
+    temperature: 0.7,
+    max_tokens: 600,
+};
+
 export const MACRO_EVENT_SYSTEM = {
   keywords: ["随机性", "市场事件", "利好", "利空", "判定", "roll", "宏观"],
   core_mechanism: {
@@ -153,6 +164,7 @@ export const SillyViewConfig = {
 
     // Expose asset definitions for other modules
     asset_definitions: ASSET_DEFINITIONS,
+    background_ai_defaults: DEFAULT_BACKGROUND_AI_SETTINGS,
     
     macro_event_system: MACRO_EVENT_SYSTEM,
 
@@ -175,6 +187,7 @@ export const SillyViewConfig = {
         config: {
             version: '2.1.0',
             max_hourly_records: 240,
+            background_ai: { ...DEFAULT_BACKGROUND_AI_SETTINGS },
             // The list of assets to be created at the start of a new game
             available_assets: Object.keys(ASSET_DEFINITIONS)
         },

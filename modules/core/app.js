@@ -25,6 +25,7 @@ export class SillyViewApp {
         this.events = null;
         this.commandParser = null;
         this.aiDirector = null;
+        this.backgroundAI = null;
         this.marketSimulator = null;
         this.positionCalculator = null;
         this.logger = null;
@@ -39,6 +40,7 @@ export class SillyViewApp {
         this.events = dependencies.events;
         this.commandParser = dependencies.commandParser;
         this.aiDirector = dependencies.aiDirector;
+        this.backgroundAI = dependencies.backgroundAI;
         this.marketSimulator = dependencies.marketSimulator;
         this.positionCalculator = dependencies.positionCalculator;
         this.tradeView = dependencies.tradeView;
@@ -113,7 +115,10 @@ export class SillyViewApp {
         const messages = this.th.getChatMessages(msgId);
         if (!messages || messages.length === 0 || messages[0].is_user) { return; }
         const msg = messages[0].message;
+        return await this.processGeneratedMarketText(msg);
+    }
 
+    async processGeneratedMarketText(msg) {
         // **FIX**: Check if this turn started as a key moment BEFORE processing.
         const marketBefore = this.data.getState(SillyViewConfig.world_book_keys.global_market);
         const wasKeyMoment = marketBefore && marketBefore.remaining_candles <= 0;
@@ -327,10 +332,11 @@ export class SillyViewApp {
         const finalPrompt = await this.aiDirector.buildAdvanceTurnPrompt(actionsThisTurn, activeAssetsForAI, this.ui.currentAsset, currentTimeframe);
 
         try {
-            await this.th.triggerSlash(`/setinput ${JSON.stringify(finalPrompt)}`);
-            this.st_context.generate();
+            const marketResponse = await this.backgroundAI.generateMarketResponse(finalPrompt);
+            await this.processGeneratedMarketText(marketResponse);
         } catch (e) {
-            Logger.error("Error triggering AI for next turn:", e);
+            Logger.error("Error running background AI for next turn:", e);
+            this.dependencies.win.toastr.error(`后台市场模型生成失败: ${e.message || e}`);
             this.ui.tradeView.updateActionButtonsState(false, false);
         }
         
@@ -339,7 +345,7 @@ export class SillyViewApp {
         
         await this.data.recordAssetHistory();
         await this.data.saveAllEntries();
-        Logger.log("AI回合推进指令已发送。");
+        Logger.log("AI回合后台推进完成。");
     }
     
     async syncQuickModeWithAI() {
@@ -358,13 +364,14 @@ export class SillyViewApp {
             return;
         }
         
-        this.logger.log("正在发送摘要Prompt给AI:", summaryPrompt);
+        this.logger.log("正在后台发送快速模式摘要Prompt给AI:", summaryPrompt);
 
         try {
-            await this.th.triggerSlash(`/setinput ${JSON.stringify(summaryPrompt)}`);
-            this.st_context.generate();
+            const syncResponse = await this.backgroundAI.generateMarketResponse(summaryPrompt);
+            await this.processGeneratedMarketText(syncResponse);
         } catch (e) {
-            this.logger.error("触发AI进行快速模式同步时出错:", e);
+            this.logger.error("后台AI进行快速模式同步时出错:", e);
+            this.dependencies.win.toastr.error(`后台同步失败: ${e.message || e}`);
         } finally {
             await this.onQuickModeToggled(false);
             this.data.clearActionsThisTurn();

@@ -204,10 +204,85 @@ export class UIRenderer {
         }
     }
     
+    _escapeAttr(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    _getBackgroundAISettings() {
+        const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
+        return {
+            ...SillyViewConfig.background_ai_defaults,
+            ...(configState.background_ai || {}),
+        };
+    }
+
+    collectBackgroundAISettings() {
+        const getValue = id => this.parentDoc.getElementById(id)?.value?.trim() || '';
+        const enabled = Boolean(this.parentDoc.getElementById('sv-bg-ai-enabled')?.checked);
+        const temperature = parseFloat(getValue('sv-bg-ai-temperature'));
+        const maxTokens = parseInt(getValue('sv-bg-ai-max-tokens'), 10);
+
+        return {
+            enabled,
+            source: getValue('sv-bg-ai-source') || 'openai',
+            apiurl: getValue('sv-bg-ai-apiurl'),
+            key: getValue('sv-bg-ai-key'),
+            model: getValue('sv-bg-ai-model'),
+            proxy_preset: getValue('sv-bg-ai-proxy-preset'),
+            temperature: Number.isFinite(temperature) ? temperature : SillyViewConfig.background_ai_defaults.temperature,
+            max_tokens: Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : SillyViewConfig.background_ai_defaults.max_tokens,
+        };
+    }
+
     renderSettingsTab(container) {
+        const bgAI = this._getBackgroundAISettings();
+        const sourceOptions = ['openai', 'claude', 'openrouter', 'google', 'mistral', 'cohere']
+            .map(source => `<option value="${source}" ${bgAI.source === source ? 'selected' : ''}>${source}</option>`)
+            .join('');
+
         container.innerHTML = `
             <div>
                 <h3 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">游戏设置</h3>
+                <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--bg-gray-700); margin-bottom: 1rem;">
+                    <h4 style="font-weight: 600; color: var(--cyan-400); margin-bottom: 0.75rem;">后台市场模型</h4>
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.75rem;">
+                        <span style="font-size:0.875rem; color:var(--text-gray-300);">使用自定义模型</span>
+                        <span class="sv-toggle-switch">
+                            <input type="checkbox" id="sv-bg-ai-enabled" ${bgAI.enabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </span>
+                    </label>
+                    <div style="display:grid; gap:0.625rem;">
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">API格式
+                            <select id="sv-bg-ai-source" class="sv-select" style="width:100%; margin-top:0.25rem;">${sourceOptions}</select>
+                        </label>
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">API地址
+                            <input id="sv-bg-ai-apiurl" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.apiurl)}" placeholder="https://api.openai.com/v1">
+                        </label>
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">API Key
+                            <input id="sv-bg-ai-key" type="password" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.key)}">
+                        </label>
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">模型
+                            <input id="sv-bg-ai-model" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.model)}" placeholder="gpt-4o-mini / claude-3-5-sonnet-latest">
+                        </label>
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">酒馆代理预设
+                            <input id="sv-bg-ai-proxy-preset" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.proxy_preset)}">
+                        </label>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.625rem;">
+                            <label style="font-size:0.75rem; color:var(--text-gray-400);">温度
+                                <input id="sv-bg-ai-temperature" type="number" min="0" max="2" step="0.1" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.temperature)}">
+                            </label>
+                            <label style="font-size:0.75rem; color:var(--text-gray-400);">最大Token
+                                <input id="sv-bg-ai-max-tokens" type="number" min="64" step="1" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.max_tokens)}">
+                            </label>
+                        </div>
+                        <button id="sv-save-bg-ai-btn" class="sv-button sv-button-blue" style="width:100%;">保存后台模型设置</button>
+                    </div>
+                </div>
                 <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--red-500);">
                     <h4 style="font-weight: 600; color: var(--red-400);">危险区域</h4>
                     <p style="font-size: 0.875rem; color: var(--text-gray-400); margin-top: 0.5rem; margin-bottom: 1rem;">
