@@ -117,29 +117,36 @@ export class AIDirector {
             contextLines.push('附加市场世界书上下文（必须纳入市场叙事与判断）:');
             contextLines.push(marketWorldbookContext);
         }
-        
-        // NEW: Macro Event System Integration
+
+        const taskLines = [];
+        taskLines.push('【最高优先级：本回合市场推进任务】');
+        taskLines.push(`${promptPrefix}${actionSummary}`);
+
         if (globalMarket && globalMarket.current_time_index % 2 === 0) {
             const instruction = this._getMacroEventInstruction();
             if (instruction) {
-                contextLines.push(instruction);
+                taskLines.push(instruction);
             }
         }
 
-        // AI Instruction
         const currentAssetName = this.config.asset_definitions[activeAssetCode]?.name || activeAssetCode;
         const timeUnit = currentTimeframe === 'HOURLY' ? '下一小时' : '下一个交易日';
         const requiredAssetList = [...activeAssetsForAI].map(code => {
             const assetName = this.config.asset_definitions[code]?.name || code;
             return `${assetName} (${code})`;
         }).join('、');
-        contextLines.push(`本回合必须推进以下全部相关资产：${requiredAssetList}。`);
-        contextLines.push(`对于每个相关资产，都必须分别使用 [Market.Advance] 或 [Market.AdvanceSeries] 指令决定其${timeUnit}的收盘价和走势。当前正在查看的 ${currentAssetName} 可以作为叙事重点，但不能忽略其他已交易或持仓资产。`);
-        contextLines.push(`请同时使用 [Time.Set] 指令推进世界时间，并用 <headline>...</headline> 给出一条简短市场新闻。`);
+        taskLines.push(`本回合必须推进以下全部相关资产：${requiredAssetList}。`);
+        taskLines.push(`对于每个相关资产，都必须分别使用 [Market.Advance] 或 [Market.AdvanceSeries] 指令决定其${timeUnit}的收盘价和走势。当前正在查看的 ${currentAssetName} 可以作为叙事重点，但不能忽略其他已交易或持仓资产。`);
+        taskLines.push(`timeframe 使用 "${currentTimeframe}"。close_price / final_close_price 必须是数字。pattern 从 bull_run、bear_crash、volatile、consolidation、reversal_bull、reversal_bear、sideways 中选择。`);
+        taskLines.push('必须同时使用 [Time.Set] 指令推进世界时间。');
+        taskLines.push('必须用 <headline>...</headline> 给出一条简短市场新闻。');
+        taskLines.push('最后必须输出一个且只有一个 <command>...</command> 块；所有完整指令都放在这个块内。');
+        taskLines.push('除最后的 <command> 块外，不要在正文、解释或示例中输出完整的 [Module.Action(...)] 指令。');
         
         const contextString = `<context>{{newline}}${contextLines.join('{{newline}}')}{{newline}}</context>`;
+        const taskString = `<task>{{newline}}${taskLines.join('{{newline}}')}{{newline}}</task>`;
         
-        return `${promptPrefix}${actionSummary}{{newline}}${contextString}`;
+        return `${contextString}{{newline}}{{newline}}${taskString}`;
     }
 
     buildSyncPrompt(quickModeStartState, quickModeEndState) {

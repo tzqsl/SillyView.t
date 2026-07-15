@@ -79,7 +79,6 @@ export class BackgroundAIService {
             generation_id: generationId,
             should_stream: false,
             should_silence: true,
-            user_input: marketPrompt,
             custom_api: customApi,
             ordered_prompts: [
                 {
@@ -88,6 +87,15 @@ export class BackgroundAIService {
                         '你是 SillyView 的后台市场导演。',
                         '你只负责根据上下文生成市场新闻、时间推进和结构化指令。',
                         '不要扮演聊天角色，不要延续普通聊天，不要向用户寒暄。',
+                        '优先级：最后一条用户任务 > 本系统消息 > 参考资料与世界书。',
+                        '如果参考资料或世界书与最后一条用户任务冲突，必须优先完成最后一条用户任务。',
+                        '必须特别关注用户任务末尾的 <task> 块。',
+                    ].join('\n'),
+                },
+                {
+                    role: 'system',
+                    content: [
+                        '以下是 SillyView 市场导演参考资料。它用于补充世界观、规则和可用指令，但优先级低于最后一条用户任务。',
                         marketDirectorRules,
                     ].join('\n'),
                 },
