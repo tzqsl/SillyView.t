@@ -111,6 +111,69 @@ export class EventHandler {
         )].sort((a, b) => a.localeCompare(b));
     }
 
+    _buildCustomApi(settings, overrides = {}) {
+        const customApi = {};
+        if (settings.apiurl?.trim()) customApi.apiurl = settings.apiurl.trim();
+        if (settings.key?.trim()) customApi.key = settings.key.trim();
+        if (settings.model?.trim()) customApi.model = settings.model.trim();
+        if (settings.source?.trim()) customApi.source = settings.source.trim();
+
+        return {
+            ...customApi,
+            ...overrides,
+        };
+    }
+
+    async _withTimeout(promise, timeoutMs, message) {
+        let timeoutHandle = null;
+        const timeoutPromise = new Promise((_, reject) => {
+            timeoutHandle = setTimeout(() => reject(new Error(message)), timeoutMs);
+        });
+
+        try {
+            return await Promise.race([promise, timeoutPromise]);
+        } finally {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+        }
+    }
+
+    async _probeBackgroundModel(settings) {
+        if (!settings.model?.trim()) {
+            throw new Error('模型列表接口不可用。请手动填写模型名后再次点击，用实际生成请求测试连接。');
+        }
+        if (!this.dependencies.th?.generateRaw) {
+            throw new Error('TavernHelper.generateRaw 不可用，无法测试后台模型连接。');
+        }
+
+        const generationId = `sillyview-model-probe-${Date.now()}`;
+        const request = this.dependencies.th.generateRaw({
+            generation_id: generationId,
+            should_stream: false,
+            should_silence: true,
+            custom_api: this._buildCustomApi(settings, {
+                max_tokens: 8,
+                temperature: 0,
+            }),
+            ordered_prompts: [
+                { role: 'system', content: 'Reply with OK only.' },
+                { role: 'user', content: 'OK' },
+            ],
+        });
+
+        try {
+            await this._withTimeout(request, 30000, '后台模型连接测试超时。');
+        } catch (error) {
+            try {
+                this.dependencies.th.stopGenerationById?.(generationId);
+            } catch (stopError) {
+                this.logger.warn('停止后台模型连接测试失败:', stopError);
+            }
+            throw error;
+        }
+
+        return [settings.model.trim()];
+    }
+
     async _fetchModelsDirectly(settings) {
         const source = settings.source?.trim() || 'openai';
         let endpoint = this._normalizeModelEndpoint(settings.apiurl, source);
@@ -155,7 +218,16 @@ export class EventHandler {
                 });
             } catch (helperError) {
                 this.logger.warn('TavernHelper.getModelList 失败，尝试第三方 API 兼容模式:', helperError);
-                models = await this._fetchModelsDirectly(settings);
+            }
+
+            if (!models || models.length === 0) {
+                try {
+                    models = await this._fetchModelsDirectly(settings);
+                } catch (directError) {
+                    this.logger.warn('第三方模型列表直连失败，尝试使用当前模型做后台连通测试:', directError);
+                    models = await this._probeBackgroundModel(settings);
+                    this.dependencies.win.toastr.info('模型列表接口不可用，但当前填写的模型连接测试通过。');
+                }
             }
             this._renderBackgroundModelList(models);
             this.dependencies.win.toastr.success(`已获取 ${models.length} 个模型。`);
