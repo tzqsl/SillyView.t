@@ -69,16 +69,38 @@ export class ChartManager {
         return true;
     }
 
+    _normalizeSeriesData(data) {
+        if (!Array.isArray(data)) return [];
+
+        const byTime = new Map();
+        for (const item of data) {
+            if (item && item.time !== undefined && item.time !== null) {
+                byTime.set(item.time, item);
+            }
+        }
+
+        return Array.from(byTime.values()).sort((a, b) => {
+            if (typeof a.time === 'number' && typeof b.time === 'number') {
+                return a.time - b.time;
+            }
+            return String(a.time).localeCompare(String(b.time));
+        });
+    }
+
     setData(candlestickData, volumeData) {
         if (!this.candlestickSeries || !this.volumeSeries) return;
-        this.candlestickSeries.setData(candlestickData);
-        this.volumeSeries.setData(volumeData);
+        this.candlestickSeries.setData(this._normalizeSeriesData(candlestickData));
+        this.volumeSeries.setData(this._normalizeSeriesData(volumeData));
     }
 
     update(candle, volume) {
         if (!this.candlestickSeries || !this.volumeSeries) return;
-        if (candle) this.candlestickSeries.update(candle);
-        if (volume) this.volumeSeries.update(volume);
+        try {
+            if (candle) this.candlestickSeries.update(candle);
+            if (volume) this.volumeSeries.update(volume);
+        } catch (error) {
+            this.logger.warn('Chart realtime update skipped:', error);
+        }
     }
 
     setMarkers(markers) {
