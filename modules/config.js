@@ -90,6 +90,7 @@ const DEFAULT_BACKGROUND_AI_SETTINGS = {
     proxy_preset: '',
     temperature: 0.7,
     max_tokens: 600,
+    timeout_ms: 60000,
 };
 
 export const MACRO_EVENT_SYSTEM = {

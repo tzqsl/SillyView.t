@@ -361,31 +361,33 @@ export class SillyViewApp {
         await this.data.updateAIContext();
         const finalPrompt = await this.aiDirector.buildAdvanceTurnPrompt(actionsThisTurn, activeAssetsForAI, this.ui.currentAsset, currentTimeframe);
 
-        let marketResponse = '';
         try {
-            marketResponse = await this.backgroundAI.generateMarketResponse(finalPrompt);
-        } catch (e) {
-            Logger.error("Error running background AI for next turn:", e);
-            this.dependencies.win.toastr.error(`后台市场模型生成失败: ${e.message || e}`);
-            this.ui.tradeView.updateActionButtonsState(false, false);
-            return;
-        }
+            let marketResponse = '';
+            try {
+                marketResponse = await this.backgroundAI.generateMarketResponse(finalPrompt);
+            } catch (e) {
+                Logger.error("Error running background AI for next turn:", e);
+                this.dependencies.win.toastr.error(`后台市场模型生成失败: ${e.message || e}`);
+                return;
+            }
 
-        try {
-            await this.processGeneratedMarketText(marketResponse, { requiredAssetCodes: [...activeAssetsForAI] });
-        } catch (e) {
-            Logger.error("Error processing background market response:", e);
-            this.dependencies.win.toastr.error(`后台市场指令处理失败: ${e.message || e}`);
+            try {
+                await this.processGeneratedMarketText(marketResponse, { requiredAssetCodes: [...activeAssetsForAI] });
+            } catch (e) {
+                Logger.error("Error processing background market response:", e);
+                this.dependencies.win.toastr.error(`后台市场指令处理失败: ${e.message || e}`);
+                return;
+            }
+
+            this.data.clearActionsThisTurn();
+            this.ui.tradeView.renderThisTurnActions();
+
+            await this.data.recordAssetHistory();
+            await this.data.saveAllEntries();
+            Logger.log("AI回合后台推进完成。");
+        } finally {
             this.ui.tradeView.updateActionButtonsState(false, false);
-            return;
         }
-        
-        this.data.clearActionsThisTurn();
-        this.ui.tradeView.renderThisTurnActions();
-        
-        await this.data.recordAssetHistory();
-        await this.data.saveAllEntries();
-        Logger.log("AI回合后台推进完成。");
     }
     
     async syncQuickModeWithAI() {

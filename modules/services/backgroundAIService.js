@@ -38,6 +38,28 @@ export class BackgroundAIService {
         return Object.keys(customApi).length > 0 ? customApi : undefined;
     }
 
+    async _withTimeout(promise, generationId, timeoutMs) {
+        let timeoutHandle = null;
+        const timeoutSeconds = Math.round(timeoutMs / 1000);
+
+        const timeoutPromise = new Promise((_, reject) => {
+            timeoutHandle = setTimeout(() => {
+                try {
+                    this.th.stopGenerationById?.(generationId);
+                } catch (error) {
+                    this.logger.warn('Stopping timed out market generation failed:', error);
+                }
+                reject(new Error(`后台市场模型生成超时（已等待 ${timeoutSeconds} 秒）。`));
+            }, timeoutMs);
+        });
+
+        try {
+            return await Promise.race([promise, timeoutPromise]);
+        } finally {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+        }
+    }
+
     async generateMarketResponse(marketPrompt) {
         if (!this.th?.generateRaw) {
             throw new Error('TavernHelper.generateRaw 不可用，无法进行后台静默生成。');
@@ -47,10 +69,13 @@ export class BackgroundAIService {
         const customApi = this._buildCustomApi(settings);
         const generationId = `sillyview-market-${Date.now()}`;
         const marketDirectorRules = await loadMarketDirectorRules();
+        const timeoutMs = Number.isFinite(settings.timeout_ms) && settings.timeout_ms > 0
+            ? settings.timeout_ms
+            : this.config.background_ai_defaults.timeout_ms;
 
         this.logger.log(`SillyView background market generation started (${settings.enabled ? 'custom model' : 'current tavern model'}).`);
 
-        return await this.th.generateRaw({
+        const generationPromise = this.th.generateRaw({
             generation_id: generationId,
             should_stream: false,
             should_silence: true,
@@ -72,5 +97,7 @@ export class BackgroundAIService {
                 },
             ],
         });
+
+        return await this._withTimeout(generationPromise, generationId, timeoutMs);
     }
 }
