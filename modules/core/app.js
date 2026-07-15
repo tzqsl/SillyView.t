@@ -331,13 +331,23 @@ export class SillyViewApp {
         await this.data.updateAIContext();
         const finalPrompt = await this.aiDirector.buildAdvanceTurnPrompt(actionsThisTurn, activeAssetsForAI, this.ui.currentAsset, currentTimeframe);
 
+        let marketResponse = '';
         try {
-            const marketResponse = await this.backgroundAI.generateMarketResponse(finalPrompt);
-            await this.processGeneratedMarketText(marketResponse);
+            marketResponse = await this.backgroundAI.generateMarketResponse(finalPrompt);
         } catch (e) {
             Logger.error("Error running background AI for next turn:", e);
             this.dependencies.win.toastr.error(`后台市场模型生成失败: ${e.message || e}`);
             this.ui.tradeView.updateActionButtonsState(false, false);
+            return;
+        }
+
+        try {
+            await this.processGeneratedMarketText(marketResponse);
+        } catch (e) {
+            Logger.error("Error processing background market response:", e);
+            this.dependencies.win.toastr.error(`后台市场指令处理失败: ${e.message || e}`);
+            this.ui.tradeView.updateActionButtonsState(false, false);
+            return;
         }
         
         this.data.clearActionsThisTurn();
@@ -368,7 +378,12 @@ export class SillyViewApp {
 
         try {
             const syncResponse = await this.backgroundAI.generateMarketResponse(summaryPrompt);
-            await this.processGeneratedMarketText(syncResponse);
+            try {
+                await this.processGeneratedMarketText(syncResponse);
+            } catch (processError) {
+                this.logger.error("处理后台同步结果时出错:", processError);
+                this.dependencies.win.toastr.error(`后台同步结果处理失败: ${processError.message || processError}`);
+            }
         } catch (e) {
             this.logger.error("后台AI进行快速模式同步时出错:", e);
             this.dependencies.win.toastr.error(`后台同步失败: ${e.message || e}`);

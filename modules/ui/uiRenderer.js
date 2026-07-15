@@ -494,7 +494,9 @@ export class UIRenderer {
     }
     
     async handleAiResponse(newCandles, msg, assetCode) {
-        if (assetCode === this.currentAsset) {
+        const shouldAnimateHourlyCandles = assetCode === this.currentAsset && this.currentTimeframe === 'HOURLY';
+
+        if (shouldAnimateHourlyCandles) {
             await this.animateCandles(newCandles, 2000); 
         }
         
