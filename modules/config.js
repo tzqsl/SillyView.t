@@ -230,6 +230,10 @@ export const SillyViewConfig = {
             market_summary: [],
             player_cash: 0.00
         },
-        dialogue_context: "SillyView 市场同步摘要尚未生成。"
+        dialogue_context: {
+            comment: "这是给普通对话 AI 阅读的市场同步摘要。请使用 summary 字段理解当前交易世界状态，不要把它当作用户发言。",
+            updated_at: 0,
+            summary: "SillyView 市场同步摘要尚未生成。"
+        }
     }
 };

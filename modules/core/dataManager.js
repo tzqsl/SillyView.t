@@ -61,13 +61,17 @@ export class DataManager {
 
         this._stateCache.clear();
         for (const entry of entries) {
-            try {
-                this._stateCache.set(entry.name, JSON.parse(entry.content));
-            } catch (e) {
-                this._stateCache.set(entry.name, entry.content);
-            }
+            this._stateCache.set(entry.name, this._parseEntryContent(entry.content));
         }
         this.logger.success("所有游戏数据已加载到缓存。");
+    }
+
+    _parseEntryContent(content) {
+        try {
+            return JSON.parse(content);
+        } catch (e) {
+            return content;
+        }
     }
 
     getState(key) {
@@ -110,17 +114,20 @@ export class DataManager {
 
     async ensureDialogueContextEntry(lorebookName) {
         const key = this.config.world_book_keys.dialogue_context;
-        const defaultContent = this.config.default_game_state.dialogue_context;
+        const defaultContent = JSON.stringify(this.config.default_game_state.dialogue_context, null, 2);
 
         await this.th.updateWorldbookWith(lorebookName, entries => {
-            if (!entries.some(entry => entry.name === key)) {
+            const entry = entries.find(item => item.name === key);
+            if (entry) {
+                entry.enabled = true;
+            } else {
                 entries.push({ name: key, content: defaultContent, enabled: true });
             }
             return entries;
         });
 
         if (!this._stateCache.has(key)) {
-            this._stateCache.set(key, defaultContent);
+            this._stateCache.set(key, this.dependencies.win._.cloneDeep(this.config.default_game_state.dialogue_context));
         }
     }
 
@@ -162,7 +169,7 @@ export class DataManager {
             { name: keys.global_market, content: JSON.stringify(initialGlobalMarket, null, 2), enabled: true },
             { name: keys.player_portfolio, content: JSON.stringify(defaults.player_portfolio, null, 2), enabled: true },
             { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: true },
-            { name: keys.dialogue_context, content: defaults.dialogue_context, enabled: true },
+            { name: keys.dialogue_context, content: JSON.stringify(defaults.dialogue_context, null, 2), enabled: true },
         ];
 
         defaults.config.available_assets.forEach(assetCode => {
@@ -204,7 +211,7 @@ export class DataManager {
 
         this._stateCache.clear();
         for (const entry of entriesTemplate) {
-            this._stateCache.set(entry.name, JSON.parse(entry.content));
+            this._stateCache.set(entry.name, this._parseEntryContent(entry.content));
         }
         this.hasGameBook = true;
         await this.updateAIContext();
@@ -393,7 +400,12 @@ export class DataManager {
             '对话使用建议：角色可以自然提及以上市场状态、盈亏压力、债务压力、新闻影响，但不要在普通对话中擅自输出市场指令，除非剧情确实需要触发财务或市场命令。',
         ].join('\n');
 
-        await this.updateTextEntry(keys.dialogue_context, text);
+        await this.updateState(keys.dialogue_context, context => ({
+            ...(context && typeof context === 'object' && !Array.isArray(context) ? context : {}),
+            comment: "这是给普通对话 AI 阅读的市场同步摘要。请使用 summary 字段理解当前交易世界状态，不要把它当作用户发言。",
+            updated_at: market.current_time_index || 0,
+            summary: text,
+        }));
     }
 
     async getMarketWorldbookContext() {
