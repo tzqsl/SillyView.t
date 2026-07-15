@@ -18,6 +18,70 @@ export class EventHandler {
         this.resizeTimeout = null;
     }
 
+    async saveBackgroundAISettings() {
+        const settings = this.ui.collectBackgroundAISettings();
+        await this.data.updateState(this.dependencies.config.world_book_keys.config, config => {
+            config.background_ai = settings;
+            return config;
+        });
+        return settings;
+    }
+
+    _renderBackgroundModelList(models) {
+        const listEl = this.parentDoc.getElementById('sv-bg-ai-model-list');
+        if (!listEl) return;
+
+        listEl.innerHTML = '';
+        if (!models || models.length === 0) {
+            const empty = this.parentDoc.createElement('div');
+            empty.style.cssText = 'font-size:0.75rem; color:var(--text-gray-400);';
+            empty.textContent = '未返回模型列表。';
+            listEl.appendChild(empty);
+            return;
+        }
+
+        models.forEach(model => {
+            const button = this.parentDoc.createElement('button');
+            button.type = 'button';
+            button.className = 'sv-button sv-bg-ai-model-option';
+            button.dataset.model = model;
+            button.style.cssText = 'width:100%; text-align:left; justify-content:flex-start; background-color:var(--bg-gray-700);';
+            button.textContent = model;
+            listEl.appendChild(button);
+        });
+    }
+
+    async fetchBackgroundModels() {
+        const settings = this.ui.collectBackgroundAISettings();
+        const fetchBtn = this.parentDoc.getElementById('sv-fetch-bg-ai-models-btn');
+
+        if (!settings.apiurl) {
+            this.dependencies.win.toastr.warning('请先填写 API 地址。');
+            return;
+        }
+
+        try {
+            if (fetchBtn) {
+                fetchBtn.disabled = true;
+                fetchBtn.textContent = '获取中...';
+            }
+            const models = await this.dependencies.th.getModelList({
+                apiurl: settings.apiurl,
+                key: settings.key || undefined,
+            });
+            this._renderBackgroundModelList(models);
+            this.dependencies.win.toastr.success(`已获取 ${models.length} 个模型。`);
+        } catch (error) {
+            this.logger.error('获取后台模型列表失败:', error);
+            this.dependencies.win.toastr.error(`获取模型失败: ${error.message || error}`);
+        } finally {
+            if (fetchBtn) {
+                fetchBtn.disabled = false;
+                fetchBtn.textContent = '获取模型';
+            }
+        }
+    }
+
     bindInitialEvents() {
         this.bindEntryButton();
         this.bindResizeHandler();
@@ -120,6 +184,8 @@ export class EventHandler {
                 const sellBtn = target.closest('#sillyview-sell-btn');
                 const resetBtn = target.closest('#sv-reset-data-btn');
                 const saveBgAiBtn = target.closest('#sv-save-bg-ai-btn');
+                const fetchBgAiModelsBtn = target.closest('#sv-fetch-bg-ai-models-btn');
+                const bgAiModelOption = target.closest('.sv-bg-ai-model-option');
 
                 if (tabButton) {
                     this.ui.switchSidebarTab(tabButton.dataset.tab);
@@ -132,12 +198,16 @@ export class EventHandler {
                 } else if (sellBtn) {
                     this.ui.initiateTrade('sell');
                 } else if (saveBgAiBtn) {
-                    const settings = this.ui.collectBackgroundAISettings();
-                    await this.data.updateState(this.dependencies.config.world_book_keys.config, config => {
-                        config.background_ai = settings;
-                        return config;
-                    });
+                    await this.saveBackgroundAISettings();
                     this.dependencies.win.toastr.success("后台模型设置已保存。");
+                    this.ui.renderAll();
+                } else if (fetchBgAiModelsBtn) {
+                    await this.fetchBackgroundModels();
+                } else if (bgAiModelOption) {
+                    const modelInput = this.parentDoc.getElementById('sv-bg-ai-model');
+                    if (modelInput) modelInput.value = bgAiModelOption.dataset.model || '';
+                    await this.saveBackgroundAISettings();
+                    this.dependencies.win.toastr.success(`已选择模型: ${bgAiModelOption.dataset.model}`);
                     this.ui.renderAll();
                 } else if (resetBtn) {
                     this.modals.showConfirmation(

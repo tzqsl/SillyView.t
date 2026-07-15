@@ -269,6 +269,8 @@ export class UIRenderer {
                         <label style="font-size:0.75rem; color:var(--text-gray-400);">模型
                             <input id="sv-bg-ai-model" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.model)}" placeholder="gpt-4o-mini / claude-3-5-sonnet-latest">
                         </label>
+                        <button id="sv-fetch-bg-ai-models-btn" class="sv-button" style="width:100%; background-color: var(--bg-gray-700);">获取模型</button>
+                        <div id="sv-bg-ai-model-list" style="display:grid; gap:0.375rem; max-height:10rem; overflow:auto;"></div>
                         <label style="font-size:0.75rem; color:var(--text-gray-400);">酒馆代理预设
                             <input id="sv-bg-ai-proxy-preset" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.proxy_preset)}">
                         </label>
