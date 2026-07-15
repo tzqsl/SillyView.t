@@ -176,6 +176,7 @@ export const SillyViewConfig = {
         player_portfolio: 'sv_player_portfolio',
         asset_prefix: 'sv_asset_',
         ai_context: 'sv_ai_context',
+        dialogue_context: 'sv_dialogue_context',
     },
 
     loan_config: {
@@ -227,6 +228,7 @@ export const SillyViewConfig = {
             comment: "这是AI可见的市场摘要。请基于此信息进行决策。",
             market_summary: [],
             player_cash: 0.00
-        }
+        },
+        dialogue_context: "SillyView 市场同步摘要尚未生成。"
     }
 };

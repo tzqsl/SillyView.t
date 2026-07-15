@@ -42,6 +42,8 @@ export class DataManager {
         if (this.hasGameBook) {
             this.logger.log(`游戏世界书 "${lorebookName}" 已找到，正在加载数据...`);
             await this.loadAllEntries(lorebookName);
+            await this.ensureDialogueContextEntry(lorebookName);
+            await this.updateDialogueContext();
             this.ui.renderMainInterface();
         } else {
             this.logger.log("未找到游戏世界书，渲染创建界面。");
@@ -62,7 +64,7 @@ export class DataManager {
             try {
                 this._stateCache.set(entry.name, JSON.parse(entry.content));
             } catch (e) {
-                this.logger.error(`解析条目 "${entry.name}" 失败:`, e);
+                this._stateCache.set(entry.name, entry.content);
             }
         }
         this.logger.success("所有游戏数据已加载到缓存。");
@@ -89,6 +91,39 @@ export class DataManager {
         });
     }
 
+    async updateTextEntry(key, content) {
+        const lorebookName = await this._getLorebookName();
+        if (!lorebookName) return;
+
+        this._stateCache.set(key, content);
+        await this.th.updateWorldbookWith(lorebookName, (entries) => {
+            let entry = entries.find(e => e.name === key);
+            if (!entry) {
+                entry = { name: key, content: '', enabled: true };
+                entries.push(entry);
+            }
+            entry.content = content;
+            entry.enabled = true;
+            return entries;
+        });
+    }
+
+    async ensureDialogueContextEntry(lorebookName) {
+        const key = this.config.world_book_keys.dialogue_context;
+        const defaultContent = this.config.default_game_state.dialogue_context;
+
+        await this.th.updateWorldbookWith(lorebookName, entries => {
+            if (!entries.some(entry => entry.name === key)) {
+                entries.push({ name: key, content: defaultContent, enabled: true });
+            }
+            return entries;
+        });
+
+        if (!this._stateCache.has(key)) {
+            this._stateCache.set(key, defaultContent);
+        }
+    }
+
     async saveAllEntries() {
         const lorebookName = await this._getLorebookName();
         if (!lorebookName) return;
@@ -97,7 +132,8 @@ export class DataManager {
         await this.th.updateWorldbookWith(lorebookName, (entries) => {
             for (const entry of entries) {
                 if (this._stateCache.has(entry.name)) {
-                    entry.content = JSON.stringify(this._stateCache.get(entry.name), null, 2);
+                    const value = this._stateCache.get(entry.name);
+                    entry.content = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
                 }
             }
             return entries;
@@ -126,6 +162,7 @@ export class DataManager {
             { name: keys.global_market, content: JSON.stringify(initialGlobalMarket, null, 2), enabled: true },
             { name: keys.player_portfolio, content: JSON.stringify(defaults.player_portfolio, null, 2), enabled: true },
             { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: true },
+            { name: keys.dialogue_context, content: defaults.dialogue_context, enabled: true },
         ];
 
         defaults.config.available_assets.forEach(assetCode => {
@@ -266,6 +303,97 @@ export class DataManager {
             current_weather: market.current_weather || "未知",
             macro_state: market.macro_state || {},
         }));
+        await this.updateDialogueContext(marketSummary);
+    }
+
+    _formatSigned(value, digits = 2) {
+        const number = Number(value || 0);
+        return `${number >= 0 ? '+' : ''}${number.toFixed(digits)}`;
+    }
+
+    _buildPositionSummary(portfolio) {
+        const lines = [];
+        for (const assetCode of Object.keys(portfolio?.assets || {})) {
+            const position = this.positionCalculator.calculate(assetCode, portfolio);
+            if (!position.type || position.totalAmount <= 0) continue;
+
+            const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+            const lastPrice = assetData?.current_price ?? position.avgEntryPrice;
+            const pnl = position.type === 'short'
+                ? (position.avgEntryPrice - lastPrice) * position.totalShares
+                : (lastPrice - position.avgEntryPrice) * position.totalShares;
+            const pnlPct = position.totalAmount > 0 ? (pnl / position.totalAmount) * 100 : 0;
+            const direction = position.type === 'short' ? '空头' : '多头';
+            const leverage = position.isLeveraged ? ` ${position.leverage}x` : '';
+
+            lines.push(`- ${assetCode}: ${direction}${leverage}，保证金 ${position.totalAmount.toFixed(2)}，入场 ${position.avgEntryPrice.toFixed(4)}，现价 ${lastPrice.toFixed(4)}，未实现盈亏 ${this._formatSigned(pnl)} (${this._formatSigned(pnlPct)}%)`);
+        }
+
+        return lines.length > 0 ? lines : ['- 当前没有持仓。'];
+    }
+
+    async updateDialogueContext(existingMarketSummary = null) {
+        const keys = this.config.world_book_keys;
+        const configState = this.getState(keys.config);
+        const market = this.getState(keys.global_market) || {};
+        const portfolio = this.getState(keys.player_portfolio) || {};
+        const availableAssets = configState?.available_assets || Object.keys(this.config.asset_definitions);
+        const marketSummary = existingMarketSummary || availableAssets.map(assetCode => {
+            const assetDef = this.config.asset_definitions[assetCode];
+            const assetData = this.getState(`${keys.asset_prefix}${assetCode}`);
+            const hourly = assetData?.kline_hourly || [];
+            const latest = hourly[hourly.length - 1];
+            const previousDay = hourly.length > 24 ? hourly[hourly.length - 25] : null;
+            const latestPrice = assetData?.current_price ?? latest?.close ?? assetDef?.initial_price ?? 0;
+            const change24h = previousDay ? ((latestPrice / previousDay.close) - 1) * 100 : 0;
+
+            return {
+                code: assetCode,
+                name: assetDef?.name || assetCode,
+                latest_price: latestPrice,
+                change_24h_pct: change24h,
+            };
+        });
+
+        const newsLines = (market.news_feed || []).slice(0, 5).map(news =>
+            `- [t=${news.time_index}] ${news.asset_code || 'GLOBAL'}: ${news.headline}`
+        );
+        const transactionLines = (portfolio.transaction_log || []).slice(0, 8).map(log =>
+            `- [t=${log.time}] ${log.description}: ${this._formatSigned(log.amount)}`
+        );
+        const marketLines = marketSummary.map(item =>
+            `- ${item.name || item.code} (${item.code}): ${Number(item.latest_price || 0).toFixed(4)}，24h ${this._formatSigned(item.change_24h_pct)}%`
+        );
+        const totalNetWorth = this._calculatePortfolioMarkedValue(portfolio);
+
+        const text = [
+            '【SillyView 市场同步摘要】',
+            '用途：这是给普通对话 AI 阅读的市场状态摘要，用于让角色知道交易世界发生了什么。不要把它当作用户发言。',
+            '',
+            `时间：${market.current_datetime || '未知'} / ${market.current_period || '未知'} / ${market.current_season || '未知'} / 天气：${market.current_weather || '未知'}`,
+            `市场状态：${market.market_status || 'OPEN'}，市场性格：${market.personality_state || '未知'}，距离关键时刻剩余 ${market.remaining_candles ?? '未知'} 根K线。`,
+            '',
+            '账户：',
+            `- 现金：${Number(portfolio.cash || 0).toFixed(2)}`,
+            `- 债务：${Number(portfolio.debt || 0).toFixed(2)}`,
+            `- 估算净值：${Number(totalNetWorth || 0).toFixed(2)}`,
+            '',
+            '持仓：',
+            ...this._buildPositionSummary(portfolio),
+            '',
+            '市场价格：',
+            ...marketLines,
+            '',
+            '最新市场新闻：',
+            ...(newsLines.length > 0 ? newsLines : ['- 暂无新闻。']),
+            '',
+            '近期资金/交易记录：',
+            ...(transactionLines.length > 0 ? transactionLines : ['- 暂无记录。']),
+            '',
+            '对话使用建议：角色可以自然提及以上市场状态、盈亏压力、债务压力、新闻影响，但不要在普通对话中擅自输出市场指令，除非剧情确实需要触发财务或市场命令。',
+        ].join('\n');
+
+        await this.updateTextEntry(keys.dialogue_context, text);
     }
 
     async getMarketWorldbookContext() {

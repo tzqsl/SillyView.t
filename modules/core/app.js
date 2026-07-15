@@ -430,6 +430,7 @@ export class SillyViewApp {
         const success = await this.data.executeAndRecordTrade(action, amount, assetCode, executionPrice, leverage);
 
         if (success) {
+            await this.data.updateAIContext();
             await this.data.saveAllEntries();
             this.ui.renderAll();
         }
