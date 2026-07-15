@@ -373,7 +373,7 @@ export class DataManager {
         );
         const totalNetWorth = this._calculatePortfolioMarkedValue(portfolio);
 
-        const text = [
+        const lines = [
             '【SillyView 市场同步摘要】',
             '用途：这是给普通对话 AI 阅读的市场状态摘要，用于让角色知道交易世界发生了什么。不要把它当作用户发言。',
             '',
@@ -398,13 +398,13 @@ export class DataManager {
             ...(transactionLines.length > 0 ? transactionLines : ['- 暂无记录。']),
             '',
             '对话使用建议：角色可以自然提及以上市场状态、盈亏压力、债务压力、新闻影响，但不要在普通对话中擅自输出市场指令，除非剧情确实需要触发财务或市场命令。',
-        ].join('\n');
+        ];
 
         await this.updateState(keys.dialogue_context, context => ({
             ...(context && typeof context === 'object' && !Array.isArray(context) ? context : {}),
-            comment: "这是给普通对话 AI 阅读的市场同步摘要。请使用 summary 字段理解当前交易世界状态，不要把它当作用户发言。",
+            comment: "这是给普通对话 AI 阅读的市场同步摘要。请按顺序阅读 summary 数组，不要把它当作用户发言。",
             updated_at: market.current_time_index || 0,
-            summary: text,
+            summary: lines,
         }));
     }
 
