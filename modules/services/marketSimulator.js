@@ -175,6 +175,9 @@ export class MarketSimulator {
             case 'volatile': highMultiplier = 2.5; lowMultiplier = 2.5; break;
             case 'bull_run': highMultiplier = 1.5; lowMultiplier = 0.2; break;
             case 'bear_crash': highMultiplier = 0.2; lowMultiplier = 1.5; break;
+            case 'reversal_bull': highMultiplier = 0.8; lowMultiplier = 2.0; break;
+            case 'reversal_bear': highMultiplier = 2.0; lowMultiplier = 0.8; break;
+            case 'consolidation': highMultiplier = 0.3; lowMultiplier = 0.3; break;
             case 'sideways': highMultiplier = 0.3; lowMultiplier = 0.3; break;
         }
         

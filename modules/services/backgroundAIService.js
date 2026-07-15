@@ -4,6 +4,8 @@
  */
 'use strict';
 
+import { loadMarketDirectorRules } from './marketPromptRules.js';
+
 export class BackgroundAIService {
     constructor(dependencies) {
         this.th = dependencies.th;
@@ -44,6 +46,7 @@ export class BackgroundAIService {
         const settings = this._getSettings();
         const customApi = this._buildCustomApi(settings);
         const generationId = `sillyview-market-${Date.now()}`;
+        const marketDirectorRules = await loadMarketDirectorRules();
 
         this.logger.log(`SillyView background market generation started (${settings.enabled ? 'custom model' : 'current tavern model'}).`);
 
@@ -60,7 +63,7 @@ export class BackgroundAIService {
                         '你是 SillyView 的后台市场导演。',
                         '你只负责根据上下文生成市场新闻、时间推进和结构化指令。',
                         '不要扮演聊天角色，不要延续普通聊天，不要向用户寒暄。',
-                        '回复末尾必须包含单一 <command> 块；如推进市场，使用 Market.Advance；如推进时间，使用 Time.Set。',
+                        marketDirectorRules,
                     ].join('\n'),
                 },
                 {
