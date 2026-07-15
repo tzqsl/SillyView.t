@@ -51,6 +51,88 @@ export class EventHandler {
         });
     }
 
+    _normalizeModelEndpoint(apiurl, source) {
+        const trimmed = apiurl.trim().replace(/\/+$/, '');
+
+        if (/\/models(?:\?.*)?$/i.test(trimmed)) return trimmed;
+
+        if (source === 'google') {
+            if (/generativelanguage\.googleapis\.com/i.test(trimmed)) {
+                return `${trimmed.replace(/\/v1beta$/i, '').replace(/\/v1$/i, '')}/v1beta/models`;
+            }
+            return `${trimmed}/v1beta/models`;
+        }
+
+        const withoutCompletionPath = trimmed
+            .replace(/\/chat\/completions$/i, '')
+            .replace(/\/messages$/i, '')
+            .replace(/\/completions$/i, '');
+
+        if (/\/v\d+(?:beta)?$/i.test(withoutCompletionPath)) {
+            return `${withoutCompletionPath}/models`;
+        }
+
+        return `${withoutCompletionPath}/v1/models`;
+    }
+
+    _buildModelHeaders(settings) {
+        const headers = { Accept: 'application/json' };
+        const key = settings.key?.trim();
+        const source = settings.source?.trim();
+
+        if (!key) return headers;
+
+        if (source === 'claude') {
+            headers['x-api-key'] = key;
+            headers['anthropic-version'] = '2023-06-01';
+        } else if (source !== 'google') {
+            headers.Authorization = `Bearer ${key}`;
+        }
+
+        return headers;
+    }
+
+    _parseModelListResponse(payload, source) {
+        const candidates = [];
+
+        if (Array.isArray(payload?.data)) {
+            candidates.push(...payload.data.map(item => item?.id || item?.name || item));
+        }
+        if (Array.isArray(payload?.models)) {
+            candidates.push(...payload.models.map(item => item?.name || item?.id || item));
+        }
+        if (Array.isArray(payload)) {
+            candidates.push(...payload.map(item => item?.id || item?.name || item));
+        }
+
+        return [...new Set(candidates
+            .filter(model => typeof model === 'string' && model.trim())
+            .map(model => source === 'google' ? model.replace(/^models\//, '') : model)
+        )].sort((a, b) => a.localeCompare(b));
+    }
+
+    async _fetchModelsDirectly(settings) {
+        const source = settings.source?.trim() || 'openai';
+        let endpoint = this._normalizeModelEndpoint(settings.apiurl, source);
+
+        if (source === 'google' && settings.key?.trim() && !/[?&]key=/.test(endpoint)) {
+            endpoint += `${endpoint.includes('?') ? '&' : '?'}key=${encodeURIComponent(settings.key.trim())}`;
+        }
+
+        const response = await fetch(endpoint, {
+            method: 'GET',
+            headers: this._buildModelHeaders(settings),
+        });
+
+        if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            throw new Error(`${response.status} ${response.statusText}${body ? `: ${body.slice(0, 180)}` : ''}`);
+        }
+
+        const payload = await response.json();
+        return this._parseModelListResponse(payload, source);
+    }
+
     async fetchBackgroundModels() {
         const settings = this.ui.collectBackgroundAISettings();
         const fetchBtn = this.parentDoc.getElementById('sv-fetch-bg-ai-models-btn');
@@ -65,10 +147,16 @@ export class EventHandler {
                 fetchBtn.disabled = true;
                 fetchBtn.textContent = '获取中...';
             }
-            const models = await this.dependencies.th.getModelList({
-                apiurl: settings.apiurl,
-                key: settings.key || undefined,
-            });
+            let models = [];
+            try {
+                models = await this.dependencies.th.getModelList({
+                    apiurl: settings.apiurl,
+                    key: settings.key || undefined,
+                });
+            } catch (helperError) {
+                this.logger.warn('TavernHelper.getModelList 失败，尝试第三方 API 兼容模式:', helperError);
+                models = await this._fetchModelsDirectly(settings);
+            }
             this._renderBackgroundModelList(models);
             this.dependencies.win.toastr.success(`已获取 ${models.length} 个模型。`);
         } catch (error) {
