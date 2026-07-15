@@ -232,7 +232,6 @@ export class UIRenderer {
             apiurl: getValue('sv-bg-ai-apiurl'),
             key: getValue('sv-bg-ai-key'),
             model: getValue('sv-bg-ai-model'),
-            proxy_preset: getValue('sv-bg-ai-proxy-preset'),
             temperature: Number.isFinite(temperature) ? temperature : SillyViewConfig.background_ai_defaults.temperature,
             max_tokens: Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : SillyViewConfig.background_ai_defaults.max_tokens,
         };
@@ -271,9 +270,6 @@ export class UIRenderer {
                         </label>
                         <button id="sv-fetch-bg-ai-models-btn" class="sv-button" style="width:100%; background-color: var(--bg-gray-700);">获取模型</button>
                         <div id="sv-bg-ai-model-list" style="display:grid; gap:0.375rem; max-height:10rem; overflow:auto;"></div>
-                        <label style="font-size:0.75rem; color:var(--text-gray-400);">酒馆代理预设
-                            <input id="sv-bg-ai-proxy-preset" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.proxy_preset)}">
-                        </label>
                         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.625rem;">
                             <label style="font-size:0.75rem; color:var(--text-gray-400);">温度
                                 <input id="sv-bg-ai-temperature" type="number" min="0" max="2" step="0.1" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.temperature)}">
@@ -288,7 +284,7 @@ export class UIRenderer {
                 <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--red-500);">
                     <h4 style="font-weight: 600; color: var(--red-400);">危险区域</h4>
                     <p style="font-size: 0.875rem; color: var(--text-gray-400); margin-top: 0.5rem; margin-bottom: 1rem;">
-                        此操作将永久删除当前角色的所有 SillyView 数据并重新开始新游戏。
+                        此操作将永久删除当前角色的所有 SillyView 市场、资产和账户数据并重新开始新游戏，但会保留后台模型设置。
                     </p>
                     <button id="sv-reset-data-btn" class="sv-button sv-button-red w-full" style="width:100%;">重置所有数据</button>
                 </div>

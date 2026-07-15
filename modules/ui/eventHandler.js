@@ -299,7 +299,7 @@ export class EventHandler {
                     this.ui.renderAll();
                 } else if (resetBtn) {
                     this.modals.showConfirmation(
-                        `<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: var(--red-400);">确认重置？</h3><p>此操作将永久删除当前角色的所有SillyView数据并重新开始。此操作无法撤销。</p>`,
+                        `<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: var(--red-400);">确认重置？</h3><p>此操作将永久删除当前角色的所有SillyView市场、资产和账户数据并重新开始，但会保留后台模型设置。此操作无法撤销。</p>`,
                         () => this.data.resetAllData()
                     );
                 }

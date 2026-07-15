@@ -147,7 +147,16 @@ export class DataManager {
         });
     }
 
-    async createInitialWorldState() {
+    _normalizeBackgroundAISettings(settings = {}) {
+        const normalized = {
+            ...this.config.background_ai_defaults,
+            ...(settings || {}),
+        };
+        delete normalized.proxy_preset;
+        return normalized;
+    }
+
+    async createInitialWorldState(options = {}) {
         const lorebookName = await this._getLorebookName();
         if (!lorebookName) {
             this.logger.error("无法创建世界书：未选择角色。");
@@ -157,6 +166,10 @@ export class DataManager {
         this.logger.log(`正在创建新的游戏世界书: "${lorebookName}"...`);
         const defaults = this.config.default_game_state;
         const keys = this.config.world_book_keys;
+        const initialConfig = {
+            ...defaults.config,
+            background_ai: this._normalizeBackgroundAISettings(options.backgroundAI || defaults.config.background_ai),
+        };
 
         // Initialize with a random candle count for immediate quick mode use
         const initialGlobalMarket = {
@@ -165,14 +178,14 @@ export class DataManager {
         };
 
         const entriesTemplate = [
-            { name: keys.config, content: JSON.stringify(defaults.config, null, 2), enabled: true },
+            { name: keys.config, content: JSON.stringify(initialConfig, null, 2), enabled: true },
             { name: keys.global_market, content: JSON.stringify(initialGlobalMarket, null, 2), enabled: true },
             { name: keys.player_portfolio, content: JSON.stringify(defaults.player_portfolio, null, 2), enabled: true },
             { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: true },
             { name: keys.dialogue_context, content: JSON.stringify(defaults.dialogue_context, null, 2), enabled: true },
         ];
 
-        defaults.config.available_assets.forEach(assetCode => {
+        initialConfig.available_assets.forEach(assetCode => {
             const assetDef = this.config.asset_definitions[assetCode];
             if (assetDef) {
                 const initialAssetData = {
@@ -220,8 +233,10 @@ export class DataManager {
     
     async resetAllData() {
         this.logger.warn("正在重置所有SillyView数据...");
-        await this.createInitialWorldState(); // Re-running the creation process effectively resets everything.
-        this.dependencies.win.toastr.success("所有数据已重置到初始状态。");
+        const configState = this.getState(this.config.world_book_keys.config) || {};
+        const preservedBackgroundAI = this._normalizeBackgroundAISettings(configState.background_ai);
+        await this.createInitialWorldState({ backgroundAI: preservedBackgroundAI }); // Re-running the creation process effectively resets everything.
+        this.dependencies.win.toastr.success("所有数据已重置到初始状态，后台模型设置已保留。");
     }
 
     createSnapshot() {

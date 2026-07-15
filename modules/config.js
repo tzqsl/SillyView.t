@@ -87,9 +87,8 @@ const DEFAULT_BACKGROUND_AI_SETTINGS = {
     apiurl: '',
     key: '',
     model: '',
-    proxy_preset: '',
     temperature: 0.7,
-    max_tokens: 600,
+    max_tokens: 20000,
     timeout_ms: 60000,
 };
 

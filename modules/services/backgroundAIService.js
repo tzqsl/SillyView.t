@@ -26,7 +26,6 @@ export class BackgroundAIService {
         if (!settings.enabled) return undefined;
 
         const customApi = {};
-        if (settings.proxy_preset?.trim()) customApi.proxy_preset = settings.proxy_preset.trim();
         if (settings.apiurl?.trim()) customApi.apiurl = settings.apiurl.trim();
         if (settings.key?.trim()) customApi.key = settings.key.trim();
         if (settings.model?.trim()) customApi.model = settings.model.trim();
