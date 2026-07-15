@@ -118,7 +118,9 @@ export class SillyViewApp {
         return await this.processGeneratedMarketText(msg);
     }
 
-    async processGeneratedMarketText(msg) {
+    async processGeneratedMarketText(msg, options = {}) {
+        const requiredAssetCodes = options.requiredAssetCodes || [];
+
         // **FIX**: Check if this turn started as a key moment BEFORE processing.
         const marketBefore = this.data.getState(SillyViewConfig.world_book_keys.global_market);
         const wasKeyMoment = marketBefore && marketBefore.remaining_candles <= 0;
@@ -127,6 +129,7 @@ export class SillyViewApp {
         let hasAdvanced = false;
         let hasUpdatedFinancials = false;
         let hasUpdatedTimeline = false;
+        const advancedAssetCodes = new Set();
 
         for (const command of commands) {
             let newCandles = null;
@@ -188,8 +191,32 @@ export class SillyViewApp {
             
             if (newCandles && newCandles.length > 0 && assetCodeForUpdate) {
                 await this.ui.handleAiResponse(newCandles, msg, assetCodeForUpdate);
+                advancedAssetCodes.add(assetCodeForUpdate);
                 await this._checkLiquidations();
             }
+        }
+
+        const missingAssetCodes = requiredAssetCodes.filter(assetCode => !advancedAssetCodes.has(assetCode));
+        if (missingAssetCodes.length > 0) {
+            Logger.warn(`AI未推进这些相关资产，使用本地市场模拟补齐: ${missingAssetCodes.join(', ')}`);
+            let maxFallbackTime = 0;
+            for (const assetCode of missingAssetCodes) {
+                const fallbackCandles = this.marketSimulator.calculateCandlesForBackgroundAsset(assetCode, 1);
+                if (fallbackCandles.length === 0) continue;
+                await this.data.updateAssetCandles(assetCode, fallbackCandles);
+                const assetDef = SillyViewConfig.asset_definitions[assetCode];
+                if (assetDef) await this.data.aggregateHourlyToDaily(assetCode, assetDef.trading_hours_per_day);
+                maxFallbackTime = Math.max(maxFallbackTime, fallbackCandles[fallbackCandles.length - 1].time);
+                hasAdvanced = true;
+            }
+            if (maxFallbackTime > 0) {
+                await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
+                    market.current_time_index = Math.max(market.current_time_index || 0, maxFallbackTime);
+                    return market;
+                });
+            }
+            await this._checkLiquidations();
+            this.ui.renderAll();
         }
 
         // **FIX**: If the turn started as a key moment, ALWAYS reset the candle count, regardless of what the AI responded with.
@@ -326,7 +353,10 @@ export class SillyViewApp {
 
         const actionsThisTurn = this.data.getActionsThisTurn();
         const tradedAssetCodes = new Set(actionsThisTurn.map(a => a.assetCode));
-        const activeAssetsForAI = new Set([this.ui.currentAsset, ...tradedAssetCodes]);
+        const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
+        const openPositionCodes = Object.keys(portfolio.assets || {})
+            .filter(assetCode => (portfolio.assets[assetCode]?.trades || []).length > 0);
+        const activeAssetsForAI = new Set([this.ui.currentAsset, ...tradedAssetCodes, ...openPositionCodes]);
         
         await this.data.updateAIContext();
         const finalPrompt = await this.aiDirector.buildAdvanceTurnPrompt(actionsThisTurn, activeAssetsForAI, this.ui.currentAsset, currentTimeframe);
@@ -342,7 +372,7 @@ export class SillyViewApp {
         }
 
         try {
-            await this.processGeneratedMarketText(marketResponse);
+            await this.processGeneratedMarketText(marketResponse, { requiredAssetCodes: [...activeAssetsForAI] });
         } catch (e) {
             Logger.error("Error processing background market response:", e);
             this.dependencies.win.toastr.error(`后台市场指令处理失败: ${e.message || e}`);
