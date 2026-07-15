@@ -92,51 +92,6 @@ const DEFAULT_BACKGROUND_AI_SETTINGS = {
     max_tokens: 600,
 };
 
-const LIFE_WORLDBOOK_ENTRIES = [
-    {
-        name: 'SillyView_生活财务指令_总则',
-        content: [
-            '这些指令用于处理现实生活、银行卡余额、债务和开局设定，不用于解释市场曲线或交易盈亏。',
-            '交易软件可以直接通过银行卡交易，不区分交易账户与银行卡账户的资金。',
-            '玩家的交易盈利和亏损由 SillyView 插件根据持仓和价格自动计算，不需要也不应该使用增加现金指令伪造交易盈利。',
-            '只有工资、奖励、支出、生活事件、贷款、旧债等现实财务变化，才使用本世界书中的指令。',
-            '所有指令必须放在消息末尾的单一 <command>...</command> 块中。',
-        ].join('\n'),
-        enabled: true,
-    },
-    {
-        name: 'SillyView_现金变动指令',
-        content: [
-            '[Player.AddCash(amount, "reason")]：增加现金。只用于现实中的增加现金，例如工资、奖金、赞助、补贴、礼金、意外收入等。',
-            '[Player.SubtractCash(amount, "reason")]：扣除现金。用于生活支出、罚款、账单、维修、医疗、消费、被盗损失等。',
-            '不要用 Player.AddCash 表示投资盈利；不要用 Player.SubtractCash 表示交易亏损。交易相关盈亏由插件自动处理。',
-        ].join('\n'),
-        enabled: true,
-    },
-    {
-        name: 'SillyView_债务与贷款指令',
-        content: [
-            '[Loan.Grant(amount, "reason")]：提供贷款，同时增加现金和债务。适用于银行放款、临时借款、融资机会等。',
-            '[Loan.Repay(amount, "reason")]：要求还款，同时减少现金和债务。适用于强制还款、主动还款、债务催收等。',
-            '[Player.AddDebt(amount, "reason")]：仅增加债务，不给予现金。用于设定故事背景中的已有欠款、旧日赌债、历史贷款、欠款继承等。',
-            '如果贷款已经被花完，只需要使用 Player.AddDebt 增加债务，不要同时增加现金。',
-        ].join('\n'),
-        enabled: true,
-    },
-    {
-        name: 'SillyView_开局资金示例',
-        content: [
-            '普通开局：给玩家启动资金时，可以使用 Player.AddCash。',
-            '示例：<command>[Player.AddCash(100000, "新手启动资金")]</command>',
-            '',
-            '有负债开局：银行账户里有五万块，但初始负债十万块。',
-            '示例：<command>[Player.AddCash(50000, "新手启动资金")]</command>',
-            '示例：<command>[Player.AddDebt(100000, "先前的债务，贷款已经被花完")]</command>',
-        ].join('\n'),
-        enabled: true,
-    },
-];
-
 export const MACRO_EVENT_SYSTEM = {
   keywords: ["随机性", "市场事件", "利好", "利空", "判定", "roll", "宏观"],
   core_mechanism: {
@@ -211,8 +166,6 @@ export const SillyViewConfig = {
     asset_definitions: ASSET_DEFINITIONS,
     background_ai_defaults: DEFAULT_BACKGROUND_AI_SETTINGS,
     market_context_worldbooks: ['SillyView_fx'],
-    life_worldbook_name: 'SillyView_life',
-    life_worldbook_entries: LIFE_WORLDBOOK_ENTRIES,
     
     macro_event_system: MACRO_EVENT_SYSTEM,
 
