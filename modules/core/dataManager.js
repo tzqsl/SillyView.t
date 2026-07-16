@@ -20,6 +20,7 @@ export class DataManager {
 
         this._stateCache = new Map();
         this.hasGameBook = false;
+        this.contextEntriesEnsuredFor = null;
     }
 
     _ensureAssetDataShape(assetData) {
@@ -87,7 +88,7 @@ export class DataManager {
         if (this.hasGameBook) {
             this.logger.log(`游戏世界书 "${lorebookName}" 已找到，正在加载数据...`);
             await this.loadAllEntries(lorebookName);
-            await this.ensureContextEntries(lorebookName);
+            await this.ensureRequiredContextEntries(lorebookName);
             await this.updateDialogueContext();
             this.ui.renderMainInterface();
         } else {
@@ -117,7 +118,11 @@ export class DataManager {
     }
 
     async ensureStateLoaded() {
-        if (this.isInitialized && this.hasGameBook && this._stateCache.size > 0) return true;
+        if (this.isInitialized && this.hasGameBook && this._stateCache.size > 0) {
+            const lorebookName = await this._getLorebookName();
+            if (lorebookName) await this.ensureRequiredContextEntries(lorebookName);
+            return true;
+        }
 
         const lorebookName = await this._getLorebookName();
         if (!lorebookName) return false;
@@ -127,7 +132,7 @@ export class DataManager {
 
         this.hasGameBook = true;
         await this.loadAllEntries(lorebookName);
-        await this.ensureContextEntries(lorebookName);
+        await this.ensureRequiredContextEntries(lorebookName);
         return true;
     }
 
@@ -155,7 +160,7 @@ export class DataManager {
             let entry = entries.find(e => e.name === key);
             if (!entry) {
                 entry = { name: key, content: '', enabled: true };
-                entries.push(entry);
+                this._insertWorldbookEntry(entries, entry, this._getPreferredAfterKey(key));
             }
             if (entry) {
                 entry.content = JSON.stringify(newState, null, 2);
@@ -174,7 +179,7 @@ export class DataManager {
             let entry = entries.find(e => e.name === key);
             if (!entry) {
                 entry = { name: key, content: '', enabled: true };
-                entries.push(entry);
+                this._insertWorldbookEntry(entries, entry, this._getPreferredAfterKey(key));
             }
             entry.content = content;
             entry.enabled = true;
@@ -188,6 +193,39 @@ export class DataManager {
             this.config.world_book_keys.dialogue_context,
             this.config.default_game_state.dialogue_context
         );
+    }
+
+    _getPreferredAfterKey(key) {
+        const keys = this.config.world_book_keys;
+        if (key === keys.kline_context) return keys.dialogue_context;
+        if (key === keys.market_targets) return keys.kline_context;
+        return null;
+    }
+
+    _insertWorldbookEntry(entries, newEntry, afterKey = null) {
+        const afterIndex = afterKey
+            ? entries.findIndex(item => item.name === afterKey)
+            : -1;
+
+        if (afterIndex >= 0) {
+            entries.splice(afterIndex + 1, 0, newEntry);
+        } else {
+            entries.push(newEntry);
+        }
+    }
+
+    async ensureRequiredContextEntries(lorebookName) {
+        const keys = this.config.world_book_keys;
+        const needsEnsure =
+            this.contextEntriesEnsuredFor !== lorebookName ||
+            !this._stateCache.has(keys.dialogue_context) ||
+            !this._stateCache.has(keys.kline_context) ||
+            !this._stateCache.has(keys.market_targets);
+
+        if (!needsEnsure) return;
+
+        await this.ensureContextEntries(lorebookName);
+        this.contextEntriesEnsuredFor = lorebookName;
     }
 
     async ensureContextEntries(lorebookName) {
@@ -219,14 +257,7 @@ export class DataManager {
                 entry.enabled = true;
             } else {
                 const newEntry = { name: key, content: defaultContent, enabled: true };
-                const afterIndex = options.afterKey
-                    ? entries.findIndex(item => item.name === options.afterKey)
-                    : -1;
-                if (afterIndex >= 0) {
-                    entries.splice(afterIndex + 1, 0, newEntry);
-                } else {
-                    entries.push(newEntry);
-                }
+                this._insertWorldbookEntry(entries, newEntry, options.afterKey);
             }
             return entries;
         });
@@ -344,6 +375,7 @@ export class DataManager {
         }
         this.hasGameBook = true;
         this.isInitialized = true;
+        this.contextEntriesEnsuredFor = lorebookName;
         await this.updateAIContext();
         this.ui.renderMainInterface();
     }
