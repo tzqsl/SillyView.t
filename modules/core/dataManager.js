@@ -408,29 +408,49 @@ export class DataManager {
         return `${number >= 0 ? '+' : ''}${number.toFixed(digits)}`;
     }
 
-    _formatCandleLine(candle, previousCandle, label) {
-        const previousClose = previousCandle?.close || candle.open || candle.close || 0;
-        const changePct = previousClose ? ((candle.close / previousClose) - 1) * 100 : 0;
-        const direction = candle.close > candle.open ? 'UP' : (candle.close < candle.open ? 'DOWN' : 'FLAT');
-        return `${label} t=${candle.time} ${direction} O:${Number(candle.open || 0).toFixed(4)} H:${Number(candle.high || 0).toFixed(4)} L:${Number(candle.low || 0).toFixed(4)} C:${Number(candle.close || 0).toFixed(4)} (${this._formatSigned(changePct, 2)}%)`;
+    _compactCandle(candle) {
+        return [
+            candle.time,
+            Number(Number(candle.open || 0).toFixed(4)),
+            Number(Number(candle.high || 0).toFixed(4)),
+            Number(Number(candle.low || 0).toFixed(4)),
+            Number(Number(candle.close || 0).toFixed(4)),
+        ];
     }
 
     _buildRecentKlineSnapshot(assetCode, assetData) {
-        const mapRecent = (candles, label) => (candles || []).slice(-10).map((candle, index, recent) => {
-            const sourceIndex = (candles || []).length - recent.length + index;
-            const previousCandle = index > 0 ? recent[index - 1] : (candles || [])[sourceIndex - 1];
-            return this._formatCandleLine(candle, previousCandle, label);
-        });
+        const mapRecent = candles => (candles || []).slice(-10).map(candle => this._compactCandle(candle));
 
         return {
-            asset_code: assetCode,
-            minute: mapRecent(assetData?.kline_minute, 'M1'),
-            hourly: mapRecent(assetData?.kline_hourly, 'H1'),
+            code: assetCode,
+            columns: ['t', 'o', 'h', 'l', 'c'],
+            m1: mapRecent(assetData?.kline_minute),
+            h1: mapRecent(assetData?.kline_hourly),
         };
     }
 
-    _buildRecentKlineContext(availableAssets) {
-        return availableAssets.map(assetCode => {
+    _selectKlineContextAssets(availableAssets, portfolio) {
+        const selected = new Set();
+        if (this.ui?.currentAsset && availableAssets.includes(this.ui.currentAsset)) {
+            selected.add(this.ui.currentAsset);
+        }
+
+        for (const assetCode of Object.keys(portfolio?.assets || {})) {
+            if (availableAssets.includes(assetCode) && (portfolio.assets[assetCode]?.trades || []).length > 0) {
+                selected.add(assetCode);
+            }
+            if (selected.size >= 3) break;
+        }
+
+        if (selected.size === 0 && availableAssets.length > 0) {
+            selected.add(availableAssets[0]);
+        }
+
+        return [...selected].slice(0, 3);
+    }
+
+    _buildRecentKlineContext(assetCodes) {
+        return assetCodes.map(assetCode => {
             const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
             return this._buildRecentKlineSnapshot(assetCode, assetData);
         });
@@ -489,13 +509,8 @@ export class DataManager {
         const marketLines = marketSummary.map(item =>
             `- ${item.name || item.code} (${item.code}): ${Number(item.latest_price || 0).toFixed(4)}，24h ${this._formatSigned(item.change_24h_pct)}%`
         );
-        const recentKlines = this._buildRecentKlineContext(availableAssets);
-        const klineLines = recentKlines.flatMap(item => [
-            `- ${item.asset_code} last 10 minute candles:`,
-            ...(item.minute.length > 0 ? item.minute.map(line => `  ${line}`) : ['  none']),
-            `- ${item.asset_code} last 10 hourly candles:`,
-            ...(item.hourly.length > 0 ? item.hourly.map(line => `  ${line}`) : ['  none']),
-        ]);
+        const klineAssetCodes = this._selectKlineContextAssets(availableAssets, portfolio);
+        const recentKlines = this._buildRecentKlineContext(klineAssetCodes);
         const totalNetWorth = this._calculatePortfolioMarkedValue(portfolio);
 
         const lines = [
@@ -525,7 +540,11 @@ export class DataManager {
             '对话使用建议：角色可以自然提及以上市场状态、盈亏压力、债务压力、新闻影响，但不要在普通对话中擅自输出市场指令，除非剧情确实需要触发财务或市场命令。',
         ];
 
-        lines.splice(Math.max(lines.length - 1, 0), 0, 'Recent K-line context for AI judgment:', ...klineLines, '');
+        lines.splice(
+            Math.max(lines.length - 1, 0),
+            0,
+            `Recent K-line context is stored in recent_klines for: ${klineAssetCodes.join(', ') || 'none'}. Format columns=[t,o,h,l,c].`
+        );
 
         await this.updateState(keys.dialogue_context, context => ({
             ...(context && typeof context === 'object' && !Array.isArray(context) ? context : {}),
