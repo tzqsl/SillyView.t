@@ -131,6 +131,8 @@ export class SillyViewApp {
         let hasUpdatedFinancials = false;
         let hasUpdatedTimeline = false;
         let hasUpdatedTargets = false;
+        let maxAdvancedTimeIndex = 0;
+        const headlineAssetCodes = new Set();
         const advancedAssetCodes = new Set();
 
         for (const command of commands) {
@@ -232,6 +234,8 @@ export class SillyViewApp {
                 const minuteCandles = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(assetCodeForUpdate, newCandles);
                 await this.ui.handleAiResponse(newCandles, msg, assetCodeForUpdate, minuteCandles);
                 advancedAssetCodes.add(assetCodeForUpdate);
+                headlineAssetCodes.add(assetCodeForUpdate);
+                maxAdvancedTimeIndex = Math.max(maxAdvancedTimeIndex, newCandles[newCandles.length - 1].time || 0);
                 await this._checkLiquidations();
             }
         }
@@ -248,6 +252,8 @@ export class SillyViewApp {
                 const assetDef = SillyViewConfig.asset_definitions[assetCode];
                 if (assetDef) await this.data.aggregateHourlyToDaily(assetCode, assetDef.trading_hours_per_day);
                 maxFallbackTime = Math.max(maxFallbackTime, fallbackCandles[fallbackCandles.length - 1].time);
+                headlineAssetCodes.add(assetCode);
+                maxAdvancedTimeIndex = Math.max(maxAdvancedTimeIndex, fallbackCandles[fallbackCandles.length - 1].time || 0);
                 hasAdvanced = true;
             }
             if (maxFallbackTime > 0) {
@@ -259,6 +265,10 @@ export class SillyViewApp {
             }
             await this._checkLiquidations();
             this.ui.renderAll();
+        }
+
+        if (maxAdvancedTimeIndex > 0) {
+            await this._recordHeadlineOnce(msg, maxAdvancedTimeIndex, [...headlineAssetCodes]);
         }
 
         // **FIX**: If the turn started as a key moment, ALWAYS reset the candle count, regardless of what the AI responded with.
@@ -281,6 +291,42 @@ export class SillyViewApp {
         
         await this.data.updateAIContext();
         await this.data.saveAllEntries();
+    }
+
+    _extractHeadline(msg) {
+        const headlineMatch = String(msg || '').match(/<headline>([\s\S]*?)<\/headline>/i);
+        return headlineMatch?.[1]?.replace(/\s+/g, ' ').trim() || '';
+    }
+
+    async _recordHeadlineOnce(msg, timeIndex, assetCodes = []) {
+        const headline = this._extractHeadline(msg);
+        if (!headline) return;
+
+        const normalizedHeadline = headline.toLowerCase();
+        const uniqueAssetCodes = [...new Set(assetCodes)].filter(Boolean);
+        const assetCode = uniqueAssetCodes.length === 1 ? uniqueAssetCodes[0] : 'GLOBAL';
+
+        await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
+            if (!Array.isArray(market.news_feed)) market.news_feed = [];
+            const seenNews = new Set();
+            market.news_feed = market.news_feed.filter(item => {
+                const key = `${Number(item.time_index)}::${String(item.headline || '').trim().toLowerCase()}`;
+                if (seenNews.has(key)) return false;
+                seenNews.add(key);
+                return true;
+            });
+
+            const alreadyExists = market.news_feed.some(item =>
+                Number(item.time_index) === Number(timeIndex) &&
+                String(item.headline || '').trim().toLowerCase() === normalizedHeadline
+            );
+
+            if (!alreadyExists) {
+                market.news_feed.unshift({ time_index: timeIndex, headline, asset_code: assetCode });
+                if (market.news_feed.length > 50) market.news_feed = market.news_feed.slice(0, 50);
+            }
+            return market;
+        });
     }
     
     async onQuickModeToggled(isEnabled) {

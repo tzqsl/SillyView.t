@@ -514,14 +514,6 @@ export class UIRenderer {
             return market;
         });
 
-        const headlineMatch = msg.match(/<headline>(.*?)<\/headline>/s);
-        if (headlineMatch && headlineMatch[1]) {
-            await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
-                market.news_feed.unshift({ time_index: newTimeIndex, headline: headlineMatch[1].trim(), asset_code: assetCode });
-                if (market.news_feed.length > 50) market.news_feed.pop();
-                return market;
-            });
-        }
         const assetDef = SillyViewConfig.asset_definitions[assetCode];
         await this.data.aggregateHourlyToDaily(assetCode, assetDef.trading_hours_per_day);
         
