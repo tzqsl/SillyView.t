@@ -310,6 +310,66 @@ export class EventHandler {
         }
     }
 
+    _readPositionRiskValue(input, label) {
+        const raw = input?.value?.trim();
+        if (!raw) return null;
+
+        const value = parseFloat(raw);
+        if (!Number.isFinite(value) || value <= 0) {
+            this.dependencies.win.toastr.error(`请输入有效的${label}。`);
+            return undefined;
+        }
+        return value;
+    }
+
+    async adjustPositionRiskControls(assetCode, itemEl) {
+        const portfolio = this.data.getState(this.dependencies.config.world_book_keys.player_portfolio);
+        const position = this.dependencies.positionCalculator.calculate(assetCode, portfolio);
+        if (!position.type || position.totalAmount <= 0) {
+            this.dependencies.win.toastr.warning('当前仓位不存在，无法调整止盈止损。');
+            this.ui.renderAll();
+            return;
+        }
+
+        const assetData = this.data.getState(`${this.dependencies.config.world_book_keys.asset_prefix}${assetCode}`);
+        const currentPrice = assetData?.current_price ?? position.avgEntryPrice;
+        const takeProfit = this._readPositionRiskValue(itemEl.querySelector('[data-risk-field="take_profit"]'), '止盈价');
+        if (takeProfit === undefined) return;
+        const stopLoss = this._readPositionRiskValue(itemEl.querySelector('[data-risk-field="stop_loss"]'), '止损价');
+        if (stopLoss === undefined) return;
+
+        const isLong = position.type === 'long';
+        if (takeProfit !== null) {
+            const invalid = isLong ? takeProfit <= currentPrice : takeProfit >= currentPrice;
+            if (invalid) {
+                this.dependencies.win.toastr.error(isLong ? '多头止盈价必须高于当前价。' : '空头止盈价必须低于当前价。');
+                return;
+            }
+        }
+        if (stopLoss !== null) {
+            const invalid = isLong ? stopLoss >= currentPrice : stopLoss <= currentPrice;
+            if (invalid) {
+                this.dependencies.win.toastr.error(isLong ? '多头止损价必须低于当前价。' : '空头止损价必须高于当前价。');
+                return;
+            }
+        }
+
+        const updated = await this.data.updatePositionRiskControls(assetCode, {
+            take_profit: takeProfit,
+            stop_loss: stopLoss,
+        });
+        if (!updated) {
+            this.dependencies.win.toastr.warning('当前仓位不存在，无法调整止盈止损。');
+            this.ui.renderAll();
+            return;
+        }
+
+        await this.data.updateAIContext();
+        await this.data.saveAllEntries();
+        this.dependencies.win.toastr.success(`${assetCode} 止盈止损已更新。`);
+        this.ui.renderAll();
+    }
+
     bindMainInterfaceEvents() {
         this.logger.log("正在绑定主界面事件...");
         
@@ -348,6 +408,7 @@ export class EventHandler {
                 const saveBgAiBtn = target.closest('#sv-save-bg-ai-btn');
                 const fetchBgAiModelsBtn = target.closest('#sv-fetch-bg-ai-models-btn');
                 const bgAiModelOption = target.closest('.sv-bg-ai-model-option');
+                const positionRiskSaveBtn = target.closest('.sv-position-risk-save');
 
                 if (tabButton) {
                     this.ui.switchSidebarTab(tabButton.dataset.tab);
@@ -371,6 +432,10 @@ export class EventHandler {
                     await this.saveBackgroundAISettings();
                     this.dependencies.win.toastr.success(`已选择模型: ${bgAiModelOption.dataset.model}`);
                     this.ui.renderAll();
+                } else if (positionRiskSaveBtn) {
+                    const itemEl = positionRiskSaveBtn.closest('.sv-asset-item');
+                    const assetCode = positionRiskSaveBtn.dataset.assetCode || itemEl?.dataset.assetCode;
+                    if (assetCode && itemEl) await this.adjustPositionRiskControls(assetCode, itemEl);
                 } else if (resetBtn) {
                     this.modals.showConfirmation(
                         `<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: var(--red-400);">确认重置？</h3><p>此操作将永久删除当前角色的所有SillyView市场、资产和账户数据并重新开始，但会保留后台模型设置。此操作无法撤销。</p>`,

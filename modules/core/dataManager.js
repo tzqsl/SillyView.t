@@ -680,8 +680,15 @@ export class DataManager {
             const pnlPct = position.totalAmount > 0 ? (pnl / position.totalAmount) * 100 : 0;
             const direction = position.type === 'short' ? '空头' : '多头';
             const leverage = position.isLeveraged ? ` ${position.leverage}x` : '';
+            const riskControls = portfolio.assets?.[assetCode]?.risk_controls || {};
+            const takeProfit = Number(riskControls.take_profit);
+            const stopLoss = Number(riskControls.stop_loss);
+            const riskText = [
+                Number.isFinite(takeProfit) && takeProfit > 0 ? `止盈 ${takeProfit.toFixed(4)}` : '止盈 未设置',
+                Number.isFinite(stopLoss) && stopLoss > 0 ? `止损 ${stopLoss.toFixed(4)}` : '止损 未设置',
+            ].join('，');
 
-            lines.push(`- ${assetCode}: ${direction}${leverage}，保证金 ${position.totalAmount.toFixed(2)}，入场 ${position.avgEntryPrice.toFixed(4)}，现价 ${lastPrice.toFixed(4)}，未实现盈亏 ${this._formatSigned(pnl)} (${this._formatSigned(pnlPct)}%)`);
+            lines.push(`- ${assetCode}: ${direction}${leverage}，保证金 ${position.totalAmount.toFixed(2)}，入场 ${position.avgEntryPrice.toFixed(4)}，现价 ${lastPrice.toFixed(4)}，${riskText}，未实现盈亏 ${this._formatSigned(pnl)} (${this._formatSigned(pnlPct)}%)`);
         }
 
         return lines.length > 0 ? lines : ['- 当前没有持仓。'];
@@ -890,6 +897,44 @@ export class DataManager {
         if (normalized.take_profit !== null) labels.push(`止盈 ${normalized.take_profit.toFixed(4)}`);
         if (normalized.stop_loss !== null) labels.push(`止损 ${normalized.stop_loss.toFixed(4)}`);
         return labels.length > 0 ? ` (${labels.join(' / ')})` : '';
+    }
+
+    async updatePositionRiskControls(assetCode, riskControls) {
+        const portfolioKey = this.config.world_book_keys.player_portfolio;
+        const normalized = this._normalizeRiskControls(riskControls) || { take_profit: null, stop_loss: null };
+
+        let updated = false;
+        await this.updateState(portfolioKey, portfolio => {
+            const position = this.positionCalculator.calculate(assetCode, portfolio);
+            if (!position.type || position.totalAmount <= 0) return portfolio;
+
+            if (!portfolio.assets) portfolio.assets = {};
+            if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
+
+            if (normalized.take_profit === null && normalized.stop_loss === null) {
+                delete portfolio.assets[assetCode].risk_controls;
+            } else {
+                portfolio.assets[assetCode].risk_controls = normalized;
+            }
+
+            const labels = [];
+            labels.push(normalized.take_profit === null ? '止盈 未设置' : `止盈 ${normalized.take_profit.toFixed(4)}`);
+            labels.push(normalized.stop_loss === null ? '止损 未设置' : `止损 ${normalized.stop_loss.toFixed(4)}`);
+            if (!portfolio.actions_this_turn) portfolio.actions_this_turn = [];
+            portfolio.actions_this_turn.push({
+                id: Date.now(),
+                text: `调整 ${assetCode} ${labels.join(' / ')}`,
+                executedAt: null,
+                intent: 'adjust_risk_controls',
+                assetCode,
+                riskControls: normalized,
+            });
+
+            updated = true;
+            return portfolio;
+        });
+
+        return updated ? normalized : null;
     }
 
     async executeAndRecordTrade(intent, amount, assetCode, executionPrice = null, leverage = 1, riskControls = null) {

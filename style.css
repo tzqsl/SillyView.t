@@ -314,6 +314,32 @@
     color: var(--text-gray-400);
     display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem;
 }
+.sv-position-risk-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    align-items: end;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-gray-700);
+}
+.sv-position-risk-controls label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--text-gray-400);
+}
+.sv-position-risk-controls .sv-input {
+    box-sizing: border-box;
+    margin-top: 0;
+    padding: 0.375rem 0.5rem;
+}
+.sv-position-risk-save {
+    grid-column: 1 / -1;
+    white-space: nowrap;
+    padding: 0.375rem 0.625rem;
+}
 
 /* --- 新闻和记录Tab内容样式 --- */
 .sv-feed-list {

@@ -130,7 +130,7 @@ export class TradeView {
             container.innerHTML = actions.map(a => `
                 <div style="display:flex; justify-content: space-between;">
                     <span>${a.text}</span>
-                    <span>@ ${a.executedAt.toFixed(4)}</span>
+                    <span>${Number.isFinite(a.executedAt) ? `@ ${a.executedAt.toFixed(4)}` : ''}</span>
                 </div>
             `).join('');
         }

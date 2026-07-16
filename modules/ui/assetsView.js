@@ -81,9 +81,16 @@ export class AssetsView {
                 const typeLabel = position.type === 'long' 
                     ? `<span style="color:var(--green-400); font-weight:bold;">多头</span>` 
                     : `<span style="color:var(--red-400); font-weight:bold;">空头</span>`;
+                const riskControls = portfolio.assets?.[assetCode]?.risk_controls || {};
+                const takeProfit = Number(riskControls.take_profit);
+                const stopLoss = Number(riskControls.stop_loss);
+                const takeProfitValue = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit.toFixed(4) : '';
+                const stopLossValue = Number.isFinite(stopLoss) && stopLoss > 0 ? stopLoss.toFixed(4) : '';
+                const takeProfitText = takeProfitValue || '未设置';
+                const stopLossText = stopLossValue || '未设置';
 
                 assetsHtml += `
-                    <div class="sv-asset-item">
+                    <div class="sv-asset-item" data-asset-code="${assetCode}">
                         <div class="sv-asset-item-header">
                             <span class="sv-asset-item-code">${assetCode} ${typeLabel} ${position.isLeveraged ? `(${position.leverage}x)` : ''}</span>
                             <span class="sv-asset-item-pnl" style="color:${pnlColor};">${sign}${pnl.toFixed(2)} (${sign}${pnlPercent.toFixed(2)}%)</span>
@@ -93,6 +100,19 @@ export class AssetsView {
                             <span>当前价值:</span><span>${currentValue.toFixed(2)}</span>
                             <span>平均成本价:</span><span>${position.avgEntryPrice.toFixed(4)}</span>
                             <span>当前市价:</span><span>${lastPrice.toFixed(4)}</span>
+                            <span>止盈价:</span><span>${takeProfitText}</span>
+                            <span>止损价:</span><span>${stopLossText}</span>
+                        </div>
+                        <div class="sv-position-risk-controls">
+                            <label>
+                                <span>止盈</span>
+                                <input type="number" step="any" min="0" placeholder="未设置" value="${takeProfitValue}" class="sv-input" data-risk-field="take_profit">
+                            </label>
+                            <label>
+                                <span>止损</span>
+                                <input type="number" step="any" min="0" placeholder="未设置" value="${stopLossValue}" class="sv-input" data-risk-field="stop_loss">
+                            </label>
+                            <button type="button" class="sv-button sv-button-blue sv-position-risk-save" data-asset-code="${assetCode}">保存调整</button>
                         </div>
                     </div>
                 `;
