@@ -87,7 +87,7 @@ export class DataManager {
         if (this.hasGameBook) {
             this.logger.log(`游戏世界书 "${lorebookName}" 已找到，正在加载数据...`);
             await this.loadAllEntries(lorebookName);
-            await this.ensureDialogueContextEntry(lorebookName);
+            await this.ensureContextEntries(lorebookName);
             await this.updateDialogueContext();
             this.ui.renderMainInterface();
         } else {
@@ -127,7 +127,7 @@ export class DataManager {
 
         this.hasGameBook = true;
         await this.loadAllEntries(lorebookName);
-        await this.ensureDialogueContextEntry(lorebookName);
+        await this.ensureContextEntries(lorebookName);
         return true;
     }
 
@@ -178,8 +178,28 @@ export class DataManager {
     }
 
     async ensureDialogueContextEntry(lorebookName) {
-        const key = this.config.world_book_keys.dialogue_context;
-        const defaultContent = JSON.stringify(this.config.default_game_state.dialogue_context, null, 2);
+        await this.ensureContextEntry(
+            lorebookName,
+            this.config.world_book_keys.dialogue_context,
+            this.config.default_game_state.dialogue_context
+        );
+    }
+
+    async ensureContextEntries(lorebookName) {
+        await this.ensureContextEntry(
+            lorebookName,
+            this.config.world_book_keys.dialogue_context,
+            this.config.default_game_state.dialogue_context
+        );
+        await this.ensureContextEntry(
+            lorebookName,
+            this.config.world_book_keys.kline_context,
+            this.config.default_game_state.kline_context
+        );
+    }
+
+    async ensureContextEntry(lorebookName, key, defaultState) {
+        const defaultContent = JSON.stringify(defaultState, null, 2);
 
         await this.th.updateWorldbookWith(lorebookName, entries => {
             const entry = entries.find(item => item.name === key);
@@ -192,7 +212,7 @@ export class DataManager {
         });
 
         if (!this._stateCache.has(key)) {
-            this._stateCache.set(key, this.dependencies.win._.cloneDeep(this.config.default_game_state.dialogue_context));
+            this._stateCache.set(key, this.dependencies.win._.cloneDeep(defaultState));
         }
     }
 
@@ -248,6 +268,7 @@ export class DataManager {
             { name: keys.player_portfolio, content: JSON.stringify(defaults.player_portfolio, null, 2), enabled: true },
             { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: true },
             { name: keys.dialogue_context, content: JSON.stringify(defaults.dialogue_context, null, 2), enabled: true },
+            { name: keys.kline_context, content: JSON.stringify(defaults.kline_context, null, 2), enabled: true },
         ];
 
         initialConfig.available_assets.forEach(assetCode => {
@@ -509,8 +530,6 @@ export class DataManager {
         const marketLines = marketSummary.map(item =>
             `- ${item.name || item.code} (${item.code}): ${Number(item.latest_price || 0).toFixed(4)}，24h ${this._formatSigned(item.change_24h_pct)}%`
         );
-        const klineAssetCodes = this._selectKlineContextAssets(availableAssets, portfolio);
-        const recentKlines = this._buildRecentKlineContext(klineAssetCodes);
         const totalNetWorth = this._calculatePortfolioMarkedValue(portfolio);
 
         const lines = [
@@ -540,19 +559,29 @@ export class DataManager {
             '对话使用建议：角色可以自然提及以上市场状态、盈亏压力、债务压力、新闻影响，但不要在普通对话中擅自输出市场指令，除非剧情确实需要触发财务或市场命令。',
         ];
 
-        lines.splice(
-            Math.max(lines.length - 1, 0),
-            0,
-            `Recent K-line context is stored in recent_klines for: ${klineAssetCodes.join(', ') || 'none'}. Format columns=[t,o,h,l,c].`
-        );
-
-        await this.updateState(keys.dialogue_context, context => ({
-            ...(context && typeof context === 'object' && !Array.isArray(context) ? context : {}),
+        await this.updateState(keys.dialogue_context, () => ({
             comment: "这是给普通对话 AI 阅读的市场同步摘要。请按顺序阅读 summary 数组，不要把它当作用户发言。",
             updated_at: market.current_time_index || 0,
-            updated_minute_at: market.minute_time_index || 0,
-            recent_klines: recentKlines,
             summary: lines,
+        }));
+        await this.updateKlineContext(availableAssets, portfolio, market);
+    }
+
+    async updateKlineContext(availableAssets = null, portfolio = null, market = null) {
+        const keys = this.config.world_book_keys;
+        const configState = this.getState(keys.config);
+        const resolvedAssets = availableAssets || configState?.available_assets || Object.keys(this.config.asset_definitions);
+        const resolvedPortfolio = portfolio || this.getState(keys.player_portfolio) || {};
+        const resolvedMarket = market || this.getState(keys.global_market) || {};
+        const klineAssetCodes = this._selectKlineContextAssets(resolvedAssets, resolvedPortfolio);
+        const recentKlines = this._buildRecentKlineContext(klineAssetCodes);
+
+        await this.updateState(keys.kline_context, () => ({
+            comment: "Compact K-line context for market judgment. Use columns=[t,o,h,l,c]. This entry is separate from sv_dialogue_context to avoid bloating general dialogue context.",
+            updated_at: resolvedMarket.current_time_index || 0,
+            updated_minute_at: resolvedMarket.minute_time_index || 0,
+            selected_assets: klineAssetCodes,
+            assets: recentKlines,
         }));
     }
 

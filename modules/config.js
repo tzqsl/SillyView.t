@@ -177,6 +177,7 @@ export const SillyViewConfig = {
         asset_prefix: 'sv_asset_',
         ai_context: 'sv_ai_context',
         dialogue_context: 'sv_dialogue_context',
+        kline_context: 'sv_kline_context',
     },
 
     loan_config: {
@@ -230,6 +231,12 @@ export const SillyViewConfig = {
             comment: "这是AI可见的市场摘要。请基于此信息进行决策。",
             market_summary: [],
             player_cash: 0.00
+        },
+        kline_context: {
+            comment: "Compact K-line context for market judgment. columns=[t,o,h,l,c].",
+            updated_at: 0,
+            updated_minute_at: 0,
+            assets: []
         },
         dialogue_context: {
             comment: "这是给普通对话 AI 阅读的市场同步摘要。请按顺序阅读 summary 数组，不要把它当作用户发言。",
