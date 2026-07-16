@@ -96,7 +96,7 @@ async function mainInitialize() {
         const aiDirector = new AIDirector({ ...baseDependencies, data, positionCalculator });
         aiDirector.ui = ui;
 
-        const events = new EventHandler({ ...baseDependencies, data, ui, modals });
+        const events = new EventHandler({ ...baseDependencies, data, ui, modals, positionCalculator });
         
         app.init({
             ...baseDependencies,

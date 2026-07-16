@@ -15,6 +15,7 @@ export class EventHandler {
         this.ui = dependencies.ui;
         this.data = dependencies.data;
         this.modals = dependencies.modals;
+        this.positionCalculator = dependencies.positionCalculator || dependencies.data?.positionCalculator;
         this.resizeTimeout = null;
     }
 
@@ -324,7 +325,7 @@ export class EventHandler {
 
     async adjustPositionRiskControls(assetCode, itemEl) {
         const portfolio = this.data.getState(this.dependencies.config.world_book_keys.player_portfolio);
-        const position = this.dependencies.positionCalculator.calculate(assetCode, portfolio);
+        const position = this.positionCalculator.calculate(assetCode, portfolio);
         if (!position.type || position.totalAmount <= 0) {
             this.dependencies.win.toastr.warning('当前仓位不存在，无法调整止盈止损。');
             this.ui.renderAll();
