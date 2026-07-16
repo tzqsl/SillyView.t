@@ -152,9 +152,14 @@ export class DataManager {
         this._stateCache.set(key, newState);
 
         await this.th.updateWorldbookWith(lorebookName, (entries) => {
-            const entry = entries.find(e => e.name === key);
+            let entry = entries.find(e => e.name === key);
+            if (!entry) {
+                entry = { name: key, content: '', enabled: true };
+                entries.push(entry);
+            }
             if (entry) {
                 entry.content = JSON.stringify(newState, null, 2);
+                entry.enabled = true;
             }
             return entries;
         });
