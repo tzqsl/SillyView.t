@@ -22,6 +22,51 @@ export class DataManager {
         this.hasGameBook = false;
     }
 
+    _ensureAssetDataShape(assetData) {
+        if (!assetData || typeof assetData !== 'object') return assetData;
+
+        if (!Array.isArray(assetData.kline_hourly)) assetData.kline_hourly = [];
+        if (!Array.isArray(assetData.kline_daily)) assetData.kline_daily = [];
+        if (!Array.isArray(assetData.kline_minute)) {
+            const baseCandle = assetData.kline_hourly[assetData.kline_hourly.length - 1] || {
+                time: 0,
+                open: assetData.current_price || 0,
+                high: assetData.current_price || 0,
+                low: assetData.current_price || 0,
+                close: assetData.current_price || 0,
+                volume: 0,
+            };
+            const minuteTime = Number.isFinite(baseCandle.time) ? baseCandle.time * 60 : 0;
+            assetData.kline_minute = [{
+                time: minuteTime,
+                open: baseCandle.close,
+                high: baseCandle.close,
+                low: baseCandle.close,
+                close: baseCandle.close,
+                volume: 0,
+                pattern: 'migration_seed',
+            }];
+        }
+
+        const lastMinute = assetData.kline_minute[assetData.kline_minute.length - 1];
+        const lastHourly = assetData.kline_hourly[assetData.kline_hourly.length - 1];
+        assetData.current_price = lastMinute?.close ?? lastHourly?.close ?? assetData.current_price ?? 0;
+        return assetData;
+    }
+
+    _trimCandles(assetData) {
+        const configState = this._stateCache.get(this.config.world_book_keys.config) || {};
+        const maxHourly = configState.max_hourly_records || this.config.default_game_state.config.max_hourly_records || 240;
+        const maxMinute = configState.max_minute_records || this.config.default_game_state.config.max_minute_records || 720;
+
+        if (Array.isArray(assetData.kline_hourly) && assetData.kline_hourly.length > maxHourly) {
+            assetData.kline_hourly = assetData.kline_hourly.slice(-maxHourly);
+        }
+        if (Array.isArray(assetData.kline_minute) && assetData.kline_minute.length > maxMinute) {
+            assetData.kline_minute = assetData.kline_minute.slice(-maxMinute);
+        }
+    }
+
     async _getLorebookName() {
         const charName = await this.th.substitudeMacros('{{char}}');
         if (!charName || charName === '{{char}}') return null;
@@ -61,9 +106,29 @@ export class DataManager {
 
         this._stateCache.clear();
         for (const entry of entries) {
-            this._stateCache.set(entry.name, this._parseEntryContent(entry.content));
+            let parsed = this._parseEntryContent(entry.content);
+            if (entry.name?.startsWith(this.config.world_book_keys.asset_prefix)) {
+                parsed = this._ensureAssetDataShape(parsed);
+            }
+            this._stateCache.set(entry.name, parsed);
         }
+        this.isInitialized = true;
         this.logger.success("所有游戏数据已加载到缓存。");
+    }
+
+    async ensureStateLoaded() {
+        if (this.isInitialized && this.hasGameBook && this._stateCache.size > 0) return true;
+
+        const lorebookName = await this._getLorebookName();
+        if (!lorebookName) return false;
+
+        const allBooks = await this.th.getWorldbookNames();
+        if (!allBooks.includes(lorebookName)) return false;
+
+        this.hasGameBook = true;
+        await this.loadAllEntries(lorebookName);
+        await this.ensureDialogueContextEntry(lorebookName);
+        return true;
     }
 
     _parseEntryContent(content) {
@@ -202,6 +267,15 @@ export class DataManager {
                         close: assetDef.initial_price,
                         volume: 0
                     }],
+                    kline_minute: [{
+                        time: 0,
+                        open: assetDef.initial_price,
+                        high: assetDef.initial_price,
+                        low: assetDef.initial_price,
+                        close: assetDef.initial_price,
+                        volume: 0,
+                        pattern: 'seed',
+                    }],
                     kline_daily: [],
                 };
                 entriesTemplate.push({
@@ -227,6 +301,7 @@ export class DataManager {
             this._stateCache.set(entry.name, this._parseEntryContent(entry.content));
         }
         this.hasGameBook = true;
+        this.isInitialized = true;
         await this.updateAIContext();
         this.ui.renderMainInterface();
     }
@@ -333,6 +408,34 @@ export class DataManager {
         return `${number >= 0 ? '+' : ''}${number.toFixed(digits)}`;
     }
 
+    _formatCandleLine(candle, previousCandle, label) {
+        const previousClose = previousCandle?.close || candle.open || candle.close || 0;
+        const changePct = previousClose ? ((candle.close / previousClose) - 1) * 100 : 0;
+        const direction = candle.close > candle.open ? 'UP' : (candle.close < candle.open ? 'DOWN' : 'FLAT');
+        return `${label} t=${candle.time} ${direction} O:${Number(candle.open || 0).toFixed(4)} H:${Number(candle.high || 0).toFixed(4)} L:${Number(candle.low || 0).toFixed(4)} C:${Number(candle.close || 0).toFixed(4)} (${this._formatSigned(changePct, 2)}%)`;
+    }
+
+    _buildRecentKlineSnapshot(assetCode, assetData) {
+        const mapRecent = (candles, label) => (candles || []).slice(-10).map((candle, index, recent) => {
+            const sourceIndex = (candles || []).length - recent.length + index;
+            const previousCandle = index > 0 ? recent[index - 1] : (candles || [])[sourceIndex - 1];
+            return this._formatCandleLine(candle, previousCandle, label);
+        });
+
+        return {
+            asset_code: assetCode,
+            minute: mapRecent(assetData?.kline_minute, 'M1'),
+            hourly: mapRecent(assetData?.kline_hourly, 'H1'),
+        };
+    }
+
+    _buildRecentKlineContext(availableAssets) {
+        return availableAssets.map(assetCode => {
+            const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+            return this._buildRecentKlineSnapshot(assetCode, assetData);
+        });
+    }
+
     _buildPositionSummary(portfolio) {
         const lines = [];
         for (const assetCode of Object.keys(portfolio?.assets || {})) {
@@ -386,6 +489,13 @@ export class DataManager {
         const marketLines = marketSummary.map(item =>
             `- ${item.name || item.code} (${item.code}): ${Number(item.latest_price || 0).toFixed(4)}，24h ${this._formatSigned(item.change_24h_pct)}%`
         );
+        const recentKlines = this._buildRecentKlineContext(availableAssets);
+        const klineLines = recentKlines.flatMap(item => [
+            `- ${item.asset_code} last 10 minute candles:`,
+            ...(item.minute.length > 0 ? item.minute.map(line => `  ${line}`) : ['  none']),
+            `- ${item.asset_code} last 10 hourly candles:`,
+            ...(item.hourly.length > 0 ? item.hourly.map(line => `  ${line}`) : ['  none']),
+        ]);
         const totalNetWorth = this._calculatePortfolioMarkedValue(portfolio);
 
         const lines = [
@@ -415,10 +525,14 @@ export class DataManager {
             '对话使用建议：角色可以自然提及以上市场状态、盈亏压力、债务压力、新闻影响，但不要在普通对话中擅自输出市场指令，除非剧情确实需要触发财务或市场命令。',
         ];
 
+        lines.splice(Math.max(lines.length - 1, 0), 0, 'Recent K-line context for AI judgment:', ...klineLines, '');
+
         await this.updateState(keys.dialogue_context, context => ({
             ...(context && typeof context === 'object' && !Array.isArray(context) ? context : {}),
             comment: "这是给普通对话 AI 阅读的市场同步摘要。请按顺序阅读 summary 数组，不要把它当作用户发言。",
             updated_at: market.current_time_index || 0,
+            updated_minute_at: market.minute_time_index || 0,
+            recent_klines: recentKlines,
             summary: lines,
         }));
     }
@@ -523,8 +637,10 @@ export class DataManager {
         }
 
         const isLeveragedTrade = leverage > 1;
-        const lastCandle = assetData.kline_hourly.slice(-1)[0];
-        const rawPrice = executionPrice !== null ? executionPrice : lastCandle.close;
+        this._ensureAssetDataShape(assetData);
+        const lastMinuteCandle = assetData.kline_minute.slice(-1)[0];
+        const lastCandle = lastMinuteCandle || assetData.kline_hourly.slice(-1)[0];
+        const rawPrice = executionPrice !== null ? executionPrice : (assetData.current_price ?? lastCandle.close);
         const price = this._calculateExecutionPrice(assetCode, intent, rawPrice);
         const position = this.positionCalculator.calculate(assetCode, portfolio);
         const tradeConfig = this._getTradeConfig(assetCode);
@@ -703,12 +819,42 @@ export class DataManager {
         }
     }
     
-    async updateAssetCandles(assetCode, newCandles) {
+    async updateAssetCandles(assetCode, newCandles, minuteCandles = []) {
         const assetKey = `${this.config.world_book_keys.asset_prefix}${assetCode}`;
         await this.updateState(assetKey, assetData => {
             if (!assetData) return null;
-            assetData.kline_hourly.push(...newCandles);
-            assetData.current_price = newCandles[newCandles.length - 1].close;
+            this._ensureAssetDataShape(assetData);
+
+            if (Array.isArray(newCandles) && newCandles.length > 0) {
+                const lastHourlyTime = assetData.kline_hourly[assetData.kline_hourly.length - 1]?.time ?? -Infinity;
+                assetData.kline_hourly.push(...newCandles.filter(c => c.time > lastHourlyTime));
+            }
+
+            if (Array.isArray(minuteCandles) && minuteCandles.length > 0) {
+                const lastMinuteTime = assetData.kline_minute[assetData.kline_minute.length - 1]?.time ?? -Infinity;
+                assetData.kline_minute.push(...minuteCandles.filter(c => c.time > lastMinuteTime));
+            }
+
+            const lastMinute = assetData.kline_minute[assetData.kline_minute.length - 1];
+            const lastHourly = assetData.kline_hourly[assetData.kline_hourly.length - 1];
+            assetData.current_price = lastMinute?.close ?? lastHourly?.close ?? assetData.current_price;
+            this._trimCandles(assetData);
+            return assetData;
+        });
+    }
+
+    async appendMinuteCandles(assetCode, minuteCandles) {
+        if (!Array.isArray(minuteCandles) || minuteCandles.length === 0) return;
+
+        const assetKey = `${this.config.world_book_keys.asset_prefix}${assetCode}`;
+        await this.updateState(assetKey, assetData => {
+            if (!assetData) return null;
+            this._ensureAssetDataShape(assetData);
+
+            const lastMinuteTime = assetData.kline_minute[assetData.kline_minute.length - 1]?.time ?? -Infinity;
+            assetData.kline_minute.push(...minuteCandles.filter(c => c.time > lastMinuteTime));
+            assetData.current_price = assetData.kline_minute[assetData.kline_minute.length - 1]?.close ?? assetData.current_price;
+            this._trimCandles(assetData);
             return assetData;
         });
     }

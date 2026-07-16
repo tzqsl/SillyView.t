@@ -110,6 +110,7 @@ export class UIRenderer {
                          <h1 style="font-size: 1.25rem; font-weight: 700; color: var(--cyan-400);">SillyView</h1>
                          <select id="sillyview-asset-selector" class="sv-select">${assetOptions}</select>
                          <div id="sv-timescale-selector">
+                            <button id="sv-timescale-minute">分</button>
                             <button id="sv-timescale-hourly">1H</button>
                             <button id="sv-timescale-daily">日</button>
                          </div>
@@ -322,7 +323,7 @@ export class UIRenderer {
             
             const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.currentAsset}`);
             if(assetData) {
-                const sourceData = this.currentTimeframe === 'DAILY' ? assetData.kline_daily : assetData.kline_hourly;
+                const sourceData = this._getKlineDataForTimeframe(assetData);
                 const fullCandle = sourceData.find(c => c.time === candleData.time);
                 dataVolume.textContent = fullCandle ? fullCandle.volume.toLocaleString() : '-';
             }
@@ -331,11 +332,18 @@ export class UIRenderer {
             this.tradeView.updateDataWindowWithLastCandle();
         }
     }
+
+    _getKlineDataForTimeframe(assetData) {
+        if (!assetData) return [];
+        if (this.currentTimeframe === 'MINUTE') return assetData.kline_minute || [];
+        if (this.currentTimeframe === 'DAILY') return assetData.kline_daily || [];
+        return assetData.kline_hourly || [];
+    }
     
     renderChartData() {
         const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.currentAsset}`);
         if (!assetData) return;
-        const klineData = this.currentTimeframe === 'DAILY' ? (assetData.kline_daily || []) : (assetData.kline_hourly || []);
+        const klineData = this._getKlineDataForTimeframe(assetData);
         
         if (klineData.length === 0) {
             this.chartManager.setData([], []);
@@ -450,8 +458,9 @@ export class UIRenderer {
         const leverage = this.tradeMode === 'leverage' ? parseInt(this.parentDoc.getElementById('sillyview-leverage-slider')?.value || 1) : 1;
         
         const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.currentAsset}`);
-        const lastCandle = assetData.kline_hourly.slice(-1)[0];
-        const currentPrice = this.isAnimating && this.liveAnimationPrice !== null ? this.liveAnimationPrice : lastCandle.close;
+        const currentKlineData = this._getKlineDataForTimeframe(assetData);
+        const lastCandle = currentKlineData.slice(-1)[0] || assetData.kline_minute?.slice(-1)[0] || assetData.kline_hourly.slice(-1)[0];
+        const currentPrice = this.isAnimating && this.liveAnimationPrice !== null ? this.liveAnimationPrice : (assetData.current_price ?? lastCandle.close);
         
         this.app.executeTrade(action, amount, this.currentAsset, currentPrice, leverage);
     }
@@ -489,17 +498,19 @@ export class UIRenderer {
         }
     }
     
-    async handleAiResponse(newCandles, msg, assetCode) {
+    async handleAiResponse(newCandles, msg, assetCode, minuteCandles = []) {
         const shouldAnimateHourlyCandles = assetCode === this.currentAsset && this.currentTimeframe === 'HOURLY';
 
         if (shouldAnimateHourlyCandles) {
             await this.animateCandles(newCandles, 2000); 
         }
         
-        await this.data.updateAssetCandles(assetCode, newCandles);
+        await this.data.updateAssetCandles(assetCode, newCandles, minuteCandles);
         const newTimeIndex = newCandles.slice(-1)[0].time;
+        const newMinuteIndex = minuteCandles.length > 0 ? minuteCandles[minuteCandles.length - 1].time : newTimeIndex * 60;
         await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
             market.current_time_index = Math.max(market.current_time_index || 0, newTimeIndex);
+            market.minute_time_index = Math.max(market.minute_time_index || 0, newMinuteIndex);
             return market;
         });
 
@@ -528,15 +539,17 @@ export class UIRenderer {
     }
 
     setTimeframe(timeframe) {
-        if (this.currentTimeframe === timeframe) return;
+        const shouldRender = this.currentTimeframe !== timeframe;
         this.currentTimeframe = timeframe;
+        const minuteBtn = this.parentDoc.getElementById('sv-timescale-minute');
         const hourlyBtn = this.parentDoc.getElementById('sv-timescale-hourly');
         const dailyBtn = this.parentDoc.getElementById('sv-timescale-daily');
-        if (hourlyBtn && dailyBtn) {
+        if (minuteBtn && hourlyBtn && dailyBtn) {
+            minuteBtn.classList.toggle('active-timescale', timeframe === 'MINUTE');
             hourlyBtn.classList.toggle('active-timescale', timeframe === 'HOURLY');
             dailyBtn.classList.toggle('active-timescale', timeframe === 'DAILY');
         }
-        this.renderChartData();
+        if (shouldRender) this.renderChartData();
     }
 
     setTradeMode(mode) {
@@ -637,7 +650,7 @@ export class UIRenderer {
 
         const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.currentAsset}`);
         if (!assetData) return;
-        const klineData = this.currentTimeframe === 'DAILY' ? (assetData.kline_daily || []) : (assetData.kline_hourly || []);
+        const klineData = this._getKlineDataForTimeframe(assetData);
         if (klineData.length === 0) return;
 
         this.lastRealCandle = { ...klineData[klineData.length - 1] };

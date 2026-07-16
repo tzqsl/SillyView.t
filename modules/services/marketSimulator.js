@@ -146,6 +146,148 @@ export class MarketSimulator {
         return Math.floor(base * activity * volatilityBoost * (0.75 + Math.random() * 0.5));
     }
 
+    _getMinuteSeedCandle(assetData) {
+        const minute = assetData?.kline_minute || [];
+        if (minute.length > 0) return minute[minute.length - 1];
+
+        const hourly = assetData?.kline_hourly || [];
+        const lastHourly = hourly[hourly.length - 1];
+        if (!lastHourly) return null;
+
+        return {
+            time: (lastHourly.time || 0) * 60,
+            open: lastHourly.close,
+            high: lastHourly.close,
+            low: lastHourly.close,
+            close: lastHourly.close,
+            volume: 0,
+            pattern: 'minute_seed',
+        };
+    }
+
+    _getPatternMinuteVolatility(pattern, assetDef) {
+        const base = (assetDef?.quick_mode_params?.volatility || 0.01) / Math.sqrt(60);
+        const multiplier = {
+            volatile: 2.0,
+            bull_run: 1.2,
+            bear_crash: 1.2,
+            reversal_bull: 1.5,
+            reversal_bear: 1.5,
+            consolidation: 0.45,
+            sideways: 0.35,
+        }[pattern] || 0.8;
+        return base * multiplier;
+    }
+
+    _createMinuteCandle(previousCandle, close, volatility, pattern, volumeScale = 1) {
+        const open = previousCandle.close;
+        const wickBase = Math.max(open * volatility, Math.abs(close - open));
+        const high = Math.max(open, close) + wickBase * Math.random() * 0.65;
+        const low = Math.max(0.000001, Math.min(open, close) - wickBase * Math.random() * 0.65);
+
+        return {
+            time: previousCandle.time + 1,
+            open,
+            high,
+            low,
+            close,
+            volume: Math.max(1, Math.floor((5000 + Math.random() * 25000) * volumeScale)),
+            pattern,
+        };
+    }
+
+    _buildMinutePathToClose(assetCode, previousMinute, targetClose, targetTime, pattern = 'sync') {
+        const assetDef = this.config.asset_definitions[assetCode];
+        const count = Math.max(0, targetTime - previousMinute.time);
+        if (count <= 0) return [];
+
+        const volatility = this._getPatternMinuteVolatility(pattern, assetDef);
+        const candles = [];
+        let last = previousMinute;
+        const startClose = previousMinute.close;
+
+        for (let i = 1; i <= count; i++) {
+            const progress = i / count;
+            const easedProgress = progress < 0.5
+                ? 2 * progress * progress
+                : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+            const trendPrice = startClose + (targetClose - startClose) * easedProgress;
+            const noise = i === count
+                ? 0
+                : this._normalRandom() * startClose * volatility * Math.sin(Math.PI * progress);
+            const close = i === count ? targetClose : Math.max(0.000001, trendPrice + noise);
+            const candle = this._createMinuteCandle(last, close, volatility, pattern, 1 + Math.abs(this._normalRandom()) * 0.35);
+            candles.push(candle);
+            last = candle;
+        }
+
+        return candles;
+    }
+
+    calculateMinuteCandlesForHourlyCandles(assetCode, hourlyCandles) {
+        const assetData = this.data.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+        let lastMinute = this._getMinuteSeedCandle(assetData);
+        if (!lastMinute || !Array.isArray(hourlyCandles) || hourlyCandles.length === 0) return [];
+
+        const minuteCandles = [];
+        for (const hourlyCandle of hourlyCandles) {
+            const targetTime = (hourlyCandle.time || 0) * 60;
+            const generated = this._buildMinutePathToClose(
+                assetCode,
+                lastMinute,
+                hourlyCandle.close,
+                targetTime,
+                hourlyCandle.pattern || 'hourly_sync'
+            );
+            minuteCandles.push(...generated);
+            if (generated.length > 0) {
+                lastMinute = generated[generated.length - 1];
+            }
+        }
+
+        return minuteCandles;
+    }
+
+    calculateMinuteCandlesForUserInput(assetCode, requestedBars = 1) {
+        const assetDef = this.config.asset_definitions[assetCode];
+        const assetData = this.data.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+        const lastMinute = this._getMinuteSeedCandle(assetData);
+        const lastHourly = assetData?.kline_hourly?.slice(-1)[0];
+        if (!assetDef || !lastMinute || !lastHourly) return [];
+
+        const nextHourBoundary = ((lastHourly.time || 0) + 1) * 60;
+        const cappedBars = Math.min(Math.max(1, requestedBars), Math.max(0, nextHourBoundary - 1 - lastMinute.time));
+        if (cappedBars <= 0) return [];
+
+        const globalMarket = this.data.getState(this.config.world_book_keys.global_market) || {};
+        const macroState = globalMarket.macro_state || {};
+        const personalityState = globalMarket.personality_state || 'CONSOLIDATION';
+        const minuteVolatility = this._getPatternMinuteVolatility(
+            personalityState === 'VOLATILE_UNCERTAINTY' ? 'volatile' : 'sideways',
+            assetDef
+        ) * (macroState.volatility_regime || 1);
+        const macroDrift = this._calculateMacroDrift(assetDef, macroState) / 60;
+        const trendDrift = personalityState === 'BULLISH_TREND'
+            ? minuteVolatility * 0.18
+            : (personalityState === 'BEARISH_TREND' ? -minuteVolatility * 0.18 : 0);
+
+        const candles = [];
+        let last = lastMinute;
+        for (let i = 0; i < cappedBars; i++) {
+            const changePercent = this._clamp(
+                this._normalRandom() * minuteVolatility + trendDrift + macroDrift,
+                -0.08,
+                0.08
+            );
+            const close = Math.max(0.000001, last.close * Math.exp(changePercent));
+            const candle = this._createMinuteCandle(last, close, minuteVolatility, `chat_${personalityState.toLowerCase()}`, 0.45);
+            candles.push(candle);
+            last = candle;
+        }
+
+        return candles;
+    }
+
     calculateCandlesFromAI(commandArgs) {
         const [assetCode, timeframe, final_close_price, pattern] = commandArgs;
         

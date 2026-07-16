@@ -315,6 +315,7 @@ export class EventHandler {
         
         const endTurnBtn = this.parentDoc.getElementById('sillyview-end-turn-btn');
         const quickModeToggle = this.parentDoc.getElementById('sillyview-quick-mode-toggle');
+        const minuteBtn = this.parentDoc.getElementById('sv-timescale-minute');
         const hourlyBtn = this.parentDoc.getElementById('sv-timescale-hourly');
         const dailyBtn = this.parentDoc.getElementById('sv-timescale-daily');
         const assetSelector = this.parentDoc.getElementById('sillyview-asset-selector');
@@ -329,6 +330,7 @@ export class EventHandler {
         if (nextHourBtn) nextHourBtn.addEventListener('click', () => this.app.advanceQuickModeHour());
         if (advanceDayBtn) advanceDayBtn.addEventListener('click', () => this.app.commitAndAdvance()); // Correctly calls commitAndAdvance
         if (quickModeToggle) quickModeToggle.addEventListener('change', (event) => this.app.onQuickModeToggled(event.target.checked));
+        if (minuteBtn) minuteBtn.addEventListener('click', () => this.ui.setTimeframe('MINUTE'));
         if (hourlyBtn) hourlyBtn.addEventListener('click', () => this.ui.setTimeframe('HOURLY'));
         if (dailyBtn) dailyBtn.addEventListener('click', () => this.ui.setTimeframe('DAILY'));
         if (assetSelector) assetSelector.addEventListener('change', (event) => this.ui.switchAsset(event.target.value));

@@ -124,7 +124,7 @@ export class TradeView {
     updateDataWindowWithLastCandle() {
         const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.ui.currentAsset}`);
         if (!assetData) return;
-        const klineData = this.ui.currentTimeframe === 'DAILY' ? (assetData.kline_daily || []) : (assetData.kline_hourly || []);
+        const klineData = this.ui._getKlineDataForTimeframe(assetData);
         if (klineData && klineData.length > 0) {
             this.ui._updateDataWindow(klineData[klineData.length - 1]);
         }

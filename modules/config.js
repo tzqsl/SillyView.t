@@ -189,6 +189,7 @@ export const SillyViewConfig = {
         config: {
             version: '2.1.0',
             max_hourly_records: 240,
+            max_minute_records: 720,
             background_ai: { ...DEFAULT_BACKGROUND_AI_SETTINGS },
             // The list of assets to be created at the start of a new game
             available_assets: Object.keys(ASSET_DEFINITIONS)
@@ -200,6 +201,7 @@ export const SillyViewConfig = {
             current_season: "秋季",
             current_weather: "晴",
             time_resolution: "HOURLY",
+            minute_time_index: 0,
             market_status: "OPEN",
             news_feed: [],
             personality_state: 'CONSOLIDATION',

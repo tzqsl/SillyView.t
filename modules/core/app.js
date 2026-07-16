@@ -18,6 +18,7 @@ export class SillyViewApp {
         this.processorTimeout = null;
         this.previousStateSnapshot = null;
         this.quickModeStartState = null;
+        this.lastMinuteAdvanceMessageId = null;
 
         // Dependencies are set in init() by the main script.js entry point
         this.data = null;
@@ -190,7 +191,8 @@ export class SillyViewApp {
             }
             
             if (newCandles && newCandles.length > 0 && assetCodeForUpdate) {
-                await this.ui.handleAiResponse(newCandles, msg, assetCodeForUpdate);
+                const minuteCandles = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(assetCodeForUpdate, newCandles);
+                await this.ui.handleAiResponse(newCandles, msg, assetCodeForUpdate, minuteCandles);
                 advancedAssetCodes.add(assetCodeForUpdate);
                 await this._checkLiquidations();
             }
@@ -203,7 +205,8 @@ export class SillyViewApp {
             for (const assetCode of missingAssetCodes) {
                 const fallbackCandles = this.marketSimulator.calculateCandlesForBackgroundAsset(assetCode, 1);
                 if (fallbackCandles.length === 0) continue;
-                await this.data.updateAssetCandles(assetCode, fallbackCandles);
+                const fallbackMinutes = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(assetCode, fallbackCandles);
+                await this.data.updateAssetCandles(assetCode, fallbackCandles, fallbackMinutes);
                 const assetDef = SillyViewConfig.asset_definitions[assetCode];
                 if (assetDef) await this.data.aggregateHourlyToDaily(assetCode, assetDef.trading_hours_per_day);
                 maxFallbackTime = Math.max(maxFallbackTime, fallbackCandles[fallbackCandles.length - 1].time);
@@ -212,6 +215,7 @@ export class SillyViewApp {
             if (maxFallbackTime > 0) {
                 await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
                     market.current_time_index = Math.max(market.current_time_index || 0, maxFallbackTime);
+                    market.minute_time_index = Math.max(market.minute_time_index || 0, maxFallbackTime * 60);
                     return market;
                 });
             }
@@ -265,22 +269,28 @@ export class SillyViewApp {
     
         const activeAssetCode = this.ui.currentAsset;
         const allAssetCodes = Object.keys(SillyViewConfig.asset_definitions);
+        let activeMinuteCandles = [];
     
         await this.marketSimulator.advanceMarketRegime(1);
         await this.marketSimulator.advanceMacroState(1);
         for (const assetCode of allAssetCodes) {
             const newCandles = this.marketSimulator.calculateCandlesForQuickMode(assetCode, 1);
-            await this.data.updateAssetCandles(assetCode, newCandles);
+            const minuteCandles = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(assetCode, newCandles);
+            if (assetCode === activeAssetCode) activeMinuteCandles = minuteCandles;
+            await this.data.updateAssetCandles(assetCode, newCandles, minuteCandles);
         }
         
         await this.data.updateState(SillyViewConfig.world_book_keys.global_market, m => {
             m.current_time_index = (m.current_time_index || 0) + 1;
+            m.minute_time_index = Math.max(m.minute_time_index || 0, m.current_time_index * 60);
             m.remaining_candles -= 1;
             return m;
         });
 
         const activeAssetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${activeAssetCode}`);
-        const candlesToAnimate = activeAssetData.kline_hourly.slice(-1);
+        const candlesToAnimate = this.ui.currentTimeframe === 'MINUTE'
+            ? activeMinuteCandles
+            : activeAssetData.kline_hourly.slice(-1);
         await this.ui.animateCandles(candlesToAnimate, 1000); 
         
         await this._checkLiquidations();
@@ -316,24 +326,27 @@ export class SillyViewApp {
             await this.marketSimulator.advanceMarketRegime(hoursToAdvance);
             await this.marketSimulator.advanceMacroState(hoursToAdvance);
             const newCandles = this.marketSimulator.calculateCandlesForQuickMode(activeAssetCode, hoursToAdvance);
+            const activeMinuteCandles = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(activeAssetCode, newCandles);
             
             for (const assetCode of Object.keys(SillyViewConfig.asset_definitions)) {
                  if (assetCode !== activeAssetCode) {
                     const bgAssetDef = SillyViewConfig.asset_definitions[assetCode];
                     const bgHours = bgAssetDef.trading_hours_per_day;
                     const bgCandles = this.marketSimulator.calculateCandlesForBackgroundAsset(assetCode, bgHours);
-                    await this.data.updateAssetCandles(assetCode, bgCandles);
+                    const bgMinuteCandles = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(assetCode, bgCandles);
+                    await this.data.updateAssetCandles(assetCode, bgCandles, bgMinuteCandles);
                     await this.data.aggregateHourlyToDaily(assetCode, bgHours);
                  }
             }
             
-            await this.ui.animateCandles(newCandles, 2000);
+            await this.ui.animateCandles(this.ui.currentTimeframe === 'MINUTE' ? activeMinuteCandles : newCandles, 2000);
             
             if (this.ui.isAnimating === false) { 
-                await this.data.updateAssetCandles(activeAssetCode, newCandles);
+                await this.data.updateAssetCandles(activeAssetCode, newCandles, activeMinuteCandles);
                 await this.data.aggregateHourlyToDaily(activeAssetCode, hoursToAdvance);
                 await this.data.updateState(SillyViewConfig.world_book_keys.global_market, m => {
                     m.current_time_index = (m.current_time_index || 0) + hoursToAdvance;
+                    m.minute_time_index = Math.max(m.minute_time_index || 0, m.current_time_index * 60);
                     m.remaining_candles -= hoursToAdvance;
                     return m;
                 });
@@ -346,7 +359,7 @@ export class SillyViewApp {
 
         // AI Mode
         await this.data.accrueInterest();
-        const currentTimeframe = this.ui.currentTimeframe;
+        const currentTimeframe = this.ui.currentTimeframe === 'MINUTE' ? 'HOURLY' : this.ui.currentTimeframe;
         const logTimeUnit = currentTimeframe === 'HOURLY' ? '一小时' : '一天';
         Logger.log(`正在推进${logTimeUnit} (AI 模式)...`);
         this.ui.tradeView.updateActionButtonsState(false, true);
@@ -438,9 +451,55 @@ export class SillyViewApp {
         }
     }
 
+    async advanceMinutesForUserMessage(msgId) {
+        if (this.lastMinuteAdvanceMessageId === msgId) return;
+
+        const messages = this.th.getChatMessages(msgId);
+        if (!messages || messages.length === 0 || !messages[0].is_user) return;
+        this.lastMinuteAdvanceMessageId = msgId;
+
+        const loaded = await this.data.ensureStateLoaded();
+        if (!loaded) return;
+
+        const barsToAdvance = Math.floor(Math.random() * 2) + 1;
+        const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
+        const assetCodes = configState.available_assets || Object.keys(SillyViewConfig.asset_definitions);
+        let maxMinuteTime = 0;
+
+        for (const assetCode of assetCodes) {
+            const minuteCandles = this.marketSimulator.calculateMinuteCandlesForUserInput(assetCode, barsToAdvance);
+            if (minuteCandles.length === 0) continue;
+
+            await this.data.appendMinuteCandles(assetCode, minuteCandles);
+            maxMinuteTime = Math.max(maxMinuteTime, minuteCandles[minuteCandles.length - 1].time);
+        }
+
+        if (maxMinuteTime > 0) {
+            await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
+                market.minute_time_index = Math.max(market.minute_time_index || 0, maxMinuteTime);
+                return market;
+            });
+
+            await this._checkLiquidations();
+            await this.data.updateAIContext();
+            await this.data.saveAllEntries();
+
+            if (this.ui.isPanelVisible) {
+                this.ui.renderAll();
+            }
+        }
+    }
+
 
     setupEventListeners() {
         const { eventSource, eventTypes } = this.st_context;
+        if (eventTypes.MESSAGE_SENT) {
+            eventSource.on(eventTypes.MESSAGE_SENT, (id) => {
+                this.advanceMinutesForUserMessage(id).catch(error => {
+                    this.logger.warn('Failed to advance minute candles for user message:', error);
+                });
+            });
+        }
         eventSource.on(eventTypes.MESSAGE_RECEIVED, (id) => this.debouncedMainProcessor(id, false));
         eventSource.on(eventTypes.MESSAGE_EDITED, (id) => this.debouncedMainProcessor(id, true));
         eventSource.on(eventTypes.MESSAGE_SWIPED, (id) => this.debouncedMainProcessor(id, true));
