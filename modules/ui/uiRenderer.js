@@ -429,6 +429,46 @@ export class UIRenderer {
         if (totalAssetsEl) totalAssetsEl.textContent = totalValue.toFixed(2);
     }
 
+    _readRiskControls(action, currentPrice) {
+        if (action.startsWith('close')) return null;
+
+        const takeProfitEl = this.parentDoc.getElementById('sillyview-take-profit');
+        const stopLossEl = this.parentDoc.getElementById('sillyview-stop-loss');
+        const readOptionalPrice = (el, label) => {
+            const raw = el?.value?.trim();
+            if (!raw) return null;
+            const value = parseFloat(raw);
+            if (!Number.isFinite(value) || value <= 0) {
+                this.win.toastr.error(`请输入有效的${label}。`);
+                return undefined;
+            }
+            return value;
+        };
+
+        const takeProfit = readOptionalPrice(takeProfitEl, '止盈价');
+        if (takeProfit === undefined) return undefined;
+        const stopLoss = readOptionalPrice(stopLossEl, '止损价');
+        if (stopLoss === undefined) return undefined;
+
+        const isLong = action.endsWith('long');
+        if (takeProfit !== null) {
+            const invalid = isLong ? takeProfit <= currentPrice : takeProfit >= currentPrice;
+            if (invalid) {
+                this.win.toastr.error(isLong ? '做多止盈价必须高于当前价。' : '做空止盈价必须低于当前价。');
+                return undefined;
+            }
+        }
+        if (stopLoss !== null) {
+            const invalid = isLong ? stopLoss >= currentPrice : stopLoss <= currentPrice;
+            if (invalid) {
+                this.win.toastr.error(isLong ? '做多止损价必须低于当前价。' : '做空止损价必须高于当前价。');
+                return undefined;
+            }
+        }
+
+        return { take_profit: takeProfit, stop_loss: stopLoss };
+    }
+
     initiateTrade(type) {
         if (this.isAnimating) return;
         
@@ -461,8 +501,10 @@ export class UIRenderer {
         const currentKlineData = this._getKlineDataForTimeframe(assetData);
         const lastCandle = currentKlineData.slice(-1)[0] || assetData.kline_minute?.slice(-1)[0] || assetData.kline_hourly.slice(-1)[0];
         const currentPrice = this.isAnimating && this.liveAnimationPrice !== null ? this.liveAnimationPrice : (assetData.current_price ?? lastCandle.close);
+        const riskControls = this._readRiskControls(action, currentPrice);
+        if (riskControls === undefined) return;
         
-        this.app.executeTrade(action, amount, this.currentAsset, currentPrice, leverage);
+        this.app.executeTrade(action, amount, this.currentAsset, currentPrice, leverage, riskControls);
     }
 
     updateUIVisibility() {

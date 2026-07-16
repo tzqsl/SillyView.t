@@ -861,7 +861,38 @@ export class DataManager {
         if (portfolio.transaction_log.length > 100) portfolio.transaction_log.pop();
     }
 
-    async executeAndRecordTrade(intent, amount, assetCode, executionPrice = null, leverage = 1) {
+    _normalizeRiskControls(riskControls = null) {
+        if (!riskControls || typeof riskControls !== 'object') return null;
+
+        const normalizePrice = value => {
+            const number = Number(value);
+            return Number.isFinite(number) && number > 0 ? number : null;
+        };
+
+        return {
+            take_profit: normalizePrice(riskControls.take_profit),
+            stop_loss: normalizePrice(riskControls.stop_loss),
+        };
+    }
+
+    _applyRiskControls(portfolio, assetCode, riskControls) {
+        const normalized = this._normalizeRiskControls(riskControls);
+        if (!normalized || (normalized.take_profit === null && normalized.stop_loss === null)) return '';
+
+        if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
+        const current = portfolio.assets[assetCode].risk_controls || {};
+        portfolio.assets[assetCode].risk_controls = {
+            take_profit: normalized.take_profit ?? current.take_profit ?? null,
+            stop_loss: normalized.stop_loss ?? current.stop_loss ?? null,
+        };
+
+        const labels = [];
+        if (normalized.take_profit !== null) labels.push(`止盈 ${normalized.take_profit.toFixed(4)}`);
+        if (normalized.stop_loss !== null) labels.push(`止损 ${normalized.stop_loss.toFixed(4)}`);
+        return labels.length > 0 ? ` (${labels.join(' / ')})` : '';
+    }
+
+    async executeAndRecordTrade(intent, amount, assetCode, executionPrice = null, leverage = 1, riskControls = null) {
         const portfolioKey = this.config.world_book_keys.player_portfolio;
         const assetDataKey = `${this.config.world_book_keys.asset_prefix}${assetCode}`;
         let portfolio = this._stateCache.get(portfolioKey);
@@ -899,10 +930,12 @@ export class DataManager {
                 if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
                 
                 portfolio.assets[assetCode].trades.push({ time: lastCandle.time, price, amount, type: 'long', leverage });
+                const longRiskText = this._applyRiskControls(portfolio, assetCode, riskControls);
                 
                 actionText = (intent === 'open_long') 
                     ? `开多 ${isLeveragedTrade ? `(${leverage}x)` : ''}${assetCode}`
                     : `加仓多 ${isLeveragedTrade ? `(${leverage}x)` : ''}${assetCode}`;
+                actionText += longRiskText;
 
                 this._recordTradeTransaction(portfolio, actionText, -amount);
                 this._recordTradeTransaction(portfolio, `交易手续费`, -fee);
@@ -920,10 +953,12 @@ export class DataManager {
                 if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
                 
                 portfolio.assets[assetCode].trades.push({ time: lastCandle.time, price, amount, type: 'short', leverage });
+                const shortRiskText = this._applyRiskControls(portfolio, assetCode, riskControls);
                 
                 actionText = (intent === 'open_short') 
                     ? `开空 ${isLeveragedTrade ? `(${leverage}x)` : ''}${assetCode}`
                     : `加仓空 ${isLeveragedTrade ? `(${leverage}x)` : ''}${assetCode}`;
+                actionText += shortRiskText;
 
                 this._recordTradeTransaction(portfolio, actionText, -amount);
                 this._recordTradeTransaction(portfolio, `交易手续费`, -fee);
@@ -937,6 +972,7 @@ export class DataManager {
                 this._recordTradeTransaction(portfolio, `交易手续费`, -fee);
                 this._recordTradeTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl_long);
                 portfolio.assets[assetCode].trades = [];
+                delete portfolio.assets[assetCode].risk_controls;
                 actionText = `平多 ${assetCode}`;
                 break;
 
@@ -948,6 +984,7 @@ export class DataManager {
                 this._recordTradeTransaction(portfolio, `交易手续费`, -fee);
                 this._recordTradeTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl_short);
                 portfolio.assets[assetCode].trades = [];
+                delete portfolio.assets[assetCode].risk_controls;
                 actionText = `平空 ${assetCode}`;
                 break;
 
@@ -987,6 +1024,88 @@ export class DataManager {
         
         this._stateCache.set(portfolioKey, portfolio);
         await this.saveAllEntries();
+    }
+
+    async closePositionAtPrice(assetCode, closePrice, reason = 'risk_control') {
+        const portfolioKey = this.config.world_book_keys.player_portfolio;
+        const market = this.getState(this.config.world_book_keys.global_market);
+        const portfolio = this.getState(portfolioKey);
+        if (!portfolio) return null;
+
+        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        if (!position.type || position.totalAmount <= 0) return null;
+
+        const tradeConfig = this._getTradeConfig(assetCode);
+        const fee = position.positionValue * (tradeConfig.fee_rate ?? 0.001);
+        const realizedPnl = position.type === 'long'
+            ? (closePrice - position.avgEntryPrice) * position.totalShares
+            : (position.avgEntryPrice - closePrice) * position.totalShares;
+        const closeAmount = position.totalAmount + realizedPnl - fee;
+        const label = reason === 'take_profit' ? '止盈' : '止损';
+
+        await this.updateState(portfolioKey, p => {
+            if (!p.assets) p.assets = {};
+            if (!p.assets[assetCode]) p.assets[assetCode] = { trades: [] };
+            p.cash = (p.cash || 0) + closeAmount;
+            p.assets[assetCode].trades = [];
+            delete p.assets[assetCode].risk_controls;
+            if (!p.transaction_log) p.transaction_log = [];
+            const time = market ? market.current_time_index : 0;
+            p.transaction_log.unshift({ time, description: `${label}平仓 ${assetCode}`, amount: closeAmount });
+            p.transaction_log.unshift({ time, description: `交易手续费`, amount: -fee });
+            p.transaction_log.unshift({ time, description: `已实现盈亏 (${assetCode})`, amount: realizedPnl });
+            if (p.transaction_log.length > 100) p.transaction_log.length = 100;
+            return p;
+        });
+
+        this.dependencies.win.toastr.success(`${assetCode} ${label}触发，已按 ${closePrice.toFixed(4)} 平仓。`, label);
+        return {
+            triggered: true,
+            triggerType: reason,
+            price: closePrice,
+            pnl: realizedPnl,
+            fee,
+        };
+    }
+
+    async triggerRiskControlsForCandle(assetCode, candle) {
+        if (!candle) return null;
+
+        const portfolio = this.getState(this.config.world_book_keys.player_portfolio);
+        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        if (!position.type || position.totalAmount <= 0) return null;
+
+        const assetPortfolio = portfolio?.assets?.[assetCode];
+        const riskControls = assetPortfolio?.risk_controls;
+        if (!riskControls) return null;
+
+        const takeProfit = Number(riskControls.take_profit);
+        const stopLoss = Number(riskControls.stop_loss);
+        const open = Number(candle.open || candle.close || position.avgEntryPrice || 0);
+        const high = Number(candle.high || open);
+        const low = Number(candle.low || open);
+
+        const hits = [];
+        if (position.type === 'long') {
+            if (Number.isFinite(takeProfit) && takeProfit > 0 && high >= takeProfit) hits.push({ type: 'take_profit', price: takeProfit, distance: Math.abs(takeProfit - open) });
+            if (Number.isFinite(stopLoss) && stopLoss > 0 && low <= stopLoss) hits.push({ type: 'stop_loss', price: stopLoss, distance: Math.abs(stopLoss - open) });
+        } else if (position.type === 'short') {
+            if (Number.isFinite(takeProfit) && takeProfit > 0 && low <= takeProfit) hits.push({ type: 'take_profit', price: takeProfit, distance: Math.abs(takeProfit - open) });
+            if (Number.isFinite(stopLoss) && stopLoss > 0 && high >= stopLoss) hits.push({ type: 'stop_loss', price: stopLoss, distance: Math.abs(stopLoss - open) });
+        }
+
+        if (hits.length === 0) return null;
+        if (hits.length > 1) {
+            const candleDirectionUp = Number(candle.close || open) >= open;
+            const preferredType = candleDirectionUp ? 'take_profit' : 'stop_loss';
+            const preferredHit = hits.find(hit => hit.type === preferredType);
+            if (preferredHit) {
+                return await this.closePositionAtPrice(assetCode, preferredHit.price, preferredHit.type);
+            }
+        }
+
+        hits.sort((a, b) => a.distance - b.distance);
+        return await this.closePositionAtPrice(assetCode, hits[0].price, hits[0].type);
     }
     
     async takeLoan(amount) {

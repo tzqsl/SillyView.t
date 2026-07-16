@@ -53,6 +53,20 @@ export class TradeView {
                 <input type="number" id="sillyview-trade-amount" value="1000" class="sv-input" ${showAmountInput ? '' : 'disabled'}>
             </div>
         `;
+        const riskControls = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio)
+            ?.assets?.[this.ui.currentAsset]?.risk_controls || {};
+        const riskInputHtml = `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                <div>
+                    <label for="sillyview-take-profit" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">止盈价</label>
+                    <input type="number" id="sillyview-take-profit" placeholder="可选" value="${riskControls.take_profit ?? ''}" class="sv-input" ${showAmountInput ? '' : 'disabled'}>
+                </div>
+                <div>
+                    <label for="sillyview-stop-loss" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">止损价</label>
+                    <input type="number" id="sillyview-stop-loss" placeholder="可选" value="${riskControls.stop_loss ?? ''}" class="sv-input" ${showAmountInput ? '' : 'disabled'}>
+                </div>
+            </div>
+        `;
 
         container.innerHTML = `
             <div>
@@ -88,6 +102,7 @@ export class TradeView {
                     </div>
 
                     ${amountInputHtml}
+                    ${riskInputHtml}
 
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                         <button id="sillyview-buy-btn" class="sv-button sv-button-green" style="padding: 0.75rem 1rem;">${buyBtnText}</button>

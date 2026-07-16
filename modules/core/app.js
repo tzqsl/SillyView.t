@@ -100,6 +100,27 @@ export class SillyViewApp {
         return false; // No liquidation occurred
     }
 
+    async _checkRiskControlsForHourlyCandles(assetCode, hourlyCandles) {
+        if (!Array.isArray(hourlyCandles) || hourlyCandles.length === 0) return false;
+
+        let triggered = false;
+        for (const candle of hourlyCandles) {
+            const result = await this.data.triggerRiskControlsForCandle(assetCode, candle);
+            if (result?.triggered) {
+                triggered = true;
+                this.dependencies.win.toastr.info(
+                    `${assetCode} ${result.triggerType === 'take_profit' ? '止盈' : '止损'}触发，成交价 ${result.price.toFixed(4)}。`
+                );
+                break;
+            }
+        }
+
+        if (triggered) {
+            this.ui.renderAll();
+        }
+        return triggered;
+    }
+
     debouncedMainProcessor(msgId, isReprocessing = false) {
         clearTimeout(this.processorTimeout);
         this.processorTimeout = setTimeout(async () => {
@@ -236,6 +257,7 @@ export class SillyViewApp {
                 advancedAssetCodes.add(assetCodeForUpdate);
                 headlineAssetCodes.add(assetCodeForUpdate);
                 maxAdvancedTimeIndex = Math.max(maxAdvancedTimeIndex, newCandles[newCandles.length - 1].time || 0);
+                await this._checkRiskControlsForHourlyCandles(assetCodeForUpdate, newCandles);
                 await this._checkLiquidations();
             }
         }
@@ -251,6 +273,7 @@ export class SillyViewApp {
                 await this.data.updateAssetCandles(assetCode, fallbackCandles, fallbackMinutes);
                 const assetDef = SillyViewConfig.asset_definitions[assetCode];
                 if (assetDef) await this.data.aggregateHourlyToDaily(assetCode, assetDef.trading_hours_per_day);
+                await this._checkRiskControlsForHourlyCandles(assetCode, fallbackCandles);
                 maxFallbackTime = Math.max(maxFallbackTime, fallbackCandles[fallbackCandles.length - 1].time);
                 headlineAssetCodes.add(assetCode);
                 maxAdvancedTimeIndex = Math.max(maxAdvancedTimeIndex, fallbackCandles[fallbackCandles.length - 1].time || 0);
@@ -364,6 +387,7 @@ export class SillyViewApp {
             const minuteCandles = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(assetCode, newCandles);
             if (assetCode === activeAssetCode) activeMinuteCandles = minuteCandles;
             await this.data.updateAssetCandles(assetCode, newCandles, minuteCandles);
+            await this._checkRiskControlsForHourlyCandles(assetCode, newCandles);
         }
         
         await this.data.updateState(SillyViewConfig.world_book_keys.global_market, m => {
@@ -422,6 +446,7 @@ export class SillyViewApp {
                     const bgMinuteCandles = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(assetCode, bgCandles);
                     await this.data.updateAssetCandles(assetCode, bgCandles, bgMinuteCandles);
                     await this.data.aggregateHourlyToDaily(assetCode, bgHours);
+                    await this._checkRiskControlsForHourlyCandles(assetCode, bgCandles);
                  }
             }
             
@@ -430,6 +455,7 @@ export class SillyViewApp {
             if (this.ui.isAnimating === false) { 
                 await this.data.updateAssetCandles(activeAssetCode, newCandles, activeMinuteCandles);
                 await this.data.aggregateHourlyToDaily(activeAssetCode, hoursToAdvance);
+                await this._checkRiskControlsForHourlyCandles(activeAssetCode, newCandles);
                 await this.data.updateState(SillyViewConfig.world_book_keys.global_market, m => {
                     m.current_time_index = (m.current_time_index || 0) + hoursToAdvance;
                     m.minute_time_index = Math.max(m.minute_time_index || 0, m.current_time_index * 60);
@@ -525,10 +551,10 @@ export class SillyViewApp {
         }
     }
     
-    async executeTrade(action, amount, assetCode, executionPrice, leverage) {
+    async executeTrade(action, amount, assetCode, executionPrice, leverage, riskControls = null) {
         Logger.log(`Executing trade: ${action} ${amount} of ${assetCode} @ ${executionPrice} with ${leverage}x leverage`);
 
-        const success = await this.data.executeAndRecordTrade(action, amount, assetCode, executionPrice, leverage);
+        const success = await this.data.executeAndRecordTrade(action, amount, assetCode, executionPrice, leverage, riskControls);
 
         if (success) {
             await this.data.updateAIContext();
