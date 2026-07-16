@@ -199,11 +199,12 @@ export class DataManager {
         await this.ensureContextEntry(
             lorebookName,
             this.config.world_book_keys.kline_context,
-            this.config.default_game_state.kline_context
+            this.config.default_game_state.kline_context,
+            { afterKey: this.config.world_book_keys.dialogue_context }
         );
     }
 
-    async ensureContextEntry(lorebookName, key, defaultState) {
+    async ensureContextEntry(lorebookName, key, defaultState, options = {}) {
         const defaultContent = JSON.stringify(defaultState, null, 2);
 
         await this.th.updateWorldbookWith(lorebookName, entries => {
@@ -211,7 +212,15 @@ export class DataManager {
             if (entry) {
                 entry.enabled = true;
             } else {
-                entries.push({ name: key, content: defaultContent, enabled: true });
+                const newEntry = { name: key, content: defaultContent, enabled: true };
+                const afterIndex = options.afterKey
+                    ? entries.findIndex(item => item.name === options.afterKey)
+                    : -1;
+                if (afterIndex >= 0) {
+                    entries.splice(afterIndex + 1, 0, newEntry);
+                } else {
+                    entries.push(newEntry);
+                }
             }
             return entries;
         });
