@@ -493,11 +493,20 @@ export class SillyViewApp {
 
     setupEventListeners() {
         const { eventSource, eventTypes } = this.st_context;
+        if (eventTypes.USER_MESSAGE_RENDERED) {
+            eventSource.on(eventTypes.USER_MESSAGE_RENDERED, (id) => {
+                this.advanceMinutesForUserMessage(id).catch(error => {
+                    this.logger.warn('Failed to advance minute candles after user message rendered:', error);
+                });
+            });
+        }
         if (eventTypes.MESSAGE_SENT) {
             eventSource.on(eventTypes.MESSAGE_SENT, (id) => {
-                this.advanceMinutesForUserMessage(id).catch(error => {
-                    this.logger.warn('Failed to advance minute candles for user message:', error);
-                });
+                setTimeout(() => {
+                    this.advanceMinutesForUserMessage(id).catch(error => {
+                        this.logger.warn('Failed to advance minute candles for user message:', error);
+                    });
+                }, 100);
             });
         }
         eventSource.on(eventTypes.MESSAGE_RECEIVED, (id) => this.debouncedMainProcessor(id, false));
