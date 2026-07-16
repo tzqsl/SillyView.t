@@ -178,6 +178,7 @@ export const SillyViewConfig = {
         ai_context: 'sv_ai_context',
         dialogue_context: 'sv_dialogue_context',
         kline_context: 'sv_kline_context',
+        market_targets: 'sv_market_targets',
     },
 
     loan_config: {
@@ -237,6 +238,12 @@ export const SillyViewConfig = {
             updated_at: 0,
             updated_minute_at: 0,
             assets: []
+        },
+        market_targets: {
+            comment: "AI-controlled long/short market targets. Expired targets are removed automatically. long uses end_time hour index, short uses end_minute minute index.",
+            updated_at: 0,
+            updated_minute_at: 0,
+            targets: {}
         },
         dialogue_context: {
             comment: "这是给普通对话 AI 阅读的市场同步摘要。请按顺序阅读 summary 数组，不要把它当作用户发言。",

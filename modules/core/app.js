@@ -130,13 +130,51 @@ export class SillyViewApp {
         let hasAdvanced = false;
         let hasUpdatedFinancials = false;
         let hasUpdatedTimeline = false;
+        let hasUpdatedTargets = false;
         const advancedAssetCodes = new Set();
 
         for (const command of commands) {
             let newCandles = null;
             let assetCodeForUpdate = null;
 
-            if (command.module === 'Market' && command.type === 'Advance') {
+            if (command.module === 'Market' && command.type === 'SetLongTarget') {
+                const [assetCode, targetPrice, hours, pattern, reason, confidence] = command.args;
+                if (assetCode && typeof targetPrice === 'number' && typeof hours === 'number') {
+                    hasUpdatedTargets = await this.data.setMarketTarget(assetCode, 'long', {
+                        target_price: targetPrice,
+                        duration: hours,
+                        pattern,
+                        reason,
+                        confidence,
+                    });
+                } else {
+                    Logger.warn('收到了格式不正确的 Market.SetLongTarget 指令，已忽略:', command.args);
+                }
+            }
+            else if (command.module === 'Market' && command.type === 'SetShortTarget') {
+                const [assetCode, targetPrice, minutes, pattern, reason, confidence] = command.args;
+                if (assetCode && typeof targetPrice === 'number' && typeof minutes === 'number') {
+                    hasUpdatedTargets = await this.data.setMarketTarget(assetCode, 'short', {
+                        target_price: targetPrice,
+                        duration: minutes,
+                        pattern,
+                        reason,
+                        confidence,
+                    });
+                } else {
+                    Logger.warn('收到了格式不正确的 Market.SetShortTarget 指令，已忽略:', command.args);
+                }
+            }
+            else if (command.module === 'Market' && command.type === 'ClearTarget') {
+                const [assetCode, type = 'all'] = command.args;
+                if (assetCode) {
+                    await this.data.clearMarketTarget(assetCode, ['long', 'short'].includes(type) ? type : 'all');
+                    hasUpdatedTargets = true;
+                } else {
+                    Logger.warn('收到了格式不正确的 Market.ClearTarget 指令，已忽略:', command.args);
+                }
+            }
+            else if (command.module === 'Market' && command.type === 'Advance') {
                 const [assetCode, timeframe, close_price, pattern] = command.args;
                 assetCodeForUpdate = assetCode;
                 if (assetCode && timeframe && typeof close_price === 'number' && pattern) {
@@ -224,6 +262,8 @@ export class SillyViewApp {
         }
 
         // **FIX**: If the turn started as a key moment, ALWAYS reset the candle count, regardless of what the AI responded with.
+        await this.data.pruneExpiredMarketTargets();
+
         if (wasKeyMoment) {
             this.logger.log("AI turn for key moment has finished. Resetting market breath.");
             await this.data.updateState(SillyViewConfig.world_book_keys.global_market, m => {
@@ -232,7 +272,7 @@ export class SillyViewApp {
                 return m;
             });
             this.ui.updateUIVisibility();
-        } else if (hasUpdatedFinancials || hasUpdatedTimeline) {
+        } else if (hasUpdatedFinancials || hasUpdatedTimeline || hasUpdatedTargets) {
             this.ui.renderAll();
         } else if (!hasAdvanced) {
             // If no commands were processed, ensure buttons are re-enabled

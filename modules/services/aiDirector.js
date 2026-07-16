@@ -73,6 +73,7 @@ export class AIDirector {
         let contextLines = [];
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
         const globalMarket = this.data.getState(this.config.world_book_keys.global_market) || {};
+        await this.data.pruneExpiredMarketTargets();
 
         // Player Position Info with PnL
         let positionStrings = [];
@@ -101,6 +102,9 @@ export class AIDirector {
             const macro = globalMarket.macro_state;
             contextLines.push(`宏观状态: 风险偏好 ${Number(macro.risk_sentiment || 0).toFixed(2)}，美元强弱 ${Number(macro.usd_strength || 0).toFixed(2)}，利率压力 ${Number(macro.rate_pressure || 0).toFixed(2)}，通胀压力 ${Number(macro.inflation_pressure || 0).toFixed(2)}，能源压力 ${Number(macro.energy_pressure || 0).toFixed(2)}，加密情绪 ${Number(macro.crypto_sentiment || 0).toFixed(2)}。`);
         }
+        const activeTargetLines = this.data.getActiveMarketTargetsSummary([...activeAssetsForAI]);
+        contextLines.push('当前AI大盘目标:');
+        contextLines.push(...(activeTargetLines.length > 0 ? activeTargetLines.map(line => `- ${line}`) : ['- 暂无有效目标。']));
 
         // Market Summary
         contextLines.push('当前市场:');
@@ -136,10 +140,14 @@ export class AIDirector {
             return `${assetName} (${code})`;
         }).join('、');
         taskLines.push(`本回合必须推进以下全部相关资产：${requiredAssetList}。`);
+        taskLines.push('你现在可以用目标指令操盘：没有有效长线目标的相关资产，优先设置一个新的长线目标；没有有效短线目标的当前重点资产，设置一个新的短线目标。已有目标未到期时，新闻、价格推进和 pattern 必须与目标方向或诱多/诱空路径一致。');
+        taskLines.push('目标指令格式: [Market.SetLongTarget(asset_code, target_price, hours, "pattern", "reason", confidence)]，hours 建议 4-24；[Market.SetShortTarget(asset_code, target_price, minutes, "pattern", "reason", confidence)]，minutes 建议 8-90。');
+        taskLines.push('可选 pattern: bull_trend、bear_trend、consolidation、fake_breakout、fake_breakdown、washout、bull_trap、bear_trap、panic_sell、short_squeeze。confidence 为 0-1 数字。目标到期后系统会自动删除并等待你设置下一段目标。');
+        taskLines.push('如果要取消目标，使用 [Market.ClearTarget(asset_code, "long"|"short"|"all")]。');
         taskLines.push(`对于每个相关资产，都必须分别使用 [Market.Advance] 或 [Market.AdvanceSeries] 指令决定其${timeUnit}的收盘价和走势。当前正在查看的 ${currentAssetName} 可以作为叙事重点，但不能忽略其他已交易或持仓资产。`);
-        taskLines.push(`timeframe 使用 "${currentTimeframe}"。close_price / final_close_price 必须是数字。pattern 从 bull_run、bear_crash、volatile、consolidation、reversal_bull、reversal_bear、sideways 中选择。`);
+        taskLines.push(`timeframe 使用 "${currentTimeframe}"。close_price / final_close_price 必须是数字。pattern 从 bull_run、bear_crash、volatile、consolidation、reversal_bull、reversal_bear、sideways、fake_breakout、fake_breakdown、washout、bull_trap、bear_trap 中选择。`);
         taskLines.push('必须同时使用 [Time.Set] 指令推进世界时间。');
-        taskLines.push('必须用 <headline>...</headline> 给出一条简短市场新闻。');
+        taskLines.push('只有当本回合发生目标切换、关键转折、异常波动或宏观事件时，才用 <headline>...</headline> 给出一条简短市场新闻；普通噪声推进可以不写 headline。');
         taskLines.push('最后必须输出一个且只有一个 <command>...</command> 块；所有完整指令都放在这个块内。');
         taskLines.push('除最后的 <command> 块外，不要在正文、解释或示例中输出完整的 [Module.Action(...)] 指令。');
         

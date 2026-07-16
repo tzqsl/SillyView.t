@@ -202,6 +202,12 @@ export class DataManager {
             this.config.default_game_state.kline_context,
             { afterKey: this.config.world_book_keys.dialogue_context }
         );
+        await this.ensureContextEntry(
+            lorebookName,
+            this.config.world_book_keys.market_targets,
+            this.config.default_game_state.market_targets,
+            { afterKey: this.config.world_book_keys.kline_context }
+        );
     }
 
     async ensureContextEntry(lorebookName, key, defaultState, options = {}) {
@@ -283,6 +289,7 @@ export class DataManager {
             { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: true },
             { name: keys.dialogue_context, content: JSON.stringify(defaults.dialogue_context, null, 2), enabled: true },
             { name: keys.kline_context, content: JSON.stringify(defaults.kline_context, null, 2), enabled: true },
+            { name: keys.market_targets, content: JSON.stringify(defaults.market_targets, null, 2), enabled: true },
         ];
 
         initialConfig.available_assets.forEach(assetCode => {
@@ -368,6 +375,140 @@ export class DataManager {
         });
     }
 
+    _normalizeMarketTargetsState(state = {}) {
+        return {
+            comment: state.comment || this.config.default_game_state.market_targets.comment,
+            updated_at: state.updated_at || 0,
+            updated_minute_at: state.updated_minute_at || 0,
+            targets: state.targets && typeof state.targets === 'object' ? state.targets : {},
+        };
+    }
+
+    getMarketTargets() {
+        return this._normalizeMarketTargetsState(
+            this.getState(this.config.world_book_keys.market_targets) || {}
+        );
+    }
+
+    _isTargetExpired(target, type, market) {
+        if (!target) return true;
+        if (type === 'long') return Number(target.end_time) <= Number(market.current_time_index || 0);
+        return Number(target.end_minute) <= Number(market.minute_time_index || 0);
+    }
+
+    async pruneExpiredMarketTargets() {
+        const key = this.config.world_book_keys.market_targets;
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+        let changed = false;
+
+        await this.updateState(key, state => {
+            const next = this._normalizeMarketTargetsState(state);
+            for (const assetCode of Object.keys(next.targets)) {
+                const assetTargets = next.targets[assetCode] || {};
+                for (const type of ['long', 'short']) {
+                    if (this._isTargetExpired(assetTargets[type], type, market)) {
+                        delete assetTargets[type];
+                        changed = true;
+                    }
+                }
+                if (!assetTargets.long && !assetTargets.short) {
+                    delete next.targets[assetCode];
+                    changed = true;
+                } else {
+                    next.targets[assetCode] = assetTargets;
+                }
+            }
+            next.updated_at = market.current_time_index || 0;
+            next.updated_minute_at = market.minute_time_index || 0;
+            return next;
+        });
+
+        return changed;
+    }
+
+    async setMarketTarget(assetCode, type, target) {
+        if (!this.config.asset_definitions[assetCode] || !['long', 'short'].includes(type)) return false;
+
+        const key = this.config.world_book_keys.market_targets;
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+        const price = Number(target.target_price);
+        if (!Number.isFinite(price) || price <= 0) return false;
+
+        const duration = Math.max(1, Math.floor(Number(target.duration) || 1));
+        const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+        const base = {
+            target_price: price,
+            pattern: String(target.pattern || (price >= (assetData?.current_price || price) ? 'bull_trend' : 'bear_trend')),
+            reason: String(target.reason || 'AI market target'),
+            confidence: Math.min(Math.max(Number(target.confidence ?? 0.65), 0), 1),
+            created_at: market.current_time_index || 0,
+            created_minute_at: market.minute_time_index || 0,
+            start_price: Number(assetData?.current_price || price),
+        };
+
+        const normalizedTarget = type === 'long'
+            ? { ...base, end_time: (market.current_time_index || 0) + duration }
+            : { ...base, end_minute: (market.minute_time_index || 0) + duration };
+
+        await this.updateState(key, state => {
+            const next = this._normalizeMarketTargetsState(state);
+            if (!next.targets[assetCode]) next.targets[assetCode] = {};
+            next.targets[assetCode][type] = normalizedTarget;
+            next.updated_at = market.current_time_index || 0;
+            next.updated_minute_at = market.minute_time_index || 0;
+            return next;
+        });
+
+        return true;
+    }
+
+    async clearMarketTarget(assetCode, type = 'all') {
+        const key = this.config.world_book_keys.market_targets;
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+
+        await this.updateState(key, state => {
+            const next = this._normalizeMarketTargetsState(state);
+            if (assetCode === 'ALL' || assetCode === '*') {
+                next.targets = {};
+            } else if (next.targets[assetCode]) {
+                if (type === 'all') {
+                    delete next.targets[assetCode];
+                } else {
+                    delete next.targets[assetCode][type];
+                    if (!next.targets[assetCode].long && !next.targets[assetCode].short) {
+                        delete next.targets[assetCode];
+                    }
+                }
+            }
+            next.updated_at = market.current_time_index || 0;
+            next.updated_minute_at = market.minute_time_index || 0;
+            return next;
+        });
+    }
+
+    getActiveMarketTargetsSummary(assetCodes = null) {
+        const state = this.getMarketTargets();
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+        const selected = assetCodes ? new Set(assetCodes) : null;
+        const lines = [];
+
+        for (const assetCode of Object.keys(state.targets || {})) {
+            if (selected && !selected.has(assetCode)) continue;
+            const assetTargets = state.targets[assetCode] || {};
+            const assetName = this.config.asset_definitions[assetCode]?.name || assetCode;
+            if (assetTargets.long && !this._isTargetExpired(assetTargets.long, 'long', market)) {
+                const remain = Math.max(0, Number(assetTargets.long.end_time || 0) - Number(market.current_time_index || 0));
+                lines.push(`${assetName} (${assetCode}) 长线目标: ${Number(assetTargets.long.target_price).toFixed(4)}, 剩余 ${remain} 小时, pattern=${assetTargets.long.pattern}, reason=${assetTargets.long.reason}`);
+            }
+            if (assetTargets.short && !this._isTargetExpired(assetTargets.short, 'short', market)) {
+                const remain = Math.max(0, Number(assetTargets.short.end_minute || 0) - Number(market.minute_time_index || 0));
+                lines.push(`${assetName} (${assetCode}) 短线目标: ${Number(assetTargets.short.target_price).toFixed(4)}, 剩余 ${remain} 分钟, pattern=${assetTargets.short.pattern}, reason=${assetTargets.short.reason}`);
+            }
+        }
+
+        return lines;
+    }
+
     _getRecentCloseHistory(assetData, limit = 8) {
         const candles = assetData?.kline_hourly || [];
         return candles.slice(-limit).map(c => Number(c.close.toFixed(6)));
@@ -400,6 +541,7 @@ export class DataManager {
         const market = this.getState(keys.global_market) || {};
         const portfolio = this.getState(keys.player_portfolio) || {};
         const availableAssets = configState?.available_assets || Object.keys(this.config.asset_definitions);
+        await this.pruneExpiredMarketTargets();
 
         const marketSummary = availableAssets.map(assetCode => {
             const assetDef = this.config.asset_definitions[assetCode];
@@ -434,6 +576,7 @@ export class DataManager {
             current_season: market.current_season || "未知",
             current_weather: market.current_weather || "未知",
             macro_state: market.macro_state || {},
+            active_market_targets: this.getActiveMarketTargetsSummary(availableAssets),
         }));
         await this.updateDialogueContext(marketSummary);
     }
