@@ -75,7 +75,7 @@ export class AssetsView {
 
         const quests = [
             { done: (portfolio.starting_cash || portfolio.cash || 0) > 0, title: '资金就绪', hint: '新账户自带 10000 信用点。' },
-            { done: hasOpenedTrade, title: '完成首笔交易', hint: '在交易页用 10%/25%/50% 快捷金额开仓。' },
+            { done: hasOpenedTrade, title: '完成首笔交易', hint: '在交易页用 10%/25%/50%/75%/全仓 快捷金额开仓。' },
             { done: hasRiskControls, title: '设置保护', hint: '使用做多保护或做空保护自动填止盈止损。' },
             { done: hasAdvancedMarket, title: '推进一次市场', hint: '结束回合或打开快速模式看行情变化。' },
             { done: hasClosedTrade, title: '完成一笔平仓', hint: '主动平仓，或让止盈止损自动触发。' },

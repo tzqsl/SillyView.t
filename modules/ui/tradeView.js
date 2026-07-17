@@ -51,10 +51,12 @@ export class TradeView {
             <div>
                 <label for="sillyview-trade-amount" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">${isLeverage ? '保证金' : '金额 (信用点)'}</label>
                 <input type="number" id="sillyview-trade-amount" value="1000" class="sv-input" ${showAmountInput ? '' : 'disabled'}>
-                <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:0.5rem; margin-top:0.5rem;">
+                <div style="display:grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap:0.5rem; margin-top:0.5rem;">
                     <button type="button" class="sv-button sv-trade-amount-preset" data-percent="0.1" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">10%</button>
                     <button type="button" class="sv-button sv-trade-amount-preset" data-percent="0.25" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">25%</button>
                     <button type="button" class="sv-button sv-trade-amount-preset" data-percent="0.5" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">50%</button>
+                    <button type="button" class="sv-button sv-trade-amount-preset" data-percent="0.75" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">75%</button>
+                    <button type="button" class="sv-button sv-trade-amount-preset" data-percent="1" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">全仓</button>
                 </div>
                 <div id="sillyview-risk-preview" style="font-size:0.75rem; margin-top:0.5rem; padding:0.5rem; border-radius:0.375rem; background-color:var(--bg-gray-900); color:var(--text-gray-400);"></div>
             </div>
@@ -184,10 +186,13 @@ export class TradeView {
 
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
         const cash = Number(portfolio.cash || 0);
-        const amount = Math.max(0, cash * percent);
+        const leverage = parseInt(this.parentDoc.getElementById('sillyview-leverage-slider')?.value || 1, 10);
+        const tradeConfig = SillyViewConfig.asset_definitions[this.ui.currentAsset]?.trade_config || {};
+        const feeRate = Number(tradeConfig.fee_rate ?? 0.001);
+        const maxMargin = cash / (1 + feeRate * leverage);
+        const amount = Math.max(0, percent >= 1 ? maxMargin : cash * percent);
         amountInput.value = amount >= 100 ? amount.toFixed(0) : amount.toFixed(2);
 
-        const leverage = parseInt(this.parentDoc.getElementById('sillyview-leverage-slider')?.value || 1, 10);
         this.updateLeverageInfo(leverage);
         this.updateRiskPreview();
     }
