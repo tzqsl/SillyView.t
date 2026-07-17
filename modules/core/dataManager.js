@@ -818,12 +818,57 @@ export class DataManager {
         return base;
     }
 
+    _escapeRegExp(text) {
+        return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    _stripLooseFieldValue(value) {
+        return String(value || '')
+            .trim()
+            .replace(/^[`"'“”‘’]+|[`"'“”‘’，,}]+$/g, '')
+            .trim();
+    }
+
     _extractLineField(text, names) {
         for (const name of names) {
-            const match = String(text || '').match(new RegExp(`${name}\\s*[:：=]\\s*([^\\n\\r;；,，]+)`, 'i'));
-            if (match) return match[1].trim();
+            const escapedName = this._escapeRegExp(name);
+            const match = String(text || '').match(new RegExp(`["'“”‘’]?${escapedName}["'“”‘’]?\\s*[:：=]\\s*("([^"\\r\\n]*)"|'([^'\\r\\n]*)'|([^\\n\\r;；]+))`, 'i'));
+            if (match) return this._stripLooseFieldValue(match[2] || match[3] || match[4] || match[1]);
         }
         return '';
+    }
+
+    _parseLooseJsonRecords(content) {
+        const text = String(content || '').trim();
+        if (!text) return [];
+
+        const sanitize = value => String(value || '')
+            .replace(/,\s*([}\]])/g, '$1')
+            .trim();
+        const normalizeRecords = parsed => Array.isArray(parsed) ? parsed : [parsed];
+        const attempts = [
+            sanitize(text),
+            `[${sanitize(text).replace(/}\s*(?=\{)/g, '},')}]`,
+        ];
+
+        for (const candidate of attempts) {
+            try {
+                return normalizeRecords(JSON.parse(candidate));
+            } catch (error) {
+                // Continue to looser object extraction below.
+            }
+        }
+
+        const records = [];
+        const objectBlocks = sanitize(text).match(/\{[\s\S]*?\}/g) || [];
+        for (const block of objectBlocks) {
+            try {
+                records.push(JSON.parse(sanitize(block)));
+            } catch (error) {
+                // Ignore invalid object fragments; text fallback will still run.
+            }
+        }
+        return records;
     }
 
     _normalizeBankAccountRecord(record, source) {
@@ -854,14 +899,18 @@ export class DataManager {
         const accounts = [];
 
         try {
-            const parsed = JSON.parse(content);
-            const records = Array.isArray(parsed) ? parsed : [parsed];
+            const records = this._parseLooseJsonRecords(content);
             records.forEach(record => {
                 const account = this._normalizeBankAccountRecord(record, source);
                 if (account) accounts.push(account);
             });
         } catch (error) {
-            const matchedBlocks = content.match(/开户行\s*[:：=][\s\S]*?(?=\n\s*开户行\s*[:：=]|\n\s*---|\s*$)/g);
+            this.logger.warn(`解析开户行 JSON 失败，改用文本兜底: ${worldbookName}/${source.entry}`, error);
+        }
+
+        if (accounts.length === 0) {
+            const fieldPattern = /["'“”‘’]?开户行["'“”‘’]?\s*[:：=]/;
+            const matchedBlocks = content.match(new RegExp(`${fieldPattern.source}[\\s\\S]*?(?=\\n\\s*${fieldPattern.source}|\\n\\s*---|\\s*$)`, 'g'));
             const blocks = matchedBlocks && matchedBlocks.length > 1 ? matchedBlocks : [content];
             blocks.forEach(block => {
                 const account = this._normalizeBankAccountRecord({
