@@ -30,28 +30,42 @@ export class ChartManager {
             return false;
         }
 
+        const chartBackground = '#0b1220';
+        const colorType = this.win.LightweightCharts.ColorType?.Solid ?? 'solid';
         this.chart = this.win.LightweightCharts.createChart(containerElement, {
             width: containerElement.clientWidth,
             height: containerElement.clientHeight,
             layout: {
-                backgroundColor: '#111827', // bg-gray-900
-                textColor: 'rgba(255, 255, 255, 0.9)',
+                background: { type: colorType, color: chartBackground },
+                backgroundColor: chartBackground,
+                textColor: '#f3f4f6',
+                fontSize: 12,
             },
             grid: {
-                vertLines: { color: 'rgba(197, 203, 206, 0.1)' },
-                horzLines: { color: 'rgba(197, 203, 206, 0.1)' },
+                vertLines: { color: 'rgba(148, 163, 184, 0.18)' },
+                horzLines: { color: 'rgba(148, 163, 184, 0.22)' },
             },
-            crosshair: { mode: this.win.LightweightCharts.CrosshairMode.Normal },
+            crosshair: {
+                mode: this.win.LightweightCharts.CrosshairMode.Normal,
+                vertLine: { color: 'rgba(226, 232, 240, 0.55)', labelBackgroundColor: '#334155' },
+                horzLine: { color: 'rgba(226, 232, 240, 0.65)', labelBackgroundColor: '#334155' },
+            },
             rightPriceScale: {
                 visible: true,
                 borderVisible: true,
-                borderColor: 'rgba(197, 203, 206, 0.32)',
+                borderColor: 'rgba(226, 232, 240, 0.62)',
                 ticksVisible: true,
                 alignLabels: true,
                 entireTextOnly: true,
                 autoScale: true,
             },
-            timeScale: { borderColor: 'rgba(197, 203, 206, 0.2)', timeVisible: true, secondsVisible: false },
+            timeScale: {
+                borderVisible: true,
+                borderColor: 'rgba(226, 232, 240, 0.5)',
+                ticksVisible: true,
+                timeVisible: true,
+                secondsVisible: false,
+            },
         });
 
         this.candlestickSeries = this.chart.addCandlestickSeries({
@@ -62,8 +76,8 @@ export class ChartManager {
         });
 
         this.lineSeries = this.chart.addLineSeries({
-            color: '#22d3ee',
-            lineWidth: 2,
+            color: '#38e8ff',
+            lineWidth: 3,
             crosshairMarkerVisible: true,
             crosshairMarkerRadius: 4,
             priceLineVisible: true,
@@ -72,7 +86,7 @@ export class ChartManager {
         });
 
         this.volumeSeries = this.chart.addHistogramSeries({
-            color: '#384259', priceFormat: { type: 'volume' }, priceScaleId: '',
+            color: '#64748b', priceFormat: { type: 'volume' }, priceScaleId: '',
         });
         
         this.chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.25 } });
