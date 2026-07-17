@@ -1219,6 +1219,50 @@ export class DataManager {
             this.logger.log(`产生了 ${interest.toFixed(2)} 的贷款利息。`);
         }
     }
+
+    async accrueFundingFees(hours = 1) {
+        const portfolioKey = this.config.world_book_keys.player_portfolio;
+        const portfolio = this.getState(portfolioKey);
+        if (!portfolio?.assets) return 0;
+
+        const normalizedHours = Math.max(1, Math.floor(Number(hours) || 1));
+        const fundingItems = [];
+        for (const assetCode of Object.keys(portfolio.assets)) {
+            const position = this.positionCalculator.calculate(assetCode, portfolio);
+            if (!position.isLeveraged || !position.type || position.positionValue <= 0) continue;
+
+            const rate = Number(this._getTradeConfig(assetCode).funding_rate_hourly || 0);
+            if (!Number.isFinite(rate) || rate === 0) continue;
+
+            const signedCost = position.positionValue * rate * normalizedHours * (position.type === 'long' ? 1 : -1);
+            if (Math.abs(signedCost) < 0.01) continue;
+            fundingItems.push({ assetCode, amount: signedCost });
+        }
+
+        if (fundingItems.length === 0) return 0;
+
+        const totalCost = fundingItems.reduce((sum, item) => sum + item.amount, 0);
+        const market = this.getState(this.config.world_book_keys.global_market);
+        const time = market ? market.current_time_index : 0;
+
+        await this.updateState(portfolioKey, p => {
+            if (!p.transaction_log) p.transaction_log = [];
+            p.cash = (p.cash || 0) - totalCost;
+            fundingItems.forEach(item => {
+                const label = item.amount >= 0 ? '资金费率支出' : '资金费率收入';
+                p.transaction_log.unshift({
+                    time,
+                    description: `${label} (${item.assetCode})`,
+                    amount: -item.amount,
+                });
+            });
+            if (p.transaction_log.length > 100) p.transaction_log.length = 100;
+            return p;
+        });
+
+        this.logger.log(`结算 ${normalizedHours} 小时资金费率: ${(-totalCost).toFixed(2)}。`);
+        return totalCost;
+    }
     
     async updateAssetCandles(assetCode, newCandles, minuteCandles = []) {
         const assetKey = `${this.config.world_book_keys.asset_prefix}${assetCode}`;
@@ -1329,6 +1373,67 @@ export class DataManager {
             if (p.asset_history.length > 365) p.asset_history.shift();
             return p;
         });
+    }
+
+    calculatePerformanceStats(portfolio = null) {
+        const resolvedPortfolio = portfolio || this.getState(this.config.world_book_keys.player_portfolio);
+        if (!resolvedPortfolio) {
+            return {
+                netWorth: 0,
+                startingCash: 0,
+                returnPct: 0,
+                maxDrawdownPct: 0,
+                realizedPnl: 0,
+                winRatePct: 0,
+                winningTrades: 0,
+                losingTrades: 0,
+                tradeCount: 0,
+            };
+        }
+
+        const netWorth = this._calculatePortfolioMarkedValue(resolvedPortfolio);
+        const history = Array.isArray(resolvedPortfolio.asset_history) ? resolvedPortfolio.asset_history : [];
+        const startingCash = Number(
+            resolvedPortfolio.starting_cash ??
+            history[0]?.value ??
+            this.config.default_game_state.player_portfolio.starting_cash ??
+            0
+        );
+        const returnPct = startingCash > 0 ? ((netWorth / startingCash) - 1) * 100 : 0;
+
+        let peak = startingCash > 0 ? startingCash : (history[0]?.value || netWorth);
+        let maxDrawdownPct = 0;
+        for (const point of history) {
+            const value = Number(point.value || 0);
+            if (value > peak) peak = value;
+            if (peak > 0) {
+                maxDrawdownPct = Math.max(maxDrawdownPct, ((peak - value) / peak) * 100);
+            }
+        }
+        if (peak > 0) {
+            maxDrawdownPct = Math.max(maxDrawdownPct, ((peak - netWorth) / peak) * 100);
+        }
+
+        const realizedPnls = (resolvedPortfolio.transaction_log || [])
+            .filter(log => String(log.description || '').includes('已实现盈亏'))
+            .map(log => Number(log.amount || 0));
+        const realizedPnl = realizedPnls.reduce((sum, value) => sum + value, 0);
+        const winningTrades = realizedPnls.filter(value => value > 0).length;
+        const losingTrades = realizedPnls.filter(value => value < 0).length;
+        const tradeCount = winningTrades + losingTrades;
+        const winRatePct = tradeCount > 0 ? (winningTrades / tradeCount) * 100 : 0;
+
+        return {
+            netWorth,
+            startingCash,
+            returnPct,
+            maxDrawdownPct,
+            realizedPnl,
+            winRatePct,
+            winningTrades,
+            losingTrades,
+            tradeCount,
+        };
     }
 
     async logTransaction(description, amount, isTradeRelated = false) {

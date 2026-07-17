@@ -404,6 +404,7 @@ export class SillyViewApp {
         await this.ui.animateCandles(candlesToAnimate, 1000); 
         
         await this._checkLiquidations();
+        await this.data.accrueFundingFees(1);
         await this.data.recordAssetHistory();
         await this.data.updateAIContext();
         await this.data.saveAllEntries();
@@ -463,6 +464,8 @@ export class SillyViewApp {
                     return m;
                 });
                 this.data.clearActionsThisTurn();
+                await this.data.accrueFundingFees(hoursToAdvance);
+                await this.data.recordAssetHistory();
                 await this.data.updateAIContext();
                 this.ui.renderAll();
             }
@@ -470,9 +473,9 @@ export class SillyViewApp {
         }
 
         // AI Mode
-        await this.data.accrueInterest();
         const currentTimeframe = this.ui.currentTimeframe === 'MINUTE' ? 'HOURLY' : this.ui.currentTimeframe;
         const logTimeUnit = currentTimeframe === 'HOURLY' ? '一小时' : '一天';
+        await this.data.accrueInterest();
         Logger.log(`正在推进${logTimeUnit} (AI 模式)...`);
         this.ui.tradeView.updateActionButtonsState(false, true);
 
@@ -507,7 +510,9 @@ export class SillyViewApp {
             this.data.clearActionsThisTurn();
             this.ui.tradeView.renderThisTurnActions();
 
+            await this.data.accrueFundingFees(currentTimeframe === 'DAILY' ? 24 : 1);
             await this.data.recordAssetHistory();
+            await this.data.updateAIContext();
             await this.data.saveAllEntries();
             Logger.log("AI回合后台推进完成。");
         } finally {

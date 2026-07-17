@@ -51,6 +51,12 @@ export class TradeView {
             <div>
                 <label for="sillyview-trade-amount" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">${isLeverage ? '保证金' : '金额 (信用点)'}</label>
                 <input type="number" id="sillyview-trade-amount" value="1000" class="sv-input" ${showAmountInput ? '' : 'disabled'}>
+                <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:0.5rem; margin-top:0.5rem;">
+                    <button type="button" class="sv-button sv-trade-amount-preset" data-percent="0.1" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">10%</button>
+                    <button type="button" class="sv-button sv-trade-amount-preset" data-percent="0.25" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">25%</button>
+                    <button type="button" class="sv-button sv-trade-amount-preset" data-percent="0.5" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">50%</button>
+                </div>
+                <div id="sillyview-risk-preview" style="font-size:0.75rem; margin-top:0.5rem; padding:0.5rem; border-radius:0.375rem; background-color:var(--bg-gray-900); color:var(--text-gray-400);"></div>
             </div>
         `;
         const riskControls = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio)
@@ -65,6 +71,10 @@ export class TradeView {
                     <label for="sillyview-stop-loss" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">止损价</label>
                     <input type="number" id="sillyview-stop-loss" placeholder="可选" value="${riskControls.stop_loss ?? ''}" class="sv-input" ${showAmountInput ? '' : 'disabled'}>
                 </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.5rem;">
+                <button type="button" class="sv-button sv-risk-preset" data-risk-preset="long_safe" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">做多保护</button>
+                <button type="button" class="sv-button sv-risk-preset" data-risk-preset="short_safe" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">做空保护</button>
             </div>
         `;
 
@@ -116,6 +126,7 @@ export class TradeView {
             </div>
         `;
         if (isLeverage) this.updateLeverageInfo(1);
+        this.updateRiskPreview();
         this.updateDataWindowWithLastCandle();
         this.renderThisTurnActions();
     }
@@ -167,10 +178,72 @@ export class TradeView {
         if (advanceDayBtn) advanceDayBtn.disabled = timeButtonsDisabled;
     }
 
+    applyAmountPreset(percent) {
+        const amountInput = this.parentDoc.getElementById('sillyview-trade-amount');
+        if (!amountInput || amountInput.disabled) return;
+
+        const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
+        const cash = Number(portfolio.cash || 0);
+        const amount = Math.max(0, cash * percent);
+        amountInput.value = amount >= 100 ? amount.toFixed(0) : amount.toFixed(2);
+
+        const leverage = parseInt(this.parentDoc.getElementById('sillyview-leverage-slider')?.value || 1, 10);
+        this.updateLeverageInfo(leverage);
+        this.updateRiskPreview();
+    }
+
+    applyRiskPreset(preset) {
+        const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.ui.currentAsset}`);
+        const currentPrice = Number(assetData?.current_price || 0);
+        if (!currentPrice) return;
+
+        const takeProfitInput = this.parentDoc.getElementById('sillyview-take-profit');
+        const stopLossInput = this.parentDoc.getElementById('sillyview-stop-loss');
+        if (!takeProfitInput || !stopLossInput || takeProfitInput.disabled || stopLossInput.disabled) return;
+
+        const isShort = preset === 'short_safe';
+        const takeProfit = isShort ? currentPrice * 0.97 : currentPrice * 1.03;
+        const stopLoss = isShort ? currentPrice * 1.015 : currentPrice * 0.985;
+        takeProfitInput.value = takeProfit.toFixed(4);
+        stopLossInput.value = stopLoss.toFixed(4);
+    }
+
+    updateRiskPreview() {
+        const preview = this.parentDoc.getElementById('sillyview-risk-preview');
+        const amountInput = this.parentDoc.getElementById('sillyview-trade-amount');
+        if (!preview || !amountInput) return;
+
+        const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
+        const stats = this.data.calculatePerformanceStats(portfolio);
+        const cash = Number(portfolio.cash || 0);
+        const amount = Number(amountInput.value || 0);
+        const leverage = this.ui.tradeMode === 'leverage'
+            ? parseInt(this.parentDoc.getElementById('sillyview-leverage-slider')?.value || 1, 10)
+            : 1;
+        const cashUsagePct = cash > 0 ? (amount / cash) * 100 : 0;
+        const exposurePct = stats.netWorth > 0 ? ((amount * leverage) / stats.netWorth) * 100 : 0;
+
+        let label = '稳健';
+        let color = 'var(--green-400)';
+        if (cashUsagePct > 50 || exposurePct > 150) {
+            label = '高风险';
+            color = 'var(--red-400)';
+        } else if (cashUsagePct > 25 || exposurePct > 75) {
+            label = '进取';
+            color = 'var(--yellow-400)';
+        }
+
+        preview.innerHTML = `
+            <span>风险档位: <span style="color:${color}; font-weight:600;">${label}</span></span>
+            <span style="display:block; margin-top:0.25rem;">占用现金 ${cashUsagePct.toFixed(1)}%，名义敞口 ${exposurePct.toFixed(1)}%</span>
+        `;
+    }
+
     updateLeverageInfo(leverage) {
         const display = this.parentDoc.getElementById('leverage-value-display');
         const infoBox = this.parentDoc.getElementById('leverage-info-box');
         const amountInput = this.parentDoc.getElementById('sillyview-trade-amount');
+        this.updateRiskPreview();
         if (!display || !infoBox || !amountInput) return;
 
         const margin = parseFloat(amountInput.value) || 0;

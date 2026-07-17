@@ -23,10 +23,14 @@ export class AssetsView {
         }
 
         const financialStatusHtml = this.renderFinancialStatus(portfolio);
+        const questHtml = this.renderQuestBoard(portfolio);
+        const performanceHtml = this.renderPerformanceStats(portfolio);
         const positionsHtml = this.renderPositions(portfolio);
 
         container.innerHTML = `
             ${financialStatusHtml}
+            ${questHtml}
+            ${performanceHtml}
             <div>
                 <h3 style="font-size: 1.125rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 1rem;">我的仓位</h3>
                 ${positionsHtml}
@@ -53,6 +57,78 @@ export class AssetsView {
                 <div class="grid grid-cols-2 gap-4 mt-4" style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-top:1rem;">
                     <button id="sv-loan-btn" class="sv-button sv-button-blue" ${maxLoan <= 0 ? 'disabled' : ''}>申请贷款</button>
                     <button id="sv-repay-btn" class="sv-button" style="background-color: var(--bg-gray-600);" ${!debt || debt <= 0 ? 'disabled' : ''}>偿还贷款</button>
+                </div>
+            </div>
+        `;
+    }
+
+    renderQuestBoard(portfolio) {
+        const logs = portfolio.transaction_log || [];
+        const hasOpenedTrade = logs.some(log => /开多|开空|加仓/.test(String(log.description || '')));
+        const hasClosedTrade = logs.some(log => /平多|平空|止盈平仓|止损平仓/.test(String(log.description || '')));
+        const hasRiskControls = Object.values(portfolio.assets || {}).some(asset => {
+            const controls = asset?.risk_controls || {};
+            return Number(controls.take_profit) > 0 || Number(controls.stop_loss) > 0;
+        });
+        const hasAdvancedMarket = (portfolio.asset_history || []).length >= 2;
+        const stats = this.data.calculatePerformanceStats(portfolio);
+
+        const quests = [
+            { done: (portfolio.starting_cash || portfolio.cash || 0) > 0, title: '资金就绪', hint: '新账户自带 10000 信用点。' },
+            { done: hasOpenedTrade, title: '完成首笔交易', hint: '在交易页用 10%/25%/50% 快捷金额开仓。' },
+            { done: hasRiskControls, title: '设置保护', hint: '使用做多保护或做空保护自动填止盈止损。' },
+            { done: hasAdvancedMarket, title: '推进一次市场', hint: '结束回合或打开快速模式看行情变化。' },
+            { done: hasClosedTrade, title: '完成一笔平仓', hint: '主动平仓，或让止盈止损自动触发。' },
+            { done: stats.returnPct > 0, title: '账户转正', hint: '让当前净值高于初始资金。' },
+        ];
+
+        const completed = quests.filter(quest => quest.done).length;
+        const nextQuest = quests.find(quest => !quest.done);
+        const progressPct = Math.round((completed / quests.length) * 100);
+        const questItems = quests.map(quest => `
+            <div style="display:flex; align-items:flex-start; gap:0.5rem; padding:0.35rem 0;">
+                <span style="color:${quest.done ? 'var(--green-400)' : 'var(--text-gray-500)'}; font-weight:700;">${quest.done ? '✓' : '○'}</span>
+                <span>
+                    <span style="color:${quest.done ? 'white' : 'var(--text-gray-300)'}; font-weight:600;">${quest.title}</span>
+                    <span style="display:block; color:var(--text-gray-500); font-size:0.75rem;">${quest.hint}</span>
+                </span>
+            </div>
+        `).join('');
+
+        return `
+            <div style="margin-top: 1.5rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 0.75rem;">任务板</h3>
+                <div style="background-color: var(--bg-gray-900); border: 1px solid var(--bg-gray-700); border-radius: 0.375rem; padding: 0.75rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:0.5rem;">
+                        <span style="font-size:0.875rem; color:var(--text-gray-300);">进度 ${completed}/${quests.length}</span>
+                        <span style="font-family:monospace; color:var(--cyan-400);">${progressPct}%</span>
+                    </div>
+                    <div style="height:0.5rem; background-color:var(--bg-gray-700); border-radius:999px; overflow:hidden; margin-bottom:0.75rem;">
+                        <div style="height:100%; width:${progressPct}%; background-color:var(--cyan-400);"></div>
+                    </div>
+                    ${nextQuest ? `<div style="font-size:0.75rem; color:var(--text-gray-400); margin-bottom:0.5rem;">下一步：${nextQuest.title}</div>` : `<div style="font-size:0.75rem; color:var(--green-400); margin-bottom:0.5rem;">基础目标已全部完成。</div>`}
+                    <div>${questItems}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderPerformanceStats(portfolio) {
+        const stats = this.data.calculatePerformanceStats(portfolio);
+        const returnColor = stats.returnPct >= 0 ? 'var(--green-400)' : 'var(--red-400)';
+        const pnlColor = stats.realizedPnl >= 0 ? 'var(--green-400)' : 'var(--red-400)';
+        const sign = value => value >= 0 ? '+' : '';
+
+        return `
+            <div style="margin-top: 1.5rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">绩效统计</h3>
+                <div class="sv-data-grid" style="grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem;">
+                    <span>初始资金:</span><span style="font-family: monospace; color: white;">${stats.startingCash.toFixed(2)}</span>
+                    <span>当前净值:</span><span style="font-family: monospace; color: white;">${stats.netWorth.toFixed(2)}</span>
+                    <span>总收益率:</span><span style="font-family: monospace; color: ${returnColor};">${sign(stats.returnPct)}${stats.returnPct.toFixed(2)}%</span>
+                    <span>最大回撤:</span><span style="font-family: monospace; color: var(--red-400);">${stats.maxDrawdownPct.toFixed(2)}%</span>
+                    <span>已实现盈亏:</span><span style="font-family: monospace; color: ${pnlColor};">${sign(stats.realizedPnl)}${stats.realizedPnl.toFixed(2)}</span>
+                    <span>胜率:</span><span style="font-family: monospace; color: white;">${stats.tradeCount > 0 ? `${stats.winRatePct.toFixed(1)}% (${stats.winningTrades}/${stats.tradeCount})` : '-'}</span>
                 </div>
             </div>
         `;

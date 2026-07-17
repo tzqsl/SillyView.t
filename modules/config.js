@@ -220,7 +220,8 @@ export const SillyViewConfig = {
             }
         },
         player_portfolio: {
-            cash: 0,
+            cash: 10000,
+            starting_cash: 10000,
             debt: 0,
             assets: {},
             actions_this_turn: [],

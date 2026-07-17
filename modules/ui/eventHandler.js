@@ -410,6 +410,8 @@ export class EventHandler {
                 const fetchBgAiModelsBtn = target.closest('#sv-fetch-bg-ai-models-btn');
                 const bgAiModelOption = target.closest('.sv-bg-ai-model-option');
                 const positionRiskSaveBtn = target.closest('.sv-position-risk-save');
+                const amountPresetBtn = target.closest('.sv-trade-amount-preset');
+                const riskPresetBtn = target.closest('.sv-risk-preset');
 
                 if (tabButton) {
                     this.ui.switchSidebarTab(tabButton.dataset.tab);
@@ -421,6 +423,10 @@ export class EventHandler {
                     this.ui.initiateTrade('buy');
                 } else if (sellBtn) {
                     this.ui.initiateTrade('sell');
+                } else if (amountPresetBtn) {
+                    this.ui.tradeView.applyAmountPreset(parseFloat(amountPresetBtn.dataset.percent || '0'));
+                } else if (riskPresetBtn) {
+                    this.ui.tradeView.applyRiskPreset(riskPresetBtn.dataset.riskPreset);
                 } else if (saveBgAiBtn) {
                     await this.saveBackgroundAISettings();
                     this.dependencies.win.toastr.success("后台模型设置已保存。");
@@ -456,6 +462,12 @@ export class EventHandler {
                 const leverageSlider = event.target.closest('#sillyview-leverage-slider');
                 if (leverageSlider) {
                      this.ui.tradeView.updateLeverageInfo(parseInt(leverageSlider.value, 10));
+                }
+                const amountInput = event.target.closest('#sillyview-trade-amount');
+                if (amountInput) {
+                    const leverage = parseInt(this.parentDoc.getElementById('sillyview-leverage-slider')?.value || 1, 10);
+                    this.ui.tradeView.updateLeverageInfo(leverage);
+                    this.ui.tradeView.updateRiskPreview();
                 }
              });
         }
