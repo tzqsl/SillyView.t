@@ -153,6 +153,9 @@ export class UIRenderer {
                         <div class="sv-time-controls">
                             <h2 style="font-size:0.875rem; font-weight: 600; color:var(--text-gray-400);">时间控制:</h2>
                             <button id="sillyview-end-turn-btn" class="sv-button sv-button-blue">结束回合</button>
+                            <button id="sillyview-next-5m-btn" class="sv-button sv-button-blue" style="display: none;">+5分</button>
+                            <button id="sillyview-next-15m-btn" class="sv-button sv-button-blue" style="display: none;">+15分</button>
+                            <button id="sillyview-next-30m-btn" class="sv-button sv-button-blue" style="display: none;">+30分</button>
                             <button id="sillyview-next-hour-btn" class="sv-button sv-button-blue" style="display: none;">下1小时</button>
                             <button id="sillyview-advance-day-btn" class="sv-button sv-button-blue" style="display: none;">推进一天</button>
                             <button id="sillyview-sync-ai-btn" class="sv-button sv-button-green" style="display: none;">与AI同步</button>
@@ -536,6 +539,11 @@ export class UIRenderer {
         const isKeyMoment = market && market.remaining_candles <= 0;
 
         const endTurnBtn = this.parentDoc.getElementById('sillyview-end-turn-btn');
+        const minuteBtns = [
+            this.parentDoc.getElementById('sillyview-next-5m-btn'),
+            this.parentDoc.getElementById('sillyview-next-15m-btn'),
+            this.parentDoc.getElementById('sillyview-next-30m-btn'),
+        ];
         const nextHourBtn = this.parentDoc.getElementById('sillyview-next-hour-btn');
         const advanceDayBtn = this.parentDoc.getElementById('sillyview-advance-day-btn');
         const syncBtn = this.parentDoc.getElementById('sillyview-sync-ai-btn');
@@ -543,16 +551,19 @@ export class UIRenderer {
     
         if (isKeyMoment) {
             if(endTurnBtn) endTurnBtn.style.display = 'block';
+            minuteBtns.forEach(btn => { if (btn) btn.style.display = 'none'; });
             if(nextHourBtn) nextHourBtn.style.display = 'none';
             if(advanceDayBtn) advanceDayBtn.style.display = 'none';
             if(syncBtn) syncBtn.style.display = 'none';
         } else if (isQuickMode) {
             if(endTurnBtn) endTurnBtn.style.display = 'none';
+            minuteBtns.forEach(btn => { if (btn) btn.style.display = 'block'; });
             if(nextHourBtn) nextHourBtn.style.display = 'block';
             if(advanceDayBtn) advanceDayBtn.style.display = 'block';
             if(syncBtn) syncBtn.style.display = 'block';
         } else { // AI Mode
             if(endTurnBtn) endTurnBtn.style.display = 'block';
+            minuteBtns.forEach(btn => { if (btn) btn.style.display = 'none'; });
             if(nextHourBtn) nextHourBtn.style.display = 'none';
             if(advanceDayBtn) advanceDayBtn.style.display = 'none';
             if(syncBtn) syncBtn.style.display = 'none';

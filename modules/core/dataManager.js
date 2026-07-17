@@ -780,6 +780,137 @@ export class DataManager {
         };
     }
 
+    _getActiveTargetForSignal(assetCode, type, market, targetState) {
+        const target = targetState?.targets?.[assetCode]?.[type];
+        if (!target) return null;
+        const currentIndex = type === 'long'
+            ? Number(market?.current_time_index || 0)
+            : Number(market?.minute_time_index || 0);
+        const endIndex = type === 'long' ? Number(target.end_time) : Number(target.end_minute);
+        return endIndex > currentIndex ? target : null;
+    }
+
+    _summarizeCandleWindow(candles = []) {
+        const list = candles.filter(Boolean);
+        if (list.length < 2) {
+            return {
+                change_pct: 0,
+                direction: 'flat',
+                momentum: 0,
+                volatility_pct: 0,
+                consecutive_up: 0,
+                consecutive_down: 0,
+                volume_ratio: 1,
+                breakout: 'none',
+            };
+        }
+
+        const first = list[0];
+        const last = list[list.length - 1];
+        const start = Number(first.open || first.close || 0);
+        const end = Number(last.close || 0);
+        const changePct = start > 0 ? ((end / start) - 1) * 100 : 0;
+        const direction = changePct > 0.08 ? 'up' : (changePct < -0.08 ? 'down' : 'flat');
+        const ranges = list.map(candle => {
+            const close = Number(candle.close || 0);
+            const high = Number(candle.high || close);
+            const low = Number(candle.low || close);
+            return close > 0 ? ((high - low) / close) * 100 : 0;
+        });
+        const volatilityPct = ranges.reduce((sum, item) => sum + item, 0) / Math.max(1, ranges.length);
+        let consecutiveUp = 0;
+        let consecutiveDown = 0;
+        for (let i = list.length - 1; i >= 0; i--) {
+            const candle = list[i];
+            if (Number(candle.close) > Number(candle.open)) {
+                if (consecutiveDown > 0) break;
+                consecutiveUp++;
+            } else if (Number(candle.close) < Number(candle.open)) {
+                if (consecutiveUp > 0) break;
+                consecutiveDown++;
+            } else {
+                break;
+            }
+        }
+
+        const prev = list.slice(0, -1);
+        const prevHigh = Math.max(...prev.map(candle => Number(candle.high || candle.close || 0)));
+        const prevLow = Math.min(...prev.map(candle => Number(candle.low || candle.close || Infinity)));
+        const breakout = Number(last.close) > prevHigh ? 'up' : (Number(last.close) < prevLow ? 'down' : 'none');
+        const recentVolumes = list.slice(-3).map(candle => Number(candle.volume || 0));
+        const earlierVolumes = list.slice(0, Math.max(1, list.length - 3)).map(candle => Number(candle.volume || 0));
+        const avgRecentVolume = recentVolumes.reduce((sum, item) => sum + item, 0) / Math.max(1, recentVolumes.length);
+        const avgEarlierVolume = earlierVolumes.reduce((sum, item) => sum + item, 0) / Math.max(1, earlierVolumes.length);
+        const volumeRatio = avgEarlierVolume > 0 ? avgRecentVolume / avgEarlierVolume : 1;
+        const firstHalf = list.slice(0, Math.ceil(list.length / 2));
+        const secondHalf = list.slice(Math.floor(list.length / 2));
+        const firstMove = Number(firstHalf[firstHalf.length - 1]?.close || 0) - Number(firstHalf[0]?.open || firstHalf[0]?.close || 0);
+        const secondMove = Number(secondHalf[secondHalf.length - 1]?.close || 0) - Number(secondHalf[0]?.open || secondHalf[0]?.close || 0);
+        const momentum = Math.sign(secondMove) === Math.sign(firstMove)
+            ? Math.abs(secondMove) - Math.abs(firstMove)
+            : secondMove;
+
+        return {
+            change_pct: Number(changePct.toFixed(3)),
+            direction,
+            momentum: Number(momentum.toFixed(6)),
+            volatility_pct: Number(volatilityPct.toFixed(3)),
+            consecutive_up: consecutiveUp,
+            consecutive_down: consecutiveDown,
+            volume_ratio: Number(volumeRatio.toFixed(2)),
+            breakout,
+        };
+    }
+
+    getKlineSignal(assetCode) {
+        const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+        const targetState = this.getMarketTargets();
+        const minuteSummary = this._summarizeCandleWindow((assetData?.kline_minute || []).slice(-15));
+        const hourlySummary = this._summarizeCandleWindow((assetData?.kline_hourly || []).slice(-8));
+        const longTarget = this._getActiveTargetForSignal(assetCode, 'long', market, targetState);
+        const shortTarget = this._getActiveTargetForSignal(assetCode, 'short', market, targetState);
+
+        const scorePart = direction => direction === 'up' ? 1 : (direction === 'down' ? -1 : 0);
+        const minuteScore = scorePart(minuteSummary.direction) + (minuteSummary.breakout === 'up' ? 0.6 : (minuteSummary.breakout === 'down' ? -0.6 : 0));
+        const hourlyScore = scorePart(hourlySummary.direction) * 1.15 + (hourlySummary.breakout === 'up' ? 0.45 : (hourlySummary.breakout === 'down' ? -0.45 : 0));
+        const targetScore =
+            (longTarget ? (Number(longTarget.target_price) >= Number(assetData?.current_price || 0) ? 0.9 : -0.9) : 0) +
+            (shortTarget ? (Number(shortTarget.target_price) >= Number(assetData?.current_price || 0) ? 1.1 : -1.1) : 0);
+        const combinedScore = minuteScore * 1.2 + hourlyScore + targetScore;
+        const combinedBias = combinedScore > 1.1 ? 'bullish' : (combinedScore < -1.1 ? 'bearish' : 'neutral');
+        const volatilityLevel = minuteSummary.volatility_pct > 0.8 || minuteSummary.volume_ratio > 1.8
+            ? 'high'
+            : (minuteSummary.volatility_pct > 0.25 || minuteSummary.volume_ratio > 1.25 ? 'medium' : 'low');
+        const targetAlignment = shortTarget
+            ? (Math.sign(targetScore) === Math.sign(minuteScore || targetScore) ? 'aligned_short_target' : 'conflicting_short_target')
+            : (longTarget ? (Math.sign(targetScore) === Math.sign(hourlyScore || targetScore) ? 'aligned_long_target' : 'conflicting_long_target') : 'no_active_target');
+
+        return {
+            asset_code: assetCode,
+            minute: minuteSummary,
+            hourly: hourlySummary,
+            combined_bias: combinedBias,
+            volatility_level: volatilityLevel,
+            target_alignment: targetAlignment,
+            active_targets: {
+                long: longTarget ? {
+                    target_price: longTarget.target_price,
+                    end_time: longTarget.end_time,
+                    pattern: longTarget.pattern,
+                    confidence: longTarget.confidence,
+                } : null,
+                short: shortTarget ? {
+                    target_price: shortTarget.target_price,
+                    end_minute: shortTarget.end_minute,
+                    pattern: shortTarget.pattern,
+                    confidence: shortTarget.confidence,
+                } : null,
+            },
+            instruction: '短线交易必须同时参考 minute 与 hourly；minute 可决定入场节奏，hourly 与 active_targets 决定方向过滤。若 target_alignment 为 conflicting_*，优先按 AI 目标方向等待或降低仓位，不要让分K走势长期违背目标。',
+        };
+    }
+
     _selectKlineContextAssets(availableAssets, portfolio) {
         const selected = new Set();
         if (this.ui?.currentAsset && availableAssets.includes(this.ui.currentAsset)) {
@@ -803,7 +934,10 @@ export class DataManager {
     _buildRecentKlineContext(assetCodes) {
         return assetCodes.map(assetCode => {
             const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
-            return this._buildRecentKlineSnapshot(assetCode, assetData);
+            return {
+                ...this._buildRecentKlineSnapshot(assetCode, assetData),
+                signal: this.getKlineSignal(assetCode),
+            };
         });
     }
 

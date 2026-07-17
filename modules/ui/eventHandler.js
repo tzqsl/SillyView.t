@@ -387,6 +387,9 @@ export class EventHandler {
         const dailyBtn = this.parentDoc.getElementById('sv-timescale-daily');
         const assetSelector = this.parentDoc.getElementById('sillyview-asset-selector');
         const syncBtn = this.parentDoc.getElementById('sillyview-sync-ai-btn');
+        const next5mBtn = this.parentDoc.getElementById('sillyview-next-5m-btn');
+        const next15mBtn = this.parentDoc.getElementById('sillyview-next-15m-btn');
+        const next30mBtn = this.parentDoc.getElementById('sillyview-next-30m-btn');
         const nextHourBtn = this.parentDoc.getElementById('sillyview-next-hour-btn');
         const advanceDayBtn = this.parentDoc.getElementById('sillyview-advance-day-btn'); // New button
         const sidebar = this.parentDoc.querySelector('.sv-right-sidebar');
@@ -394,6 +397,9 @@ export class EventHandler {
         // Time & Asset Controls
         if (endTurnBtn) endTurnBtn.addEventListener('click', async () => await this.app.commitAndAdvance());
         if (syncBtn) syncBtn.addEventListener('click', async () => await this.app.syncQuickModeWithAI());
+        if (next5mBtn) next5mBtn.addEventListener('click', () => this.app.advanceQuickModeMinutes(5));
+        if (next15mBtn) next15mBtn.addEventListener('click', () => this.app.advanceQuickModeMinutes(15));
+        if (next30mBtn) next30mBtn.addEventListener('click', () => this.app.advanceQuickModeMinutes(30));
         if (nextHourBtn) nextHourBtn.addEventListener('click', () => this.app.advanceQuickModeHour());
         if (advanceDayBtn) advanceDayBtn.addEventListener('click', () => this.app.commitAndAdvance()); // Correctly calls commitAndAdvance
         if (quickModeToggle) quickModeToggle.addEventListener('change', (event) => this.app.onQuickModeToggled(event.target.checked));

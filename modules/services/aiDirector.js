@@ -116,6 +116,13 @@ export class AIDirector {
             }
         }
 
+        contextLines.push('分K/时K联合短线信号:');
+        for (const code of activeAssetsForAI) {
+            const signal = this.data.getKlineSignal(code);
+            if (!signal) continue;
+            contextLines.push(`- ${code}: 综合 ${signal.combined_bias}，分K ${signal.minute.direction}/${signal.minute.change_pct}%/突破 ${signal.minute.breakout}，时K ${signal.hourly.direction}/${signal.hourly.change_pct}%，波动 ${signal.volatility_level}，目标贴合 ${signal.target_alignment}。`);
+        }
+
         const marketWorldbookContext = await this.data.getMarketWorldbookContext();
         if (marketWorldbookContext) {
             contextLines.push('附加市场世界书上下文（必须纳入市场叙事与判断）:');
@@ -144,6 +151,7 @@ export class AIDirector {
         taskLines.push('目标指令格式: [Market.SetLongTarget(asset_code, target_price, hours, "pattern", "reason", confidence)]，hours 建议 4-24；[Market.SetShortTarget(asset_code, target_price, minutes, "pattern", "reason", confidence)]，minutes 建议 8-90。');
         taskLines.push('可选 pattern: bull_trend、bear_trend、consolidation、fake_breakout、fake_breakdown、washout、bull_trap、bear_trap、panic_sell、short_squeeze。confidence 为 0-1 数字。目标到期后系统会自动删除并等待你设置下一段目标。');
         taskLines.push('如果要取消目标，使用 [Market.ClearTarget(asset_code, "long"|"short"|"all")]。');
+        taskLines.push('必须让分K走势服务于已设立的短线/长线目标：短线目标决定分K入场节奏，长线目标决定小时级方向过滤。若分K信号与目标背离，可以用洗盘、回踩、假突破等 pattern 解释，但不要长期反向推进。');
         taskLines.push(`对于每个相关资产，都必须分别使用 [Market.Advance] 或 [Market.AdvanceSeries] 指令决定其${timeUnit}的收盘价和走势。当前正在查看的 ${currentAssetName} 可以作为叙事重点，但不能忽略其他已交易或持仓资产。`);
         taskLines.push(`timeframe 使用 "${currentTimeframe}"。close_price / final_close_price 必须是数字。pattern 从 bull_run、bear_crash、volatile、consolidation、reversal_bull、reversal_bear、sideways、fake_breakout、fake_breakdown、washout、bull_trap、bear_trap 中选择。`);
         taskLines.push('必须同时使用 [Time.Set] 指令推进世界时间。');

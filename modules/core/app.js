@@ -706,6 +706,18 @@ export class SillyViewApp {
         if (!loaded) return;
 
         const barsToAdvance = Math.floor(Math.random() * 2) + 1;
+        await this.advanceMarketMinutes(barsToAdvance, { render: true });
+    }
+
+    async advanceQuickModeMinutes(minutes = 5) {
+        if (!this.data.isQuickModeEnabled() || this.ui.isAnimating) return;
+        const barsToAdvance = Math.max(1, Math.floor(Number(minutes) || 1));
+        Logger.log(`快速模式: 推进 ${barsToAdvance} 分钟...`);
+        await this.advanceMarketMinutes(barsToAdvance, { render: true });
+        Logger.log(`快速模式: 推进 ${barsToAdvance} 分钟完成。`);
+    }
+
+    async advanceMarketMinutes(barsToAdvance = 1, options = {}) {
         const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
         const assetCodes = configState.available_assets || Object.keys(SillyViewConfig.asset_definitions);
         let maxMinuteTime = 0;
@@ -715,12 +727,15 @@ export class SillyViewApp {
             if (minuteCandles.length === 0) continue;
 
             await this.data.appendMinuteCandles(assetCode, minuteCandles);
+            await this._syncHourlyFromMinuteBoundary(assetCode, minuteCandles);
             maxMinuteTime = Math.max(maxMinuteTime, minuteCandles[minuteCandles.length - 1].time);
+            await this._checkRiskControlsForHourlyCandles(assetCode, minuteCandles);
         }
 
         if (maxMinuteTime > 0) {
             await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
                 market.minute_time_index = Math.max(market.minute_time_index || 0, maxMinuteTime);
+                market.current_time_index = Math.max(market.current_time_index || 0, Math.floor(maxMinuteTime / 60));
                 return market;
             });
 
@@ -728,10 +743,44 @@ export class SillyViewApp {
             await this.data.updateAIContext();
             await this.data.saveAllEntries();
 
-            if (this.ui.isPanelVisible) {
+            if (options.render !== false && this.ui.isPanelVisible) {
                 this.ui.renderAll();
             }
         }
+    }
+
+    async _syncHourlyFromMinuteBoundary(assetCode, minuteCandles) {
+        if (!Array.isArray(minuteCandles) || minuteCandles.length === 0) return;
+
+        const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${assetCode}`);
+        const hourly = assetData?.kline_hourly || [];
+        const minute = assetData?.kline_minute || [];
+        const lastHourlyTime = hourly[hourly.length - 1]?.time ?? 0;
+        const newHourlyCandles = [];
+
+        for (const candle of minuteCandles) {
+            if (candle.time <= 0 || candle.time % 60 !== 0) continue;
+            const hour = candle.time / 60;
+            if (hour <= lastHourlyTime || newHourlyCandles.some(item => item.time === hour)) continue;
+            const hourMinutes = minute.filter(item => item.time > (hour - 1) * 60 && item.time <= hour * 60);
+            if (hourMinutes.length === 0) continue;
+            newHourlyCandles.push({
+                time: hour,
+                open: hourMinutes[0].open,
+                high: Math.max(...hourMinutes.map(item => Number(item.high || item.close || 0))),
+                low: Math.min(...hourMinutes.map(item => Number(item.low || item.close || Infinity))),
+                close: hourMinutes[hourMinutes.length - 1].close,
+                volume: hourMinutes.reduce((sum, item) => sum + Number(item.volume || 0), 0),
+                pattern: `minute_sync_${hourMinutes[hourMinutes.length - 1].pattern || 'mixed'}`,
+            });
+        }
+
+        if (newHourlyCandles.length === 0) return;
+
+        await this.data.updateAssetCandles(assetCode, newHourlyCandles, []);
+        const assetDef = SillyViewConfig.asset_definitions[assetCode];
+        if (assetDef) await this.data.aggregateHourlyToDaily(assetCode, assetDef.trading_hours_per_day);
+        await this._checkRiskControlsForHourlyCandles(assetCode, newHourlyCandles);
     }
 
 
