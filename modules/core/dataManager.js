@@ -223,12 +223,12 @@ export class DataManager {
         await this.th.updateWorldbookWith(lorebookName, (entries) => {
             let entry = entries.find(e => e.name === key);
             if (!entry) {
-                entry = { name: key, content: '', enabled: true };
+                entry = { name: key, content: '', enabled: this._isWorldbookEntryVisibleToRoleAI(key) };
                 this._insertWorldbookEntry(entries, entry, this._getPreferredAfterKey(key));
             }
             if (entry) {
                 entry.content = JSON.stringify(newState, null, 2);
-                entry.enabled = true;
+                entry.enabled = this._isWorldbookEntryVisibleToRoleAI(key);
             }
             return entries;
         });
@@ -264,6 +264,10 @@ export class DataManager {
         if (key === keys.kline_context) return keys.dialogue_context;
         if (key === keys.market_targets) return keys.kline_context;
         return null;
+    }
+
+    _isWorldbookEntryVisibleToRoleAI(key) {
+        return key !== this.config.world_book_keys.market_targets;
     }
 
     _insertWorldbookEntry(entries, newEntry, afterKey = null) {
@@ -314,13 +318,14 @@ export class DataManager {
 
     async ensureContextEntry(lorebookName, key, defaultState, options = {}) {
         const defaultContent = JSON.stringify(defaultState, null, 2);
+        const enabled = options.enabled ?? this._isWorldbookEntryVisibleToRoleAI(key);
 
         await this.th.updateWorldbookWith(lorebookName, entries => {
             const entry = entries.find(item => item.name === key);
             if (entry) {
-                entry.enabled = true;
+                entry.enabled = enabled;
             } else {
-                const newEntry = { name: key, content: defaultContent, enabled: true };
+                const newEntry = { name: key, content: defaultContent, enabled };
                 this._insertWorldbookEntry(entries, newEntry, options.afterKey);
             }
             return entries;
@@ -341,6 +346,9 @@ export class DataManager {
                 if (this._stateCache.has(entry.name)) {
                     const value = this._stateCache.get(entry.name);
                     entry.content = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+                    if (!this._isWorldbookEntryVisibleToRoleAI(entry.name)) {
+                        entry.enabled = false;
+                    }
                 }
             }
             return entries;
@@ -390,7 +398,7 @@ export class DataManager {
             { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: true },
             { name: keys.dialogue_context, content: JSON.stringify(defaults.dialogue_context, null, 2), enabled: true },
             { name: keys.kline_context, content: JSON.stringify(defaults.kline_context, null, 2), enabled: true },
-            { name: keys.market_targets, content: JSON.stringify(defaults.market_targets, null, 2), enabled: true },
+            { name: keys.market_targets, content: JSON.stringify(defaults.market_targets, null, 2), enabled: false },
         ];
 
         initialConfig.available_assets.forEach(assetCode => {
@@ -736,21 +744,28 @@ export class DataManager {
             };
         });
 
-        await this.updateState(keys.ai_context, context => ({
-            ...(context || {}),
-            comment: "这是AI可见的市场摘要。请基于此信息进行决策。",
-            market_summary: marketSummary,
-            player_cash: Number((portfolio.cash || 0).toFixed(2)),
-            player_debt: Number((portfolio.debt || 0).toFixed(2)),
-            player_net_worth: Number(this._calculatePortfolioMarkedValue(portfolio).toFixed(2)),
-            current_time_index: market.current_time_index || 0,
-            current_time: market.current_datetime || "未知",
-            current_period: market.current_period || "未知",
-            current_season: market.current_season || "未知",
-            current_weather: market.current_weather || "未知",
-            macro_state: market.macro_state || {},
-            active_market_targets: this.getActiveMarketTargetsSummary(availableAssets),
-        }));
+        await this.updateState(keys.ai_context, context => {
+            const {
+                active_market_targets,
+                market_targets,
+                ...safeContext
+            } = context || {};
+
+            return {
+                ...safeContext,
+                comment: "这是AI可见的市场摘要。请基于此信息进行决策。",
+                market_summary: marketSummary,
+                player_cash: Number((portfolio.cash || 0).toFixed(2)),
+                player_debt: Number((portfolio.debt || 0).toFixed(2)),
+                player_net_worth: Number(this._calculatePortfolioMarkedValue(portfolio).toFixed(2)),
+                current_time_index: market.current_time_index || 0,
+                current_time: market.current_datetime || "未知",
+                current_period: market.current_period || "未知",
+                current_season: market.current_season || "未知",
+                current_weather: market.current_weather || "未知",
+                macro_state: market.macro_state || {},
+            };
+        });
         await this.updateDialogueContext(marketSummary);
     }
 
@@ -934,10 +949,7 @@ export class DataManager {
     _buildRecentKlineContext(assetCodes) {
         return assetCodes.map(assetCode => {
             const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
-            return {
-                ...this._buildRecentKlineSnapshot(assetCode, assetData),
-                signal: this.getKlineSignal(assetCode),
-            };
+            return this._buildRecentKlineSnapshot(assetCode, assetData);
         });
     }
 
