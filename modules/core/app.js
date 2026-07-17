@@ -20,6 +20,7 @@ export class SillyViewApp {
         this.quickModeStartState = null;
         this.lastMinuteAdvanceMessageId = null;
         this.initialBootstrapRunning = false;
+        this.longTargetExpiryTurnRunning = false;
 
         // Dependencies are set in init() by the main script.js entry point
         this.data = null;
@@ -123,6 +124,112 @@ export class SillyViewApp {
             this.ui.renderAll();
         }
         return triggered;
+    }
+
+    _collectExpiredLongTargetsForAutoTurn(assetCodes = null) {
+        const targetState = this.data.getMarketTargets?.() || {};
+        const market = this.data.getState(SillyViewConfig.world_book_keys.global_market) || {};
+        const currentTimeIndex = Number(market.current_time_index || 0);
+        const selected = assetCodes ? new Set([...assetCodes].filter(Boolean)) : null;
+        const expiredTargets = [];
+
+        for (const assetCode of Object.keys(targetState.targets || {})) {
+            if (selected && !selected.has(assetCode)) continue;
+            const longTarget = targetState.targets[assetCode]?.long;
+            if (!longTarget) continue;
+
+            const endTime = Number(longTarget.end_time);
+            if (!Number.isFinite(endTime) || endTime > currentTimeIndex) continue;
+
+            expiredTargets.push({
+                assetCode,
+                assetName: SillyViewConfig.asset_definitions[assetCode]?.name || assetCode,
+                target_price: Number(longTarget.target_price || 0),
+                start_price: Number(longTarget.start_price || 0),
+                created_at: Number(longTarget.created_at || 0),
+                end_time: endTime,
+                pattern: longTarget.pattern || 'unknown',
+                reason: longTarget.reason || '',
+                confidence: Number(longTarget.confidence ?? 0),
+                current_time_index: currentTimeIndex,
+            });
+        }
+
+        return expiredTargets;
+    }
+
+    async _getActiveAssetsForAutoTurn(expiredTargets = []) {
+        const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
+        const availableAssets = configState.available_assets || Object.keys(SillyViewConfig.asset_definitions);
+        const availableSet = new Set(availableAssets);
+        const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
+        const openPositionCodes = Object.keys(portfolio.assets || {})
+            .filter(assetCode => (portfolio.assets[assetCode]?.trades || []).length > 0);
+        const managedAccountAssetCodes = await this.data.getManagedAccountOpenAssetCodes() || [];
+        const activeAssets = new Set([
+            this.ui.currentAsset,
+            ...expiredTargets.map(item => item.assetCode),
+            ...openPositionCodes,
+            ...managedAccountAssetCodes,
+        ].filter(assetCode => availableSet.has(assetCode)));
+
+        if (activeAssets.size === 0 && availableAssets.length > 0) {
+            activeAssets.add(availableAssets[0]);
+        }
+
+        return activeAssets;
+    }
+
+    async triggerLongTargetExpiryTurnIfNeeded(options = {}) {
+        if (this.longTargetExpiryTurnRunning || options.skipLongTargetExpiryAutoTurn) return false;
+
+        const expiredTargets = options.expiredLongTargets || this._collectExpiredLongTargetsForAutoTurn(options.assetCodes || null);
+        if (!expiredTargets || expiredTargets.length === 0) return false;
+
+        this.longTargetExpiryTurnRunning = true;
+        this.ui.tradeView?.updateActionButtonsState(false, true);
+
+        try {
+            if (this.data.isQuickModeEnabled()) {
+                await this.onQuickModeToggled(false);
+            }
+
+            const activeAssetsForAI = await this._getActiveAssetsForAutoTurn(expiredTargets);
+            const activeAssetCode = expiredTargets.find(item => activeAssetsForAI.has(item.assetCode))?.assetCode
+                || this.ui.currentAsset
+                || [...activeAssetsForAI][0];
+
+            this.logger.log(`长线目标到期，自动发送一次后台AI结束回合请求: ${expiredTargets.map(item => item.assetCode).join(', ')}`);
+            this.dependencies.win.toastr?.info('长线目标已到期，正在自动请求后台 AI 结算并设定下一段行情。');
+
+            const prompt = await this.aiDirector.buildAdvanceTurnPrompt([], activeAssetsForAI, activeAssetCode, 'HOURLY', {
+                expiredLongTargets: expiredTargets,
+                autoTriggerReason: 'long_target_expired',
+            });
+            const marketResponse = await this.backgroundAI.generateMarketResponse(prompt);
+
+            await this.processGeneratedMarketText(marketResponse, {
+                requiredAssetCodes: [...activeAssetsForAI],
+                skipLongTargetExpiryAutoTurn: true,
+            });
+
+            this.data.clearActionsThisTurn();
+            await this.data.accrueFundingFees(1);
+            await this.data.accrueManagedAccountFundingFees(1);
+            await this.data.recordAssetHistory();
+            await this.data.updateAIContext();
+            await this.data.saveAllEntries();
+            if (this.ui.isPanelVisible) this.ui.renderAll();
+            this.logger.success('长线目标到期自动回合完成。');
+            return true;
+        } catch (error) {
+            this.logger.error('长线目标到期自动回合失败。', error);
+            this.dependencies.win.toastr?.error(`长线目标到期自动回合失败: ${error.message || error}`);
+            return false;
+        } finally {
+            this.longTargetExpiryTurnRunning = false;
+            this.ui.tradeView?.updateActionButtonsState(false, false);
+        }
     }
 
     debouncedMainProcessor(msgId, isReprocessing = false) {
@@ -321,6 +428,9 @@ export class SillyViewApp {
         }
 
         // **FIX**: If the turn started as a key moment, ALWAYS reset the candle count, regardless of what the AI responded with.
+        const expiredLongTargetsForAutoTurn = (!silent && !options.skipLongTargetExpiryAutoTurn)
+            ? this._collectExpiredLongTargetsForAutoTurn()
+            : [];
         await this.data.pruneExpiredMarketTargets();
 
         if (wasKeyMoment) {
@@ -340,6 +450,12 @@ export class SillyViewApp {
         
         await this.data.updateAIContext();
         await this.data.saveAllEntries();
+
+        if (expiredLongTargetsForAutoTurn.length > 0) {
+            await this.triggerLongTargetExpiryTurnIfNeeded({
+                expiredLongTargets: expiredLongTargetsForAutoTurn,
+            });
+        }
     }
 
     _extractHeadline(msg) {
@@ -530,6 +646,7 @@ export class SillyViewApp {
         await this.data.accrueFundingFees(1);
         await this.data.accrueManagedAccountFundingFees(1);
         await this.data.recordAssetHistory();
+        if (await this.triggerLongTargetExpiryTurnIfNeeded()) return;
         await this.data.updateAIContext();
         await this.data.saveAllEntries();
         
@@ -591,6 +708,7 @@ export class SillyViewApp {
                 await this.data.accrueFundingFees(hoursToAdvance);
                 await this.data.accrueManagedAccountFundingFees(hoursToAdvance);
                 await this.data.recordAssetHistory();
+                if (await this.triggerLongTargetExpiryTurnIfNeeded()) return;
                 await this.data.updateAIContext();
                 this.ui.renderAll();
             }
@@ -740,6 +858,7 @@ export class SillyViewApp {
             });
 
             await this._checkLiquidations();
+            if (await this.triggerLongTargetExpiryTurnIfNeeded()) return;
             await this.data.updateAIContext();
             await this.data.saveAllEntries();
 

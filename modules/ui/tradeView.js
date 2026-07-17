@@ -94,7 +94,6 @@ export class TradeView {
                         <div style="font-size: 0.75rem; color: var(--text-gray-400);"><span>(金额 / 比例)</span><span id="sillyview-data-pnl-details"></span></div>
                     </div>
                 </div>
-                <div id="sillyview-kline-signal" class="sv-kline-signal"></div>
             </div>
             <div>
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
@@ -131,44 +130,7 @@ export class TradeView {
         if (isLeverage) this.updateLeverageInfo(1);
         this.updateRiskPreview();
         this.updateDataWindowWithLastCandle();
-        this.renderKlineSignal();
         this.renderThisTurnActions();
-    }
-
-    renderKlineSignal() {
-        const container = this.parentDoc.getElementById('sillyview-kline-signal');
-        if (!container) return;
-        const signal = this.data.getKlineSignal(this.ui.currentAsset);
-        if (!signal) {
-            container.innerHTML = '';
-            return;
-        }
-
-        const biasText = { bullish: '偏多', bearish: '偏空', neutral: '震荡' }[signal.combined_bias] || '震荡';
-        const volText = { high: '高', medium: '中', low: '低' }[signal.volatility_level] || '低';
-        const alignText = {
-            aligned_short_target: '贴合短线目标',
-            conflicting_short_target: '背离短线目标',
-            aligned_long_target: '贴合长线目标',
-            conflicting_long_target: '背离长线目标',
-            no_active_target: '暂无目标',
-        }[signal.target_alignment] || '暂无目标';
-        const breakoutText = { up: '上破', down: '下破', none: '无' }[signal.minute.breakout] || '无';
-        const directionText = { up: '上行', down: '下行', flat: '横盘' }[signal.minute.direction] || '横盘';
-
-        container.innerHTML = `
-            <div class="sv-kline-signal-header">
-                <span>分K短线信号</span>
-                <strong class="${signal.combined_bias === 'bullish' ? 'positive' : (signal.combined_bias === 'bearish' ? 'negative' : '')}">${biasText}</strong>
-            </div>
-            <div class="sv-kline-signal-grid">
-                <div><span>分K</span><strong>${directionText}</strong></div>
-                <div><span>波动</span><strong>${volText}</strong></div>
-                <div><span>突破</span><strong>${breakoutText}</strong></div>
-                <div><span>目标</span><strong>${alignText}</strong></div>
-            </div>
-            <div class="sv-kline-signal-note">小时K定方向，分K定入场；若背离AI目标，优先等回踩或降低仓位。</div>
-        `;
     }
 
     renderThisTurnActions() {

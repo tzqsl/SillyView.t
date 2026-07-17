@@ -32,7 +32,7 @@ export class AIDirector {
     }
 
 
-    async buildAdvanceTurnPrompt(actionsThisTurn, activeAssetsForAI, activeAssetCode, currentTimeframe) {
+    async buildAdvanceTurnPrompt(actionsThisTurn, activeAssetsForAI, activeAssetCode, currentTimeframe, options = {}) {
         let actionSummary;
         if (actionsThisTurn.length > 0) {
             const playerActionsString = actionsThisTurn.map((a, index) => {
@@ -105,6 +105,13 @@ export class AIDirector {
         const activeTargetLines = this.data.getActiveMarketTargetsSummary([...activeAssetsForAI]);
         contextLines.push('当前AI大盘目标:');
         contextLines.push(...(activeTargetLines.length > 0 ? activeTargetLines.map(line => `- ${line}`) : ['- 暂无有效目标。']));
+        const expiredLongTargets = Array.isArray(options.expiredLongTargets) ? options.expiredLongTargets : [];
+        if (expiredLongTargets.length > 0) {
+            contextLines.push('刚到期的长线目标:');
+            for (const item of expiredLongTargets) {
+                contextLines.push(`- ${item.assetName || item.assetCode} (${item.assetCode}): 目标价 ${Number(item.target_price || 0).toFixed(4)}，结束小时 ${item.end_time}，当前小时 ${item.current_time_index}，pattern=${item.pattern}，reason=${item.reason || '未注明'}。`);
+            }
+        }
 
         // Market Summary
         contextLines.push('当前市场:');
@@ -131,6 +138,9 @@ export class AIDirector {
 
         const taskLines = [];
         taskLines.push('【最高优先级：本回合市场推进任务】');
+        if (options.autoTriggerReason === 'long_target_expired') {
+            taskLines.push('本回合由长线目标到期自动触发。请先评价刚到期目标是否兑现、失败或形成反转，再给相关资产设置下一段长线/短线目标。');
+        }
         taskLines.push(`${promptPrefix}${actionSummary}`);
 
         if (globalMarket && globalMarket.current_time_index % 2 === 0) {
