@@ -297,6 +297,12 @@ export class EventHandler {
                 this.logger.log("用户同意创建世界书...");
                 yesButton.disabled = true;
                 yesButton.textContent = "正在创建...";
+                this.ui.renderInitializationProgress({
+                    step: '创建',
+                    title: '正在创建 SillyView 世界书',
+                    detail: '正在准备初始化流程。',
+                    percent: 3,
+                });
                 this.data.createInitialWorldState();
             });
         }

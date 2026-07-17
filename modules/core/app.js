@@ -437,6 +437,12 @@ export class SillyViewApp {
         this.initialBootstrapRunning = true;
 
         try {
+            this.ui.renderInitializationProgress({
+                step: '预热',
+                title: '正在快速推进一天',
+                detail: '正在为全部资产生成首日 K线、资金费率和账户曲线。',
+                percent: 65,
+            });
             this.logger.log('初始化预热：开始静默快速推进一天。');
             await this._advanceInitializationQuickDay();
 
@@ -449,9 +455,21 @@ export class SillyViewApp {
             const activeAssetCode = assetCodes.includes(this.ui.currentAsset) ? this.ui.currentAsset : (assetCodes[0] || 'BTCUSD');
             const actionsThisTurn = this.data.getActionsThisTurn();
 
+            this.ui.renderInitializationProgress({
+                step: '后台 AI',
+                title: '正在等待后台 AI',
+                detail: '已完成首日市场预热，正在发送回合结束提示词生成新闻、目标和下一段行情。',
+                percent: 76,
+            });
             this.logger.log('初始化预热：正在发送一次后台AI结束回合提示词。');
             const prompt = await this.aiDirector.buildAdvanceTurnPrompt(actionsThisTurn, new Set(assetCodes), activeAssetCode, 'DAILY');
             const marketResponse = await this.backgroundAI.generateMarketResponse(prompt);
+            this.ui.renderInitializationProgress({
+                step: '处理',
+                title: '正在处理 AI 返回',
+                detail: '正在解析市场指令、新闻、多账户交易指令并写回世界书。',
+                percent: 88,
+            });
             await this.processGeneratedMarketText(marketResponse, {
                 requiredAssetCodes: assetCodes,
                 silent: true,

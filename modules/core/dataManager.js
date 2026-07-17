@@ -101,6 +101,12 @@ export class DataManager {
 
     async loadInitialState() {
         this.logger.log("正在加载初始状态...");
+        this.ui.renderInitializationProgress({
+            step: '准备',
+            title: '正在加载 SillyView',
+            detail: '正在读取当前角色和绑定世界书。',
+            percent: 5,
+        });
         const lorebookName = await this._getLorebookName();
         if (!lorebookName) {
             this.ui.renderError("无法确定角色名称。");
@@ -112,11 +118,41 @@ export class DataManager {
 
         if (this.hasGameBook) {
             this.logger.log(`游戏世界书 "${lorebookName}" 已找到，正在加载数据...`);
+            this.ui.renderInitializationProgress({
+                step: '世界书',
+                title: '正在加载交易世界',
+                detail: `已找到 ${lorebookName}，正在读取状态条目。`,
+                percent: 15,
+            });
             await this.loadAllEntries(lorebookName);
+            this.ui.renderInitializationProgress({
+                step: '上下文',
+                title: '正在检查上下文条目',
+                detail: '正在确保对话摘要、K线摘要和市场目标条目存在。',
+                percent: 28,
+            });
             await this.ensureRequiredContextEntries(lorebookName);
+            this.ui.renderInitializationProgress({
+                step: '多账户',
+                title: '正在同步多账户',
+                detail: '正在扫描开户行格式，并更新 SillyView_accounts。',
+                percent: 40,
+            });
             await this.autoDiscoverAndSyncManagedAccounts();
+            this.ui.renderInitializationProgress({
+                step: '摘要',
+                title: '正在更新 AI 上下文',
+                detail: '正在写入市场摘要、账目和 K线判断上下文。',
+                percent: 52,
+            });
             await this.updateDialogueContext();
             await this.runInitialBootstrapIfNeeded();
+            this.ui.renderInitializationProgress({
+                step: '完成',
+                title: '初始化完成',
+                detail: '正在打开交易面板。',
+                percent: 100,
+            });
             this.ui.renderMainInterface();
         } else {
             await this.autoDiscoverAndSyncManagedAccounts();
@@ -327,6 +363,12 @@ export class DataManager {
             return;
         }
 
+        this.ui.renderInitializationProgress({
+            step: '创建',
+            title: '正在创建 SillyView 世界书',
+            detail: '正在生成初始账户、行情和上下文条目。',
+            percent: 8,
+        });
         this.logger.log(`正在创建新的游戏世界书: "${lorebookName}"...`);
         const defaults = this.config.default_game_state;
         const keys = this.config.world_book_keys;
@@ -388,6 +430,12 @@ export class DataManager {
         });
 
         await this.th.createOrReplaceWorldbook(lorebookName, entriesTemplate);
+        this.ui.renderInitializationProgress({
+            step: '绑定',
+            title: '正在绑定世界书',
+            detail: `正在把 ${lorebookName} 绑定到当前角色卡附加世界书。`,
+            percent: 25,
+        });
 
         const charBooks = await this.th.getCharWorldbookNames('current');
         if (!charBooks.additional.includes(lorebookName)) {
@@ -404,9 +452,27 @@ export class DataManager {
         this.hasGameBook = true;
         this.isInitialized = true;
         this.contextEntriesEnsuredFor = lorebookName;
+        this.ui.renderInitializationProgress({
+            step: '多账户',
+            title: '正在扫描开户行账户',
+            detail: '正在同步 SillyView_accounts 和角色专属账户状态词条。',
+            percent: 38,
+        });
         await this.autoDiscoverAndSyncManagedAccounts();
+        this.ui.renderInitializationProgress({
+            step: '摘要',
+            title: '正在写入初始 AI 上下文',
+            detail: '正在生成市场摘要、K线摘要和账目查询条目。',
+            percent: 50,
+        });
         await this.updateAIContext();
         await this.runInitialBootstrapIfNeeded();
+        this.ui.renderInitializationProgress({
+            step: '完成',
+            title: '初始化完成',
+            detail: '正在打开交易面板。',
+            percent: 100,
+        });
         this.ui.renderMainInterface();
     }
 
@@ -422,8 +488,20 @@ export class DataManager {
         }
 
         this.logger.log('正在执行初始化预热：自动快速推进一天，并发送一次后台AI结束回合提示词。');
+        this.ui.renderInitializationProgress({
+            step: '预热',
+            title: '正在预热市场',
+            detail: '即将快速推进一天行情，然后发送一次后台 AI 回合结束提示词。',
+            percent: 60,
+        });
         try {
             await app.runInitialBootstrapTurn();
+            this.ui.renderInitializationProgress({
+                step: '保存',
+                title: '正在保存初始化结果',
+                detail: '后台 AI 已返回，正在写入完成标记和最新世界书条目。',
+                percent: 94,
+            });
             await this.updateState(keys.config, config => ({
                 ...(config || {}),
                 initial_bootstrap_done: true,

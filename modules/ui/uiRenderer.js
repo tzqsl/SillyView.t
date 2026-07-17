@@ -76,6 +76,29 @@ export class UIRenderer {
         if (wrapper) wrapper.innerHTML = `<div style="margin: auto; text-align: center; padding: 2rem; color: var(--red-400);">${message}</div>`;
     }
 
+    renderInitializationProgress({ title = '正在初始化 SillyView', detail = '准备中...', percent = 0, step = '' } = {}) {
+        const wrapper = this.parentDoc.getElementById('sillyview-content-wrapper');
+        if (!wrapper) return;
+
+        const normalizedPercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+        wrapper.innerHTML = `
+            <div class="sv-init-screen">
+                <div class="sv-init-panel">
+                    <div class="sv-init-kicker">${step || '初始化'}</div>
+                    <h2>${title}</h2>
+                    <p>${detail}</p>
+                    <div class="sv-init-progress-track" aria-label="初始化进度">
+                        <div class="sv-init-progress-bar" style="width:${normalizedPercent}%;"></div>
+                    </div>
+                    <div class="sv-init-progress-meta">
+                        <span>${normalizedPercent}%</span>
+                        <span>后台 AI 可能需要几十秒，请勿重复点击</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     renderCreationInterface() {
         const wrapper = this.parentDoc.getElementById('sillyview-content-wrapper');
         if (!wrapper) return;
