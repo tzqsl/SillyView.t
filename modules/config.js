@@ -173,6 +173,7 @@ export const SillyViewConfig = {
         account_state_key: 'sv_account_state',
         command_entry_key: 'sv_accounts_trade_commands',
         account_query_key: 'sv_accounts_query',
+        scan_report_key: 'sv_accounts_scan_report',
         recent_news_key: 'sv_accounts_recent_news',
     },
     

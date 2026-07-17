@@ -878,38 +878,83 @@ export class DataManager {
         return accounts;
     }
 
-    async scanBoundBankAccounts() {
+    async _getBankAccountScanTargets() {
         const charBooks = await this.th.getCharWorldbookNames('current');
         const lorebookName = await this._getLorebookName();
         const controlName = this.config.multi_account.control_worldbook_name;
         const fxName = 'SillyView_fx';
         const names = [charBooks.primary, ...(charBooks.additional || [])].filter(Boolean);
-        const accountsById = new Map();
+        const targets = [];
+        const skipped = [];
 
         for (const worldbookName of names) {
-            if (
-                worldbookName === lorebookName ||
-                worldbookName === controlName ||
-                worldbookName === fxName ||
-                worldbookName.startsWith(this.config.multi_account.account_worldbook_prefix)
-            ) continue;
+            const reason =
+                worldbookName === lorebookName ? '主状态世界书' :
+                worldbookName === controlName ? '多账户控制世界书' :
+                worldbookName === fxName ? '行情上下文世界书' :
+                worldbookName.startsWith(this.config.multi_account.account_worldbook_prefix) ? '多账户状态世界书' :
+                '';
 
+            if (reason) {
+                skipped.push({ worldbookName, reason });
+            } else {
+                targets.push(worldbookName);
+            }
+        }
+
+        return {
+            primary: charBooks.primary || '',
+            additional: [...(charBooks.additional || [])],
+            targets,
+            skipped,
+        };
+    }
+
+    async scanBoundBankAccounts(options = {}) {
+        const scanInfo = await this._getBankAccountScanTargets();
+        const accountsById = new Map();
+        const readErrors = [];
+        const scanned = [];
+
+        for (const worldbookName of scanInfo.targets) {
             let entries = [];
             try {
                 entries = await this.th.getWorldbook(worldbookName);
             } catch (error) {
                 this.logger.warn(`扫描开户行世界书失败: ${worldbookName}`, error);
+                readErrors.push({ worldbookName, message: error?.message || String(error) });
                 continue;
             }
 
+            let matchedCount = 0;
             for (const entry of entries || []) {
-                this._extractBankAccountsFromEntry(entry, worldbookName).forEach(account => {
+                const accounts = this._extractBankAccountsFromEntry(entry, worldbookName);
+                matchedCount += accounts.length;
+                accounts.forEach(account => {
                     if (!accountsById.has(account.account_id)) accountsById.set(account.account_id, account);
                 });
             }
+            scanned.push({
+                worldbookName,
+                entryCount: (entries || []).length,
+                matchedCount,
+            });
         }
 
-        return [...accountsById.values()];
+        const accounts = [...accountsById.values()];
+        if (options.withDiagnostics) {
+            return {
+                accounts,
+                diagnostics: {
+                    ...scanInfo,
+                    scanned,
+                    readErrors,
+                    accountCount: accounts.length,
+                },
+            };
+        }
+
+        return accounts;
     }
 
     async _ensureWorldbookExists(worldbookName, initialEntries = []) {
@@ -1124,7 +1169,55 @@ export class DataManager {
         return ['【SillyView 最近十条新闻】', ...news.map(item => `- [t=${item.time_index}] ${item.asset_code || 'GLOBAL'}: ${item.headline}`)].join('\n');
     }
 
-    _buildManagedControlEntries(states, accountEntries = null) {
+    _buildManagedScanReport(diagnostics = {}, accountEntries = null) {
+        const accounts = accountEntries || [];
+        const lines = [
+            '【SillyView 多账户开户行扫描报告】',
+            `更新时间: ${new Date().toISOString()}`,
+            `角色卡主世界书: ${diagnostics.primary || '无'}`,
+            `角色卡附加世界书: ${(diagnostics.additional || []).join(', ') || '无'}`,
+            `参与扫描世界书: ${(diagnostics.targets || []).join(', ') || '无'}`,
+            `识别账户数量: ${accounts.length}`,
+            '',
+        ];
+
+        if ((diagnostics.skipped || []).length > 0) {
+            lines.push('跳过世界书:');
+            for (const item of diagnostics.skipped) {
+                lines.push(`- ${item.worldbookName}: ${item.reason}`);
+            }
+            lines.push('');
+        }
+
+        if ((diagnostics.scanned || []).length > 0) {
+            lines.push('扫描明细:');
+            for (const item of diagnostics.scanned) {
+                lines.push(`- ${item.worldbookName}: 词条 ${item.entryCount}, 命中开户行 ${item.matchedCount}`);
+            }
+            lines.push('');
+        }
+
+        if ((diagnostics.readErrors || []).length > 0) {
+            lines.push('读取失败:');
+            for (const item of diagnostics.readErrors) {
+                lines.push(`- ${item.worldbookName}: ${item.message}`);
+            }
+            lines.push('');
+        }
+
+        if (accounts.length > 0) {
+            lines.push('已建立角色专属账号世界书:');
+            for (const account of accounts) {
+                lines.push(`- ${account.account_id} | ${account.owner_name} | ${account.bank_name} | ${account.worldbook_name} | 来源 ${account.source_worldbook}/${account.source_entry || '未命名词条'}`);
+            }
+        } else {
+            lines.push('未识别到开户行账户。请确认开户行所在世界书仍绑定在当前角色卡主/附加世界书中，并且词条包含“开户行”和“户名/账户名/姓名”及“余额/存款/现金”等字段。');
+        }
+
+        return lines.join('\n');
+    }
+
+    _buildManagedControlEntries(states, accountEntries = null, scanDiagnostics = null) {
         const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
         const entries = [];
         if (accountEntries) {
@@ -1160,13 +1253,19 @@ export class DataManager {
                 content: this._buildManagedRecentNews(),
             },
         );
+        if (scanDiagnostics) {
+            entries.push({
+                name: this.config.multi_account.scan_report_key,
+                enabled: true,
+                content: this._buildManagedScanReport(scanDiagnostics, accountEntries || []),
+            });
+        }
         return entries;
     }
 
     async syncManagedAccountsWorldbook() {
         const controlName = this.config.multi_account.control_worldbook_name;
         const states = await this.getManagedAccountStates();
-        if (states.length === 0) return;
 
         await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries(states));
         await this._ensureAdditionalWorldbook(controlName);
@@ -1181,9 +1280,8 @@ export class DataManager {
     }
 
     async autoDiscoverAndSyncManagedAccounts() {
-        const accounts = await this.scanBoundBankAccounts();
-        if (accounts.length === 0) return [];
-
+        const scanResult = await this.scanBoundBankAccounts({ withDiagnostics: true });
+        const accounts = scanResult.accounts || [];
         const controlName = this.config.multi_account.control_worldbook_name;
         const accountEntries = [];
         for (const account of accounts) {
@@ -1191,7 +1289,7 @@ export class DataManager {
         }
 
         const states = await this.getManagedAccountStates();
-        await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries(states, accountEntries));
+        await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries(states, accountEntries, scanResult.diagnostics));
         await this._ensureAdditionalWorldbook(controlName);
         await this.th.updateWorldbookWith(controlName, entries => {
             this._upsertWorldbookEntry(entries, this.config.multi_account.account_index_key, JSON.stringify({
@@ -1199,6 +1297,7 @@ export class DataManager {
                 updated_at: Date.now(),
                 accounts: accountEntries,
             }, null, 2), true);
+            this._upsertWorldbookEntry(entries, this.config.multi_account.scan_report_key, this._buildManagedScanReport(scanResult.diagnostics, accountEntries), true);
             return entries;
         });
         await this.syncManagedAccountsWorldbook();
