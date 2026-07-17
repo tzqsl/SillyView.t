@@ -37,6 +37,20 @@ export class BackgroundAIService {
         return Object.keys(customApi).length > 0 ? customApi : undefined;
     }
 
+    _assertMarketPromptIsolation(...contents) {
+        const forbiddenEntries = [
+            this.config.world_book_keys.dialogue_context,
+            this.config.world_book_keys.player_portfolio,
+        ];
+        const payload = contents.map(content => String(content || '')).join('\n');
+        const leakedEntry = forbiddenEntries.find(entryName =>
+            payload.toLowerCase().includes(String(entryName).toLowerCase())
+        );
+        if (leakedEntry) {
+            throw new Error(`后台市场请求已阻止：检测到禁止发送的世界书条目 ${leakedEntry}。`);
+        }
+    }
+
     async _withTimeout(promise, generationId, timeoutMs) {
         let timeoutHandle = null;
         const timeoutSeconds = Math.round(timeoutMs / 1000);
@@ -68,6 +82,7 @@ export class BackgroundAIService {
         const customApi = this._buildCustomApi(settings);
         const generationId = `sillyview-market-${Date.now()}`;
         const marketDirectorRules = await loadMarketDirectorRules();
+        this._assertMarketPromptIsolation(marketDirectorRules, marketPrompt);
         const timeoutMs = Number.isFinite(settings.timeout_ms) && settings.timeout_ms > 0
             ? settings.timeout_ms
             : this.config.background_ai_defaults.timeout_ms;
