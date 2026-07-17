@@ -1321,7 +1321,7 @@ export class DataManager {
         const recentKlines = this._buildRecentKlineContext(klineAssetCodes);
 
         await this.updateState(keys.kline_context, () => ({
-            comment: "Compact K-line context for market judgment. Use columns=[t,o,h,l,c]. This entry is separate from sv_dialogue_context to avoid bloating general dialogue context.",
+            comment: "Compact K-line context for market judgment. Use columns=[t,o,h,l,c].",
             updated_at: resolvedMarket.current_time_index || 0,
             updated_minute_at: resolvedMarket.minute_time_index || 0,
             selected_assets: klineAssetCodes,
@@ -2051,16 +2051,28 @@ export class DataManager {
 
             const chunks = [];
             const excludedEntryNames = new Set([
+                this.config.world_book_keys.config,
+                this.config.world_book_keys.global_market,
                 this.config.world_book_keys.dialogue_context,
                 this.config.world_book_keys.player_portfolio,
+                this.config.world_book_keys.ai_context,
+                this.config.world_book_keys.kline_context,
+                this.config.world_book_keys.market_targets,
+                this.config.world_book_keys.news_archive,
+                this.config.world_book_keys.active_market_news,
+                this.config.multi_account.account_index_key,
+                this.config.multi_account.scan_report_key,
             ]);
             for (const worldbookName of namesToRead) {
                 const entries = await this.th.getWorldbook(worldbookName);
-                const allowedEntries = entries.filter(entry => !excludedEntryNames.has(entry.name));
-                const enabledEntries = allowedEntries.filter(entry => entry.enabled && entry.content?.trim());
-                const sourceEntries = enabledEntries.length > 0
-                    ? enabledEntries
-                    : allowedEntries.filter(entry => entry.content?.trim());
+                const sourceEntries = entries.filter(entry => {
+                    const entryName = String(entry.name || '');
+                    return entry.enabled &&
+                        entry.content?.trim() &&
+                        !excludedEntryNames.has(entryName) &&
+                        !entryName.startsWith(this.config.world_book_keys.asset_prefix) &&
+                        !entryName.startsWith(`${this.config.multi_account.account_state_key}_`);
+                });
 
                 sourceEntries.forEach(entry => {
                     chunks.push(`### ${worldbookName} / ${entry.name}\n${entry.content.trim()}`);
