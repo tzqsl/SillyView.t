@@ -458,7 +458,8 @@ export class DataManager {
     }
 
     _isWorldbookEntryVisibleToRoleAI(key) {
-        return key !== this.config.world_book_keys.market_targets;
+        return key !== this.config.world_book_keys.market_targets
+            && !String(key || '').startsWith(this.config.world_book_keys.asset_prefix);
     }
 
     _insertWorldbookEntry(entries, newEntry, afterKey = null) {
@@ -1947,12 +1948,17 @@ export class DataManager {
             const namesToRead = targetNames.filter(name => attachedNames.includes(name) || allWorldbooks.includes(name));
 
             const chunks = [];
+            const excludedEntryNames = new Set([
+                this.config.world_book_keys.dialogue_context,
+                this.config.world_book_keys.player_portfolio,
+            ]);
             for (const worldbookName of namesToRead) {
                 const entries = await this.th.getWorldbook(worldbookName);
-                const enabledEntries = entries.filter(entry => entry.enabled && entry.content?.trim());
+                const allowedEntries = entries.filter(entry => !excludedEntryNames.has(entry.name));
+                const enabledEntries = allowedEntries.filter(entry => entry.enabled && entry.content?.trim());
                 const sourceEntries = enabledEntries.length > 0
                     ? enabledEntries
-                    : entries.filter(entry => entry.content?.trim());
+                    : allowedEntries.filter(entry => entry.content?.trim());
 
                 sourceEntries.forEach(entry => {
                     chunks.push(`### ${worldbookName} / ${entry.name}\n${entry.content.trim()}`);

@@ -32,34 +32,8 @@ export class AIDirector {
     }
 
 
-    async buildAdvanceTurnPrompt(actionsThisTurn, activeAssetsForAI, activeAssetCode, currentTimeframe, options = {}) {
-        let actionSummary;
-        if (actionsThisTurn.length > 0) {
-            const playerActionsString = actionsThisTurn.map((a, index) => {
-                const assetName = this.config.asset_definitions[a.assetCode]?.name || a.assetCode;
-                const isLeverage = a.leverage > 1;
-                const tradeType = isLeverage ? '杠杆交易' : '现货交易';
-            
-                const actionDescription = {
-                    'open_long': '开多',
-                    'add_long': '加仓做多',
-                    'open_short': '开空',
-                    'add_short': '加仓做空',
-                    'close_long': '平多仓',
-                    'close_short': '平空仓'
-                }[a.intent] || a.intent;
-                
-                let details = `${tradeType} ${actionDescription} ${assetName}，交易量: ${a.amount.toFixed(2)} 信用点`;
-                
-                if (isLeverage) {
-                    details += `，杠杆倍数: ${a.leverage}x`;
-                }
-                return `${index + 1}. ${details}`;
-            }).join('； ');
-            actionSummary = `{{user}}进行了以下操作：{{newline}}${playerActionsString}`;
-        } else {
-            actionSummary = `{{user}}选择了静观其变。`;
-        }
+    async buildAdvanceTurnPrompt(_actionsThisTurn, activeAssetsForAI, activeAssetCode, currentTimeframe, options = {}) {
+        const actionSummary = '请独立推进市场；不要读取、推断或迎合玩家账户、持仓与盈亏。';
 
 
         let promptPrefix = '';
@@ -71,32 +45,8 @@ export class AIDirector {
 
         // --- Build the <context> block ---
         let contextLines = [];
-        const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
         const globalMarket = this.data.getState(this.config.world_book_keys.global_market) || {};
         await this.data.pruneExpiredMarketTargets();
-
-        // Player Position Info with PnL
-        let positionStrings = [];
-        for (const code of activeAssetsForAI) {
-            const position = this.positionCalculator.calculate(code, portfolio);
-            if (position.type) {
-                const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${code}`);
-                const currentPrice = assetData ? assetData.current_price : 0;
-                
-                const pnl = position.type === 'long' 
-                    ? (currentPrice - position.avgEntryPrice) * position.totalShares
-                    : (position.avgEntryPrice - currentPrice) * position.totalShares;
-                
-                const pnlString = pnl >= 0 ? `+${pnl.toFixed(2)}` : pnl.toFixed(2);
-
-                const typeText = position.type === 'long' ? '多头' : '空头';
-                const leverageText = position.isLeveraged ? `(${position.leverage}x)` : '';
-                
-                positionStrings.push(`${code} ${typeText}${leverageText}: 保证金 ${position.totalAmount.toFixed(2)} @ ${position.avgEntryPrice.toFixed(4)}, 未实现盈亏: ${pnlString}`);
-            }
-        }
-        const playerPositionText = positionStrings.length > 0 ? positionStrings.join(', ') : '无';
-        contextLines.push(`他的持仓: ${playerPositionText}。 现金: ${(portfolio.cash || 0).toFixed(2)}。债务: ${(portfolio.debt || 0).toFixed(2)}。`);
         contextLines.push(`当前时间: ${globalMarket.current_datetime || '未知'}，${globalMarket.current_period || '未知'}，${globalMarket.current_season || '未知'}，天气: ${globalMarket.current_weather || '未知'}。`);
         if (globalMarket.macro_state) {
             const macro = globalMarket.macro_state;
@@ -181,25 +131,15 @@ export class AIDirector {
             return null;
         }
 
-        // 1. Extract necessary data from snapshots
-        const startPortfolio = quickModeStartState.get(this.config.world_book_keys.player_portfolio);
-        const endPortfolio = quickModeEndState.get(this.config.world_book_keys.player_portfolio);
         const endMarket = quickModeEndState.get(this.config.world_book_keys.global_market);
         
-        if (!startPortfolio || !endPortfolio || !endMarket) {
-            this.logger.error("Cannot build sync prompt, portfolio or market data is missing from snapshots.");
+        if (!endMarket) {
+            this.logger.error("Cannot build sync prompt because market data is missing from snapshots.");
             return null;
         }
 
-        // 2. Build Player Action Summary
-        const playerActionsString = (startPortfolio.actions_this_turn || [])
-            .map(a => a.text)
-            .join('； ');
-        const actionSummary = `{{user}}在快速模式中进行了以下操作：\n${playerActionsString || '无操作。'}`;
-        
-        // 3. Rebuild the <context> block with detailed summary
         let contextLines = [];
-        contextLines.push('快速模式总结:');
+        contextLines.push('快速模式市场总结:');
 
         // Market Changes (per hour, per asset)
         contextLines.push('市场变化:');
@@ -226,35 +166,11 @@ export class AIDirector {
             contextLines.push(`当前市场风向: ${endMarket.personality_state}`);
         }
 
-        // Final Player Position
-        contextLines.push('\n最终持仓状态:');
-        let positionStrings = [];
-        for (const code of allAssetCodes) {
-            const position = this.positionCalculator.calculate(code, endPortfolio);
-            if (position.type) {
-                const assetData = quickModeEndState.get(`${this.config.world_book_keys.asset_prefix}${code}`);
-                const currentPrice = assetData ? assetData.current_price : 0;
-                
-                const pnl = position.type === 'long' 
-                    ? (currentPrice - position.avgEntryPrice) * position.totalShares
-                    : (position.avgEntryPrice - currentPrice) * position.totalShares;
-                
-                const pnlString = pnl >= 0 ? `+${pnl.toFixed(2)}` : pnl.toFixed(2);
-                const typeText = position.type === 'long' ? '多头' : '空头';
-                const leverageText = position.isLeveraged ? `(${position.leverage}x)` : '';
-                
-                positionStrings.push(`${code} ${typeText}${leverageText}: 保证金 ${position.totalAmount.toFixed(2)} @ ${position.avgEntryPrice.toFixed(4)}, 未实现盈亏: ${pnlString}`);
-            }
-        }
-        const playerPositionText = positionStrings.length > 0 ? positionStrings.join('， ') : '无持仓';
-        contextLines.push(playerPositionText);
-        contextLines.push(`现金: ${endPortfolio.cash.toFixed(2)}。`);
-
         // AI Instruction
-        contextLines.push(`\n[导演指示：请根据以上快速模式的总结，生成一段承上启下的市场新闻和评论。不要使用任何指令。]`);
+        contextLines.push(`\n[导演指示：请仅根据以上市场变化生成一段承上启下的市场新闻和评论。不要读取或推断玩家账户，不要使用任何指令。]`);
 
         const contextString = `<context>{{newline}}${contextLines.join('{{newline}}')}{{newline}}</context>`;
         
-        return `${actionSummary}{{newline}}${contextString}`;
+        return contextString;
     }
 }
