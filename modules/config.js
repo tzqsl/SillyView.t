@@ -166,14 +166,6 @@ export const SillyViewConfig = {
     asset_definitions: ASSET_DEFINITIONS,
     background_ai_defaults: DEFAULT_BACKGROUND_AI_SETTINGS,
     market_context_worldbooks: ['SillyView_fx'],
-    multi_account: {
-        fx_worldbook_name: 'SillyView_fx',
-        account_worldbook_prefix: 'SillyView_account_',
-        account_state_key: 'sv_account_state',
-        command_entry_key: 'sv_fx_trade_commands',
-        account_query_key: 'sv_fx_accounts_query',
-        recent_news_key: 'sv_fx_recent_news',
-    },
     
     macro_event_system: MACRO_EVENT_SYSTEM,
 
