@@ -13,20 +13,24 @@ export class NewsView {
 
     render(container) {
         if (!container) return;
-        
-        const market = this.data.getState(SillyViewConfig.world_book_keys.global_market);
-        const news = market?.news_feed || [];
+        const archive = this.data.getState(SillyViewConfig.world_book_keys.news_archive) || {};
+        const news = Array.isArray(archive.items) ? archive.items : [];
+        const escapeHtml = value => String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
         
         let newsHtml = '<div class="sv-feed-list">';
         if (news.length === 0) {
             newsHtml += '<p style="color: var(--text-gray-500); font-style: italic;">暂无市场新闻。</p>';
         } else {
-            // The news_feed is already in reverse chronological order
             news.forEach(item => {
                 newsHtml += `
                     <div class="sv-feed-item">
-                        <p>${item.headline}</p>
-                        <p class="sv-feed-item-meta">时间点: ${item.time_index}</p>
+                        <p>${escapeHtml(item.headline)}</p>
+                        <p class="sv-feed-item-meta">${escapeHtml(item.asset_code || 'GLOBAL')} · 时间点 ${Number(item.created_at || 0)}</p>
                     </div>
                 `;
             });

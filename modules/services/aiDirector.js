@@ -52,6 +52,11 @@ export class AIDirector {
             const macro = globalMarket.macro_state;
             contextLines.push(`宏观状态: 风险偏好 ${Number(macro.risk_sentiment || 0).toFixed(2)}，美元强弱 ${Number(macro.usd_strength || 0).toFixed(2)}，利率压力 ${Number(macro.rate_pressure || 0).toFixed(2)}，通胀压力 ${Number(macro.inflation_pressure || 0).toFixed(2)}，能源压力 ${Number(macro.energy_pressure || 0).toFixed(2)}。`);
         }
+        const activeNews = await this.data.pruneExpiredActiveNews();
+        contextLines.push('仍在影响市场的限时新闻:');
+        contextLines.push(...(activeNews.length > 0
+            ? activeNews.map(item => `- ${item.asset_code}: ${item.headline}（剩余 ${Math.max(0, Number(item.expires_at) - Number(globalMarket.current_time_index || 0))} 小时）`)
+            : ['- 暂无。']));
         const activeTargetLines = this.data.getActiveMarketTargetsSummary([...activeAssetsForAI]);
         contextLines.push('当前AI大盘目标:');
         contextLines.push(...(activeTargetLines.length > 0 ? activeTargetLines.map(line => `- ${line}`) : ['- 暂无有效目标。']));
@@ -111,11 +116,12 @@ export class AIDirector {
         taskLines.push('目标指令格式: [Market.SetLongTarget(asset_code, target_price, hours, "pattern", "reason", confidence)]，hours 建议 4-24；[Market.SetShortTarget(asset_code, target_price, minutes, "pattern", "reason", confidence)]，minutes 建议 8-90。');
         taskLines.push('可选 pattern: bull_trend、bear_trend、consolidation、fake_breakout、fake_breakdown、washout、bull_trap、bear_trap、panic_sell、short_squeeze。confidence 为 0-1 数字。目标到期后系统会自动删除并等待你设置下一段目标。');
         taskLines.push('如果要取消目标，使用 [Market.ClearTarget(asset_code, "long"|"short"|"all")]。');
+        taskLines.push('新增新闻必须使用 [Market.AddNews("asset_code或GLOBAL", "新闻正文", duration_hours)]，duration_hours 为 1-168 的有效小时数。新闻会在有效期内影响后续市场判断，到期后自动退出后台上下文。');
         taskLines.push('必须让分K走势服务于已设立的短线/长线目标：短线目标决定分K入场节奏，长线目标决定小时级方向过滤。若分K信号与目标背离，可以用洗盘、回踩、假突破等 pattern 解释，但不要长期反向推进。');
         taskLines.push(`对于每个相关资产，都必须分别使用 [Market.Advance] 或 [Market.AdvanceSeries] 指令决定其${timeUnit}的收盘价和走势。当前正在查看的 ${currentAssetName} 可以作为叙事重点，但不能忽略其他已交易或持仓资产。`);
         taskLines.push(`timeframe 使用 "${currentTimeframe}"。close_price / final_close_price 必须是数字。pattern 从 bull_run、bear_crash、volatile、consolidation、reversal_bull、reversal_bear、sideways、fake_breakout、fake_breakdown、washout、bull_trap、bear_trap 中选择。`);
         taskLines.push('必须同时使用 [Time.Set] 指令推进世界时间。');
-        taskLines.push('只有当本回合发生目标切换、关键转折、异常波动或宏观事件时，才用 <headline>...</headline> 给出一条简短市场新闻；普通噪声推进可以不写 headline。');
+        taskLines.push('只有当本回合发生目标切换、关键转折、异常波动或宏观事件时才添加一条限时新闻；普通噪声推进不要添加新闻。不要使用 <headline> 标签。');
         taskLines.push('最后必须输出一个且只有一个 <command>...</command> 块；所有完整指令都放在这个块内。');
         taskLines.push('除最后的 <command> 块外，不要在正文、解释或示例中输出完整的 [Module.Action(...)] 指令。');
         
@@ -166,8 +172,18 @@ export class AIDirector {
             contextLines.push(`当前市场风向: ${endMarket.personality_state}`);
         }
 
+        const activeNewsState = quickModeEndState.get(this.config.world_book_keys.active_market_news) || {};
+        const endTime = Number(endMarket.current_time_index || 0);
+        const activeNews = (Array.isArray(activeNewsState.items) ? activeNewsState.items : [])
+            .filter(item => Number(item.expires_at || 0) > endTime)
+            .slice(0, 10);
+        contextLines.push('仍在影响市场的限时新闻:');
+        contextLines.push(...(activeNews.length > 0
+            ? activeNews.map(item => `- ${item.asset_code || 'GLOBAL'}: ${item.headline}（剩余 ${Number(item.expires_at) - endTime} 小时）`)
+            : ['- 暂无。']));
+
         // AI Instruction
-        contextLines.push(`\n[导演指示：请仅根据以上市场变化生成一段承上启下的市场新闻和评论。不要读取或推断玩家账户，不要使用任何指令。]`);
+        contextLines.push(`\n[导演指示：请仅根据以上市场变化和有效新闻生成一段承上启下的市场评论。不要读取或推断玩家账户，不要使用任何指令。]`);
 
         const contextString = `<context>{{newline}}${contextLines.join('{{newline}}')}{{newline}}</context>`;
         

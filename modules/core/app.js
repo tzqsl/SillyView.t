@@ -269,6 +269,7 @@ export class SillyViewApp {
         let hasUpdatedFinancials = false;
         let hasUpdatedTimeline = false;
         let hasUpdatedTargets = false;
+        let hasUpdatedNews = false;
         let maxAdvancedTimeIndex = 0;
         const headlineAssetCodes = new Set();
         const advancedAssetCodes = new Set();
@@ -367,6 +368,18 @@ export class SillyViewApp {
                     Logger.warn('收到了格式不正确的 Time.Set 指令，已忽略:', command.args);
                 }
             }
+            else if (command.module === 'Market' && command.type === 'AddNews') {
+                const [assetCode = 'GLOBAL', headline, durationHours] = command.args;
+                if (
+                    typeof headline === 'string' && headline.trim() &&
+                    typeof durationHours === 'number' && durationHours > 0 &&
+                    (assetCode === 'GLOBAL' || SillyViewConfig.asset_definitions[assetCode])
+                ) {
+                    hasUpdatedNews = Boolean(await this.data.recordMarketNews(headline, assetCode, durationHours)) || hasUpdatedNews;
+                } else {
+                    Logger.warn('收到了格式不正确的 Market.AddNews 指令，已忽略:', command.args);
+                }
+            }
             else if (command.module === 'Trade') {
                 const ok = await this.data.processManagedAccountTradeCommand(command);
                 if (ok) {
@@ -428,7 +441,7 @@ export class SillyViewApp {
             if (!silent) this.ui.renderAll();
         }
 
-        if (maxAdvancedTimeIndex > 0) {
+        if (maxAdvancedTimeIndex > 0 && !hasUpdatedNews) {
             await this._recordHeadlineOnce(msg, maxAdvancedTimeIndex, [...headlineAssetCodes]);
         }
 
@@ -446,7 +459,7 @@ export class SillyViewApp {
                 return m;
             });
             if (!silent) this.ui.updateUIVisibility();
-        } else if (hasUpdatedFinancials || hasUpdatedTimeline || hasUpdatedTargets) {
+        } else if (hasUpdatedFinancials || hasUpdatedTimeline || hasUpdatedTargets || hasUpdatedNews) {
             if (!silent) this.ui.renderAll();
         } else if (!hasAdvanced) {
             // If no commands were processed, ensure buttons are re-enabled
@@ -472,31 +485,9 @@ export class SillyViewApp {
         const headline = this._extractHeadline(msg);
         if (!headline) return;
 
-        const normalizedHeadline = headline.toLowerCase();
         const uniqueAssetCodes = [...new Set(assetCodes)].filter(Boolean);
         const assetCode = uniqueAssetCodes.length === 1 ? uniqueAssetCodes[0] : 'GLOBAL';
-
-        await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
-            if (!Array.isArray(market.news_feed)) market.news_feed = [];
-            const seenNews = new Set();
-            market.news_feed = market.news_feed.filter(item => {
-                const key = `${Number(item.time_index)}::${String(item.headline || '').trim().toLowerCase()}`;
-                if (seenNews.has(key)) return false;
-                seenNews.add(key);
-                return true;
-            });
-
-            const alreadyExists = market.news_feed.some(item =>
-                Number(item.time_index) === Number(timeIndex) &&
-                String(item.headline || '').trim().toLowerCase() === normalizedHeadline
-            );
-
-            if (!alreadyExists) {
-                market.news_feed.unshift({ time_index: timeIndex, headline, asset_code: assetCode });
-                if (market.news_feed.length > 50) market.news_feed = market.news_feed.slice(0, 50);
-            }
-            return market;
-        });
+        await this.data.recordMarketNews(headline, assetCode, 6, timeIndex);
     }
     
     async onQuickModeToggled(isEnabled) {

@@ -131,6 +131,37 @@ export class DataManager {
         return changed;
     }
 
+    _normalizeNewsItem(item, fallbackTime = 0, fallbackDurationHours = 6) {
+        const headline = String(item?.headline || '').replace(/\s+/g, ' ').trim();
+        if (!headline) return null;
+        const createdAt = Number(item.created_at ?? item.time_index ?? fallbackTime) || 0;
+        const durationHours = Math.min(168, Math.max(1, Math.floor(Number(item.duration_hours || fallbackDurationHours) || fallbackDurationHours)));
+        const expiresAt = Number(item.expires_at) || createdAt + durationHours;
+        const assetCode = this.config.asset_definitions[item.asset_code] ? item.asset_code : 'GLOBAL';
+        return {
+            id: item.id || `news_${createdAt}_${this._hashString(`${assetCode}|${headline}`)}`,
+            headline,
+            asset_code: assetCode,
+            created_at: createdAt,
+            expires_at: expiresAt,
+            duration_hours: durationHours,
+        };
+    }
+
+    _mergeNewsItems(...lists) {
+        const byId = new Map();
+        for (const item of lists.flat()) {
+            if (!item?.id) continue;
+            const duplicate = [...byId.values()].find(existing =>
+                Number(existing.created_at || 0) === Number(item.created_at || 0) &&
+                existing.asset_code === item.asset_code &&
+                existing.headline === item.headline
+            );
+            if (!duplicate) byId.set(item.id, item);
+        }
+        return [...byId.values()].sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0));
+    }
+
     async _migrateAssetUniverse(lorebookName) {
         const keys = this.config.world_book_keys;
         const configuredAssets = Object.keys(this.config.asset_definitions);
@@ -161,12 +192,29 @@ export class DataManager {
         if (market.macro_state && Object.prototype.hasOwnProperty.call(market.macro_state, 'crypto_sentiment')) {
             delete market.macro_state.crypto_sentiment;
         }
-        if (Array.isArray(market.news_feed)) {
-            market.news_feed = market.news_feed.filter(item =>
-                !item?.asset_code || item.asset_code === 'GLOBAL' || supportedAssets.has(item.asset_code)
-            );
-        }
+        const legacyNews = (Array.isArray(market.news_feed) ? market.news_feed : [])
+            .filter(item => !item?.asset_code || item.asset_code === 'GLOBAL' || supportedAssets.has(item.asset_code))
+            .map(item => this._normalizeNewsItem(item, timeIndex))
+            .filter(Boolean);
+        delete market.news_feed;
         this._stateCache.set(keys.global_market, market);
+
+        const archiveState = {
+            ...this.config.default_game_state.news_archive,
+            ...(this._stateCache.get(keys.news_archive) || {}),
+        };
+        archiveState.items = this._mergeNewsItems(archiveState.items || [], legacyNews);
+        archiveState.updated_at = timeIndex;
+        this._stateCache.set(keys.news_archive, archiveState);
+
+        const activeNewsState = {
+            ...this.config.default_game_state.active_market_news,
+            ...(this._stateCache.get(keys.active_market_news) || {}),
+        };
+        activeNewsState.items = this._mergeNewsItems(activeNewsState.items || [], legacyNews)
+            .filter(item => Number(item.expires_at || 0) > timeIndex);
+        activeNewsState.updated_at = timeIndex;
+        this._stateCache.set(keys.active_market_news, activeNewsState);
 
         const targetState = this._stateCache.get(keys.market_targets);
         if (targetState?.targets) {
@@ -208,10 +256,14 @@ export class DataManager {
                 entry.enabled = enabled;
             };
 
-            upsertState(keys.config, configState, true);
-            upsertState(keys.global_market, market, true);
-            upsertState(keys.player_portfolio, portfolio, true);
+            upsertState(keys.config, configState, false);
+            upsertState(keys.global_market, market, false);
+            upsertState(keys.player_portfolio, portfolio, false);
+            const aiContext = this._stateCache.get(keys.ai_context);
+            if (aiContext) upsertState(keys.ai_context, aiContext, false);
             if (targetState) upsertState(keys.market_targets, targetState, false);
+            upsertState(keys.news_archive, archiveState, false);
+            upsertState(keys.active_market_news, activeNewsState, false);
             for (const assetCode of configuredAssets) {
                 upsertState(`${keys.asset_prefix}${assetCode}`, this._stateCache.get(`${keys.asset_prefix}${assetCode}`), false);
             }
@@ -225,6 +277,7 @@ export class DataManager {
                 await this.th.updateWorldbookWith(controlName, entries => {
                     for (const entry of entries) {
                         if (!entry.name?.startsWith(`${this.config.multi_account.account_state_key}_`)) continue;
+                        entry.enabled = false;
                         try {
                             const state = JSON.parse(entry.content);
                             if (this._settleUnsupportedPortfolioAssets(state.portfolio, supportedAssets, legacyPrices, timeIndex)) {
@@ -458,8 +511,19 @@ export class DataManager {
     }
 
     _isWorldbookEntryVisibleToRoleAI(key) {
-        return key !== this.config.world_book_keys.market_targets
-            && !String(key || '').startsWith(this.config.world_book_keys.asset_prefix);
+        const keys = this.config.world_book_keys;
+        const internalKeys = new Set([
+            keys.config,
+            keys.global_market,
+            keys.player_portfolio,
+            keys.ai_context,
+            keys.kline_context,
+            keys.market_targets,
+            keys.news_archive,
+            keys.active_market_news,
+        ]);
+        return !internalKeys.has(key)
+            && !String(key || '').startsWith(keys.asset_prefix);
     }
 
     _insertWorldbookEntry(entries, newEntry, afterKey = null) {
@@ -480,7 +544,9 @@ export class DataManager {
             this.contextEntriesEnsuredFor !== lorebookName ||
             !this._stateCache.has(keys.dialogue_context) ||
             !this._stateCache.has(keys.kline_context) ||
-            !this._stateCache.has(keys.market_targets);
+            !this._stateCache.has(keys.market_targets) ||
+            !this._stateCache.has(keys.news_archive) ||
+            !this._stateCache.has(keys.active_market_news);
 
         if (!needsEnsure) return;
 
@@ -505,6 +571,18 @@ export class DataManager {
             this.config.world_book_keys.market_targets,
             this.config.default_game_state.market_targets,
             { afterKey: this.config.world_book_keys.kline_context }
+        );
+        await this.ensureContextEntry(
+            lorebookName,
+            this.config.world_book_keys.news_archive,
+            this.config.default_game_state.news_archive,
+            { enabled: false, afterKey: this.config.world_book_keys.market_targets }
+        );
+        await this.ensureContextEntry(
+            lorebookName,
+            this.config.world_book_keys.active_market_news,
+            this.config.default_game_state.active_market_news,
+            { enabled: false, afterKey: this.config.world_book_keys.news_archive }
         );
     }
 
@@ -584,13 +662,15 @@ export class DataManager {
         };
 
         const entriesTemplate = [
-            { name: keys.config, content: JSON.stringify(initialConfig, null, 2), enabled: true },
-            { name: keys.global_market, content: JSON.stringify(initialGlobalMarket, null, 2), enabled: true },
-            { name: keys.player_portfolio, content: JSON.stringify(defaults.player_portfolio, null, 2), enabled: true },
-            { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: true },
+            { name: keys.config, content: JSON.stringify(initialConfig, null, 2), enabled: false },
+            { name: keys.global_market, content: JSON.stringify(initialGlobalMarket, null, 2), enabled: false },
+            { name: keys.player_portfolio, content: JSON.stringify(defaults.player_portfolio, null, 2), enabled: false },
+            { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: false },
             { name: keys.dialogue_context, content: JSON.stringify(defaults.dialogue_context, null, 2), enabled: true },
-            { name: keys.kline_context, content: JSON.stringify(defaults.kline_context, null, 2), enabled: true },
+            { name: keys.kline_context, content: JSON.stringify(defaults.kline_context, null, 2), enabled: false },
             { name: keys.market_targets, content: JSON.stringify(defaults.market_targets, null, 2), enabled: false },
+            { name: keys.news_archive, content: JSON.stringify(defaults.news_archive, null, 2), enabled: false },
+            { name: keys.active_market_news, content: JSON.stringify(defaults.active_market_news, null, 2), enabled: false },
         ];
 
         initialConfig.available_assets.forEach(assetCode => {
@@ -884,6 +964,61 @@ export class DataManager {
         return (portfolio.cash || 0) + positionValue - (portfolio.debt || 0);
     }
 
+    getArchivedNews() {
+        const state = this.getState(this.config.world_book_keys.news_archive) || {};
+        return Array.isArray(state.items) ? state.items : [];
+    }
+
+    getActiveMarketNews() {
+        const state = this.getState(this.config.world_book_keys.active_market_news) || {};
+        return Array.isArray(state.items) ? state.items : [];
+    }
+
+    async pruneExpiredActiveNews() {
+        const key = this.config.world_book_keys.active_market_news;
+        const state = this.getState(key) || this.config.default_game_state.active_market_news;
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+        const currentTime = Number(market.current_time_index || 0);
+        const items = Array.isArray(state.items) ? state.items : [];
+        const activeItems = items.filter(item => Number(item.expires_at || 0) > currentTime);
+        if (activeItems.length === items.length) return activeItems;
+
+        await this.updateState(key, current => ({
+            ...current,
+            updated_at: currentTime,
+            items: activeItems,
+        }));
+        return activeItems;
+    }
+
+    async recordMarketNews(headline, assetCode = 'GLOBAL', durationHours = 6, createdAt = null) {
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+        const timeIndex = Number(createdAt ?? market.current_time_index ?? 0);
+        const normalizedAssetCode = this.config.asset_definitions[assetCode] ? assetCode : 'GLOBAL';
+        const item = this._normalizeNewsItem({
+            headline,
+            asset_code: normalizedAssetCode,
+            created_at: timeIndex,
+            duration_hours: durationHours,
+        }, timeIndex, durationHours);
+        if (!item) return null;
+
+        const archiveKey = this.config.world_book_keys.news_archive;
+        const activeKey = this.config.world_book_keys.active_market_news;
+        await this.updateState(archiveKey, state => ({
+            ...state,
+            updated_at: timeIndex,
+            items: this._mergeNewsItems(state.items || [], [item]),
+        }));
+        await this.updateState(activeKey, state => ({
+            ...state,
+            updated_at: timeIndex,
+            items: this._mergeNewsItems(state.items || [], [item])
+                .filter(news => Number(news.expires_at || 0) > timeIndex),
+        }));
+        return item;
+    }
+
     async updateAIContext() {
         const keys = this.config.world_book_keys;
         const configState = this.getState(keys.config);
@@ -891,6 +1026,7 @@ export class DataManager {
         const portfolio = this.getState(keys.player_portfolio) || {};
         const availableAssets = configState?.available_assets || Object.keys(this.config.asset_definitions);
         await this.pruneExpiredMarketTargets();
+        await this.pruneExpiredActiveNews();
 
         const marketSummary = availableAssets.map(assetCode => {
             const assetDef = this.config.asset_definitions[assetCode];
@@ -953,7 +1089,7 @@ export class DataManager {
     }
 
     _buildRecentKlineSnapshot(assetCode, assetData) {
-        const mapRecent = candles => (candles || []).slice(-10).map(candle => this._compactCandle(candle));
+        const mapRecent = candles => (candles || []).slice(-8).map(candle => this._compactCandle(candle));
 
         return {
             code: assetCode,
@@ -1134,37 +1270,15 @@ export class DataManager {
         return lines.length > 0 ? lines : ['- 当前没有持仓。'];
     }
 
-    async updateDialogueContext(existingMarketSummary = null) {
+    async updateDialogueContext(_existingMarketSummary = null) {
         const keys = this.config.world_book_keys;
         const configState = this.getState(keys.config);
         const market = this.getState(keys.global_market) || {};
         const portfolio = this.getState(keys.player_portfolio) || {};
         const availableAssets = configState?.available_assets || Object.keys(this.config.asset_definitions);
-        const marketSummary = existingMarketSummary || availableAssets.map(assetCode => {
-            const assetDef = this.config.asset_definitions[assetCode];
-            const assetData = this.getState(`${keys.asset_prefix}${assetCode}`);
-            const hourly = assetData?.kline_hourly || [];
-            const latest = hourly[hourly.length - 1];
-            const previousDay = hourly.length > 24 ? hourly[hourly.length - 25] : null;
-            const latestPrice = assetData?.current_price ?? latest?.close ?? assetDef?.initial_price ?? 0;
-            const change24h = previousDay ? ((latestPrice / previousDay.close) - 1) * 100 : 0;
 
-            return {
-                code: assetCode,
-                name: assetDef?.name || assetCode,
-                latest_price: latestPrice,
-                change_24h_pct: change24h,
-            };
-        });
-
-        const newsLines = (market.news_feed || []).slice(0, 5).map(news =>
-            `- [t=${news.time_index}] ${news.asset_code || 'GLOBAL'}: ${news.headline}`
-        );
-        const transactionLines = (portfolio.transaction_log || []).slice(0, 8).map(log =>
+        const transactionLines = (portfolio.transaction_log || []).slice(0, 3).map(log =>
             `- [t=${log.time}] ${log.description}: ${this._formatSigned(log.amount)}`
-        );
-        const marketLines = marketSummary.map(item =>
-            `- ${item.name || item.code} (${item.code}): ${Number(item.latest_price || 0).toFixed(4)}，24h ${this._formatSigned(item.change_24h_pct)}%`
         );
         const totalNetWorth = this._calculatePortfolioMarkedValue(portfolio);
 
@@ -1183,16 +1297,10 @@ export class DataManager {
             '持仓：',
             ...this._buildPositionSummary(portfolio),
             '',
-            '市场价格：',
-            ...marketLines,
-            '',
-            '最新市场新闻：',
-            ...(newsLines.length > 0 ? newsLines : ['- 暂无新闻。']),
-            '',
             '近期资金/交易记录：',
             ...(transactionLines.length > 0 ? transactionLines : ['- 暂无记录。']),
             '',
-            '对话使用建议：角色可以自然提及以上市场状态、盈亏压力、债务压力、新闻影响，但不要在普通对话中擅自输出市场指令，除非剧情确实需要触发财务或市场命令。',
+            '对话使用建议：角色可以自然提及账户状态、持仓和盈亏压力，但不要在普通对话中擅自输出市场指令。行情判断请读取独立的 sv_kline_context。',
         ];
 
         await this.updateState(keys.dialogue_context, () => ({
@@ -1556,7 +1664,7 @@ export class DataManager {
                 comment: 'SillyView 多账户索引。账号完整状态保存在本世界书内各自的 sv_account_state_* 词条中。',
                 updated_at: Date.now(),
                 accounts: migratedAccounts,
-            }, null, 2), true);
+            }, null, 2), false);
             return entries;
         });
         return true;
@@ -1620,7 +1728,7 @@ export class DataManager {
                 const state = legacyState || initialState;
                 state.worldbook_name = controlName;
                 state.state_entry_name = stateEntryName;
-                this._upsertWorldbookEntry(entries, stateEntryName, JSON.stringify(state, null, 2));
+                this._upsertWorldbookEntry(entries, stateEntryName, JSON.stringify(state, null, 2), false);
                 return entries;
             }
 
@@ -1638,7 +1746,7 @@ export class DataManager {
             } catch (error) {
                 stateEntry.content = JSON.stringify(initialState, null, 2);
             }
-            stateEntry.enabled = true;
+            stateEntry.enabled = false;
             return entries;
         });
 
@@ -1704,11 +1812,11 @@ export class DataManager {
         state.state_entry_name = stateEntryName;
         await this._ensureWorldbookExists(controlName, [{
             name: stateEntryName,
-            enabled: true,
+            enabled: false,
             content: JSON.stringify(state, null, 2),
         }]);
         await this.th.updateWorldbookWith(controlName, entries => {
-            this._upsertWorldbookEntry(entries, stateEntryName, JSON.stringify(state, null, 2), true);
+            this._upsertWorldbookEntry(entries, stateEntryName, JSON.stringify(state, null, 2), false);
             return entries;
         });
     }
@@ -1716,7 +1824,7 @@ export class DataManager {
     _buildManagedTradeCommandGuide() {
         return [
             '【SillyView 多账户交易指令】',
-            '用途：让角色 AI 操作 SillyView_accounts 中彼此独立的账户。交易前先读取 sv_accounts_query、sv_kline_context 和 sv_fx_recent_news。',
+            '用途：让角色 AI 操作 SillyView_accounts 中彼此独立的账户。交易前先读取 sv_accounts_query 和 sv_kline_context。',
             '输出规则：账户编号必须原样使用 sv_accounts_query 中的 account_id；资产代码必须使用 sv_kline_context 中的 code。所有指令放在回复末尾唯一的 <command>...</command> 块中，一行一条；不要把指令写在正文或代码块里。',
             '',
             '通用参数顺序：("account_id", "asset_code", amount, leverage, take_profit, stop_loss)。',
@@ -1787,13 +1895,6 @@ export class DataManager {
         return lines.join('\n');
     }
 
-    _buildManagedRecentNews() {
-        const market = this.getState(this.config.world_book_keys.global_market) || {};
-        const news = (market.news_feed || []).slice(0, 10);
-        if (news.length === 0) return '【SillyView 最近十条新闻】\n暂无市场新闻。';
-        return ['【SillyView 最近十条新闻】', ...news.map(item => `- [t=${item.time_index}] ${item.asset_code || 'GLOBAL'}: ${item.headline}`)].join('\n');
-    }
-
     _buildManagedScanReport(diagnostics = {}, accountEntries = null) {
         const accounts = accountEntries || [];
         const lines = [
@@ -1848,7 +1949,7 @@ export class DataManager {
         if (accountEntries) {
             entries.push({
                 name: this.config.multi_account.account_index_key,
-                enabled: true,
+                enabled: false,
                 content: JSON.stringify({
                     comment: 'SillyView 多账户索引。账号完整状态保存在本世界书内各自的 sv_account_state_* 词条中。',
                     updated_at: Date.now(),
@@ -1872,11 +1973,6 @@ export class DataManager {
                 enabled: true,
                 content: JSON.stringify(klineContext, null, 2),
             },
-            {
-                name: this.config.multi_account.recent_news_key,
-                enabled: true,
-                content: this._buildManagedRecentNews(),
-            },
         );
         if (scanDiagnostics) {
             entries.push({
@@ -1899,10 +1995,16 @@ export class DataManager {
             this._upsertWorldbookEntry(entries, this.config.multi_account.account_query_key, this._buildManagedAccountsQuery(states), true);
             const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
             this._upsertWorldbookEntry(entries, this.config.world_book_keys.kline_context, JSON.stringify(klineContext, null, 2), true);
-            this._upsertWorldbookEntry(entries, this.config.multi_account.recent_news_key, this._buildManagedRecentNews(), true);
+            const accountIndex = entries.find(entry => entry.name === this.config.multi_account.account_index_key);
+            if (accountIndex) accountIndex.enabled = false;
             const scanReportEntry = entries.find(entry => entry.name === this.config.multi_account.scan_report_key);
             if (scanReportEntry) scanReportEntry.enabled = false;
-            return entries;
+            for (const entry of entries) {
+                if (entry.name?.startsWith(`${this.config.multi_account.account_state_key}_`)) {
+                    entry.enabled = false;
+                }
+            }
+            return entries.filter(entry => entry.name !== this.config.multi_account.recent_news_key);
         });
     }
 
@@ -1923,7 +2025,7 @@ export class DataManager {
                 comment: 'SillyView 多账户索引。账号完整状态保存在本世界书内各自的 sv_account_state_* 词条中。',
                 updated_at: Date.now(),
                 accounts: accountEntries,
-            }, null, 2), true);
+            }, null, 2), false);
             this._upsertWorldbookEntry(entries, this.config.multi_account.scan_report_key, this._buildManagedScanReport(scanResult.diagnostics, accountEntries), false);
             return entries;
         });

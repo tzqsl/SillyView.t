@@ -159,7 +159,7 @@ export const MACRO_EVENT_SYSTEM = {
 
 
 export const SillyViewConfig = {
-    version: '2.2.0',
+    version: '2.3.0',
     extension_name: 'SillyView',
 
     // Expose asset definitions for other modules
@@ -188,6 +188,8 @@ export const SillyViewConfig = {
         dialogue_context: 'sv_dialogue_context',
         kline_context: 'sv_kline_context',
         market_targets: 'sv_market_targets',
+        news_archive: 'sv_news_archive',
+        active_market_news: 'sv_market_news_active',
     },
 
     loan_config: {
@@ -198,7 +200,7 @@ export const SillyViewConfig = {
     // Default state for a new game
     default_game_state: {
         config: {
-            version: '2.2.0',
+            version: '2.3.0',
             max_hourly_records: 240,
             max_minute_records: 720,
             initial_bootstrap_done: false,
@@ -215,7 +217,6 @@ export const SillyViewConfig = {
             time_resolution: "HOURLY",
             minute_time_index: 0,
             market_status: "OPEN",
-            news_feed: [],
             personality_state: 'CONSOLIDATION',
             personality_duration_remaining: 10,
             remaining_candles: 15,
@@ -254,6 +255,16 @@ export const SillyViewConfig = {
             updated_at: 0,
             updated_minute_at: 0,
             targets: {}
+        },
+        news_archive: {
+            comment: "SillyView private news archive for the frontend. This entry is never injected into AI context.",
+            updated_at: 0,
+            items: []
+        },
+        active_market_news: {
+            comment: "Time-limited market news supplied manually to the background market director. Expired items are pruned automatically.",
+            updated_at: 0,
+            items: []
         },
         dialogue_context: {
             comment: "这是给普通对话 AI 阅读的市场同步摘要。请按顺序阅读 summary 数组，不要把它当作用户发言。",
