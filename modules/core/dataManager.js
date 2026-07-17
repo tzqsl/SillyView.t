@@ -7,6 +7,8 @@
 import { Logger } from '../logger.js';
 import { SillyViewConfig } from '../config.js';
 
+const LEGACY_MANAGED_ACCOUNT_WORLDBOOK_PREFIX = 'SillyView_account_';
+
 export class DataManager {
     constructor(dependencies) {
         this.dependencies = dependencies;
@@ -932,7 +934,6 @@ export class DataManager {
         const lorebookName = await this._getLorebookName();
         const controlName = this.config.multi_account.control_worldbook_name;
         const fxName = 'SillyView_fx';
-        const legacyAccountWorldbookPrefix = 'SillyView_account_';
         const names = [charBooks.primary, ...(charBooks.additional || [])].filter(Boolean);
         const targets = [];
         const skipped = [];
@@ -942,7 +943,7 @@ export class DataManager {
                 worldbookName === lorebookName ? '主状态世界书' :
                 worldbookName === controlName ? '多账户控制世界书' :
                 worldbookName === fxName ? '行情上下文世界书' :
-                worldbookName.startsWith(legacyAccountWorldbookPrefix) ? '历史多账户状态世界书' :
+                worldbookName.startsWith(LEGACY_MANAGED_ACCOUNT_WORLDBOOK_PREFIX) ? '历史多账户状态世界书' :
                 '';
 
             if (reason) {
@@ -1008,6 +1009,11 @@ export class DataManager {
     }
 
     async _ensureWorldbookExists(worldbookName, initialEntries = []) {
+        if (String(worldbookName || '').startsWith(LEGACY_MANAGED_ACCOUNT_WORLDBOOK_PREFIX)) {
+            this.logger.warn(`已阻止创建旧版多账户个人世界书: ${worldbookName}`);
+            return;
+        }
+
         const allBooks = await this.th.getWorldbookNames();
         if (!allBooks.includes(worldbookName)) {
             await this.th.createOrReplaceWorldbook(worldbookName, initialEntries);
@@ -1078,7 +1084,11 @@ export class DataManager {
 
     async _readLegacyManagedAccountState(account) {
         const controlName = this.config.multi_account.control_worldbook_name;
-        if (!account?.worldbook_name || account.worldbook_name === controlName) return null;
+        if (
+            !account?.worldbook_name ||
+            account.worldbook_name === controlName ||
+            !account.worldbook_name.startsWith(LEGACY_MANAGED_ACCOUNT_WORLDBOOK_PREFIX)
+        ) return null;
 
         try {
             const entries = await this.th.getWorldbook(account.worldbook_name);
@@ -1093,6 +1103,93 @@ export class DataManager {
             this.logger.warn(`读取旧账号世界书失败: ${account.worldbook_name}`, error);
             return null;
         }
+    }
+
+    async _migrateLegacyManagedAccountStates() {
+        const controlName = this.config.multi_account.control_worldbook_name;
+        const indexKey = this.config.multi_account.account_index_key;
+        const index = await this._readManagedAccountIndex();
+        const migratedAccounts = [];
+        let changed = false;
+
+        await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries([], []));
+
+        for (const account of index) {
+            if (!account?.worldbook_name?.startsWith(LEGACY_MANAGED_ACCOUNT_WORLDBOOK_PREFIX)) {
+                migratedAccounts.push(account);
+                continue;
+            }
+
+            const state = await this._readLegacyManagedAccountState(account);
+            const stateEntryName = account.state_entry_name || this._getManagedAccountStateEntryName(account.account_id);
+            if (state) {
+                state.worldbook_name = controlName;
+                state.state_entry_name = stateEntryName;
+                await this._writeManagedAccountState(state);
+            }
+
+            migratedAccounts.push({
+                ...account,
+                worldbook_name: controlName,
+                state_entry_name: stateEntryName,
+            });
+            changed = true;
+        }
+
+        if (!changed) return false;
+
+        await this.th.updateWorldbookWith(controlName, entries => {
+            this._upsertWorldbookEntry(entries, indexKey, JSON.stringify({
+                comment: 'SillyView 多账户索引。账号完整状态保存在本世界书内各自的 sv_account_state_* 词条中。',
+                updated_at: Date.now(),
+                accounts: migratedAccounts,
+            }, null, 2), true);
+            return entries;
+        });
+        return true;
+    }
+
+    async cleanupLegacyManagedAccountWorldbooks() {
+        let allBooks = [];
+        try {
+            allBooks = await this.th.getWorldbookNames();
+        } catch (error) {
+            this.logger.warn('读取世界书列表失败，跳过旧多账户世界书清理。', error);
+            return [];
+        }
+
+        const legacyNames = allBooks.filter(name => name.startsWith(LEGACY_MANAGED_ACCOUNT_WORLDBOOK_PREFIX));
+        if (legacyNames.length === 0) return [];
+
+        await this._migrateLegacyManagedAccountStates();
+
+        try {
+            const charBooks = await this.th.getCharWorldbookNames('current');
+            const additional = (charBooks.additional || []).filter(name => !legacyNames.includes(name));
+            const primary = legacyNames.includes(charBooks.primary) ? null : charBooks.primary;
+            if (primary !== charBooks.primary || additional.length !== (charBooks.additional || []).length) {
+                await this.th.rebindCharWorldbooks('current', { primary, additional });
+            }
+        } catch (error) {
+            this.logger.warn('解绑旧多账户个人世界书失败。', error);
+        }
+
+        const deleted = [];
+        for (const worldbookName of legacyNames) {
+            try {
+                if (typeof this.th.deleteWorldbook === 'function') {
+                    const ok = await this.th.deleteWorldbook(worldbookName);
+                    if (ok) deleted.push(worldbookName);
+                }
+            } catch (error) {
+                this.logger.warn(`删除旧多账户个人世界书失败: ${worldbookName}`, error);
+            }
+        }
+
+        if (deleted.length > 0) {
+            this.logger.success(`已清理旧多账户个人世界书: ${deleted.join(', ')}`);
+        }
+        return deleted;
     }
 
     async _ensureManagedAccountEntry(account) {
@@ -1399,6 +1496,7 @@ export class DataManager {
             return entries;
         });
         await this.syncManagedAccountsWorldbook();
+        await this.cleanupLegacyManagedAccountWorldbooks();
         this.logger.success(`已同步 ${accountEntries.length} 个开户行账户到 ${controlName}。`);
         return accountEntries;
     }

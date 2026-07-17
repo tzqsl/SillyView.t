@@ -90,7 +90,7 @@
 ## 条目：SillyView_多账户开户行格式
 
 ```text
-如果希望 SillyView 初始化时自动为多个角色创建交易账号，可以在角色卡绑定的任意世界书条目中写入完整开户行格式。插件会扫描这些条目，创建 SillyView_accounts 总控世界书和多个 SillyView_account_* 账号世界书。
+如果希望 SillyView 初始化时自动为多个角色创建交易账号，可以在角色卡绑定的任意世界书条目中写入完整开户行格式。插件会扫描这些条目，创建 SillyView_accounts 总控世界书，并把多个账号写入其中的 sv_account_state_* 独立状态词条。
 
 SillyView_accounts 会被绑定到角色卡附加世界书，包含多账户交易指令、实时账目、sv_kline_context 和最近十条新闻。
 SillyView_fx 不会被改写。
