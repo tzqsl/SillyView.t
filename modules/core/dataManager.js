@@ -912,10 +912,10 @@ export class DataManager {
         return [...accountsById.values()];
     }
 
-    async _ensureWorldbookExists(worldbookName) {
+    async _ensureWorldbookExists(worldbookName, initialEntries = []) {
         const allBooks = await this.th.getWorldbookNames();
         if (!allBooks.includes(worldbookName)) {
-            await this.th.createOrReplaceWorldbook(worldbookName, []);
+            await this.th.createOrReplaceWorldbook(worldbookName, initialEntries);
         }
     }
 
@@ -971,12 +971,17 @@ export class DataManager {
         const charName = await this._getCharacterName();
         const worldbookName = `${this.config.multi_account.account_worldbook_prefix}${this._sanitizeName(charName)}_${account.account_id}`;
         const stateKey = this.config.multi_account.account_state_key;
-        await this._ensureWorldbookExists(worldbookName);
+        const initialState = this._createManagedAccountState(account, worldbookName);
+        await this._ensureWorldbookExists(worldbookName, [{
+            name: stateKey,
+            enabled: true,
+            content: JSON.stringify(initialState, null, 2),
+        }]);
 
         await this.th.updateWorldbookWith(worldbookName, entries => {
             let stateEntry = entries.find(entry => entry.name === stateKey);
             if (!stateEntry) {
-                this._upsertWorldbookEntry(entries, stateKey, JSON.stringify(this._createManagedAccountState(account, worldbookName), null, 2));
+                this._upsertWorldbookEntry(entries, stateKey, JSON.stringify(initialState, null, 2));
                 return entries;
             }
 
@@ -1044,7 +1049,11 @@ export class DataManager {
     async _writeManagedAccountState(state) {
         const stateKey = this.config.multi_account.account_state_key;
         state.updated_at = Date.now();
-        await this._ensureWorldbookExists(state.worldbook_name);
+        await this._ensureWorldbookExists(state.worldbook_name, [{
+            name: stateKey,
+            enabled: true,
+            content: JSON.stringify(state, null, 2),
+        }]);
         await this.th.updateWorldbookWith(state.worldbook_name, entries => {
             this._upsertWorldbookEntry(entries, stateKey, JSON.stringify(state, null, 2), true);
             return entries;
@@ -1115,17 +1124,56 @@ export class DataManager {
         return ['【SillyView 最近十条新闻】', ...news.map(item => `- [t=${item.time_index}] ${item.asset_code || 'GLOBAL'}: ${item.headline}`)].join('\n');
     }
 
+    _buildManagedControlEntries(states, accountEntries = null) {
+        const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
+        const entries = [];
+        if (accountEntries) {
+            entries.push({
+                name: this.config.multi_account.account_index_key,
+                enabled: true,
+                content: JSON.stringify({
+                    comment: 'SillyView 多账户索引。账号完整状态保存在各自 SillyView_account_* 世界书中。',
+                    updated_at: Date.now(),
+                    accounts: accountEntries,
+                }, null, 2),
+            });
+        }
+        entries.push(
+            {
+                name: this.config.multi_account.command_entry_key,
+                enabled: true,
+                content: this._buildManagedTradeCommandGuide(),
+            },
+            {
+                name: this.config.multi_account.account_query_key,
+                enabled: true,
+                content: this._buildManagedAccountsQuery(states),
+            },
+            {
+                name: this.config.world_book_keys.kline_context,
+                enabled: true,
+                content: JSON.stringify(klineContext, null, 2),
+            },
+            {
+                name: this.config.multi_account.recent_news_key,
+                enabled: true,
+                content: this._buildManagedRecentNews(),
+            },
+        );
+        return entries;
+    }
+
     async syncManagedAccountsWorldbook() {
         const controlName = this.config.multi_account.control_worldbook_name;
         const states = await this.getManagedAccountStates();
         if (states.length === 0) return;
 
-        const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
-        await this._ensureWorldbookExists(controlName);
+        await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries(states));
         await this._ensureAdditionalWorldbook(controlName);
         await this.th.updateWorldbookWith(controlName, entries => {
             this._upsertWorldbookEntry(entries, this.config.multi_account.command_entry_key, this._buildManagedTradeCommandGuide(), true);
             this._upsertWorldbookEntry(entries, this.config.multi_account.account_query_key, this._buildManagedAccountsQuery(states), true);
+            const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
             this._upsertWorldbookEntry(entries, this.config.world_book_keys.kline_context, JSON.stringify(klineContext, null, 2), true);
             this._upsertWorldbookEntry(entries, this.config.multi_account.recent_news_key, this._buildManagedRecentNews(), true);
             return entries;
@@ -1142,7 +1190,8 @@ export class DataManager {
             accountEntries.push(await this._ensureManagedAccountWorldbook(account));
         }
 
-        await this._ensureWorldbookExists(controlName);
+        const states = await this.getManagedAccountStates();
+        await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries(states, accountEntries));
         await this._ensureAdditionalWorldbook(controlName);
         await this.th.updateWorldbookWith(controlName, entries => {
             this._upsertWorldbookEntry(entries, this.config.multi_account.account_index_key, JSON.stringify({
