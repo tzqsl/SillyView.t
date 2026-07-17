@@ -12,7 +12,7 @@ export class PositionCalculator {
 
     /**
      * Calculates detailed position information for a given asset.
-     * @param {string} assetCode - The code of the asset (e.g., 'BTCUSD').
+     * @param {string} assetCode - The code of the asset (e.g., 'EURUSD').
      * @param {object} portfolio - The player's portfolio object.
      * @returns {object} A detailed position object.
      */

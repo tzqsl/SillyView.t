@@ -57,6 +57,196 @@ export class DataManager {
         return assetData;
     }
 
+    _buildInitialAssetData(assetDef) {
+        return {
+            code: assetDef.code,
+            name: assetDef.name,
+            type: assetDef.type,
+            description: assetDef.description,
+            current_price: assetDef.initial_price,
+            kline_hourly: [{
+                time: 0,
+                open: assetDef.initial_price,
+                high: assetDef.initial_price,
+                low: assetDef.initial_price,
+                close: assetDef.initial_price,
+                volume: 0,
+            }],
+            kline_minute: [{
+                time: 0,
+                open: assetDef.initial_price,
+                high: assetDef.initial_price,
+                low: assetDef.initial_price,
+                close: assetDef.initial_price,
+                volume: 0,
+                pattern: 'seed',
+            }],
+            kline_daily: [],
+        };
+    }
+
+    _settleUnsupportedPortfolioAssets(portfolio, supportedAssets, legacyPrices, timeIndex = 0) {
+        if (!portfolio?.assets || typeof portfolio.assets !== 'object') return false;
+
+        let changed = false;
+        if (!Array.isArray(portfolio.transaction_log)) portfolio.transaction_log = [];
+        const unsupportedAssetCodes = Object.keys(portfolio.assets).filter(assetCode => !supportedAssets.has(assetCode));
+        if (unsupportedAssetCodes.length > 0) {
+            portfolio.transaction_log = portfolio.transaction_log.filter(log =>
+                !unsupportedAssetCodes.some(assetCode => String(log?.description || '').includes(assetCode))
+            );
+        }
+        for (const assetCode of unsupportedAssetCodes) {
+
+            const position = this.positionCalculator.calculate(assetCode, portfolio);
+            if (position.type && position.totalAmount > 0) {
+                const marketPrice = Number(legacyPrices.get(assetCode)) || position.avgEntryPrice;
+                const pnl = position.type === 'short'
+                    ? (position.avgEntryPrice - marketPrice) * position.totalShares
+                    : (marketPrice - position.avgEntryPrice) * position.totalShares;
+                const realizedPnl = Math.max(-position.totalAmount, pnl);
+                const returnedCash = position.totalAmount + realizedPnl;
+                portfolio.cash = Number(portfolio.cash || 0) + returnedCash;
+                portfolio.transaction_log.unshift({
+                    time: timeIndex,
+                    description: '旧品种资产池升级结算',
+                    amount: returnedCash,
+                });
+                portfolio.transaction_log.unshift({
+                    time: timeIndex,
+                    description: '资产池升级已实现盈亏',
+                    amount: realizedPnl,
+                });
+            }
+            delete portfolio.assets[assetCode];
+            changed = true;
+        }
+
+        if (Array.isArray(portfolio.actions_this_turn)) {
+            portfolio.actions_this_turn = portfolio.actions_this_turn.filter(action =>
+                !action?.assetCode || supportedAssets.has(action.assetCode)
+            );
+        }
+        if (portfolio.transaction_log.length > 100) portfolio.transaction_log.length = 100;
+        return changed;
+    }
+
+    async _migrateAssetUniverse(lorebookName) {
+        const keys = this.config.world_book_keys;
+        const configuredAssets = Object.keys(this.config.asset_definitions);
+        const supportedAssets = new Set(configuredAssets);
+        const legacyPrices = new Map();
+
+        for (const [key, value] of this._stateCache.entries()) {
+            if (!key.startsWith(keys.asset_prefix)) continue;
+            const assetCode = key.slice(keys.asset_prefix.length);
+            const lastCandle = value?.kline_minute?.slice(-1)[0] || value?.kline_hourly?.slice(-1)[0];
+            legacyPrices.set(assetCode, Number(value?.current_price || lastCandle?.close || 0));
+        }
+
+        const market = this._stateCache.get(keys.global_market) || {};
+        const timeIndex = Number(market.current_time_index || 0);
+        const portfolio = this._stateCache.get(keys.player_portfolio) || {};
+        const portfolioChanged = this._settleUnsupportedPortfolioAssets(portfolio, supportedAssets, legacyPrices, timeIndex);
+        if (portfolioChanged) this._stateCache.set(keys.player_portfolio, portfolio);
+
+        const configState = {
+            ...this.config.default_game_state.config,
+            ...(this._stateCache.get(keys.config) || {}),
+            version: this.config.default_game_state.config.version,
+            available_assets: configuredAssets,
+        };
+        this._stateCache.set(keys.config, configState);
+
+        if (market.macro_state && Object.prototype.hasOwnProperty.call(market.macro_state, 'crypto_sentiment')) {
+            delete market.macro_state.crypto_sentiment;
+        }
+        if (Array.isArray(market.news_feed)) {
+            market.news_feed = market.news_feed.filter(item =>
+                !item?.asset_code || item.asset_code === 'GLOBAL' || supportedAssets.has(item.asset_code)
+            );
+        }
+        this._stateCache.set(keys.global_market, market);
+
+        const targetState = this._stateCache.get(keys.market_targets);
+        if (targetState?.targets) {
+            targetState.targets = Object.fromEntries(
+                Object.entries(targetState.targets).filter(([assetCode]) => supportedAssets.has(assetCode))
+            );
+            this._stateCache.set(keys.market_targets, targetState);
+        }
+
+        const removedAssetKeys = [];
+        for (const key of [...this._stateCache.keys()]) {
+            if (!key.startsWith(keys.asset_prefix)) continue;
+            const assetCode = key.slice(keys.asset_prefix.length);
+            if (!supportedAssets.has(assetCode)) {
+                this._stateCache.delete(key);
+                removedAssetKeys.push(key);
+            }
+        }
+        for (const assetCode of configuredAssets) {
+            const assetKey = `${keys.asset_prefix}${assetCode}`;
+            if (!this._stateCache.has(assetKey)) {
+                this._stateCache.set(assetKey, this._buildInitialAssetData(this.config.asset_definitions[assetCode]));
+            }
+        }
+
+        await this.th.updateWorldbookWith(lorebookName, entries => {
+            const migratedEntries = entries.filter(entry => {
+                if (!entry.name?.startsWith(keys.asset_prefix)) return true;
+                return supportedAssets.has(entry.name.slice(keys.asset_prefix.length));
+            });
+
+            const upsertState = (name, value, enabled) => {
+                let entry = migratedEntries.find(item => item.name === name);
+                if (!entry) {
+                    entry = { name, content: '', enabled };
+                    migratedEntries.push(entry);
+                }
+                entry.content = JSON.stringify(value, null, 2);
+                entry.enabled = enabled;
+            };
+
+            upsertState(keys.config, configState, true);
+            upsertState(keys.global_market, market, true);
+            upsertState(keys.player_portfolio, portfolio, true);
+            if (targetState) upsertState(keys.market_targets, targetState, false);
+            for (const assetCode of configuredAssets) {
+                upsertState(`${keys.asset_prefix}${assetCode}`, this._stateCache.get(`${keys.asset_prefix}${assetCode}`), false);
+            }
+            return migratedEntries;
+        });
+
+        try {
+            const allBooks = await this.th.getWorldbookNames();
+            const controlName = this.config.multi_account.control_worldbook_name;
+            if (allBooks.includes(controlName)) {
+                await this.th.updateWorldbookWith(controlName, entries => {
+                    for (const entry of entries) {
+                        if (!entry.name?.startsWith(`${this.config.multi_account.account_state_key}_`)) continue;
+                        try {
+                            const state = JSON.parse(entry.content);
+                            if (this._settleUnsupportedPortfolioAssets(state.portfolio, supportedAssets, legacyPrices, timeIndex)) {
+                                state.updated_at = Date.now();
+                                entry.content = JSON.stringify(state, null, 2);
+                            }
+                        } catch (error) {
+                            this.logger.warn(`迁移多账户外汇资产失败: ${entry.name}`, error);
+                        }
+                    }
+                    return entries;
+                });
+            }
+        } catch (error) {
+            this.logger.warn('迁移多账户资产池失败:', error);
+        }
+
+        if (removedAssetKeys.length > 0 || portfolioChanged) {
+            this.logger.success(`资产池已迁移为纯外汇，移除: ${removedAssetKeys.join(', ') || '旧持仓'}`);
+        }
+    }
+
     _trimCandles(assetData) {
         const configState = this._stateCache.get(this.config.world_book_keys.config) || {};
         const maxHourly = configState.max_hourly_records || this.config.default_game_state.config.max_hourly_records || 240;
@@ -145,7 +335,7 @@ export class DataManager {
                 detail: '正在写入市场摘要、账目和 K线判断上下文。',
                 percent: 52,
             });
-            await this.updateDialogueContext();
+            await this.updateAIContext();
             await this.runInitialBootstrapIfNeeded();
             this.ui.renderInitializationProgress({
                 step: '完成',
@@ -177,6 +367,7 @@ export class DataManager {
             }
             this._stateCache.set(entry.name, parsed);
         }
+        await this._migrateAssetUniverse(lorebookName);
         this.isInitialized = true;
         this.logger.success("所有游戏数据已加载到缓存。");
     }
@@ -404,31 +595,7 @@ export class DataManager {
         initialConfig.available_assets.forEach(assetCode => {
             const assetDef = this.config.asset_definitions[assetCode];
             if (assetDef) {
-                const initialAssetData = {
-                    code: assetDef.code,
-                    name: assetDef.name,
-                    type: assetDef.type,
-                    description: assetDef.description,
-                    current_price: assetDef.initial_price,
-                    kline_hourly: [{
-                        time: 0,
-                        open: assetDef.initial_price,
-                        high: assetDef.initial_price,
-                        low: assetDef.initial_price,
-                        close: assetDef.initial_price,
-                        volume: 0
-                    }],
-                    kline_minute: [{
-                        time: 0,
-                        open: assetDef.initial_price,
-                        high: assetDef.initial_price,
-                        low: assetDef.initial_price,
-                        close: assetDef.initial_price,
-                        volume: 0,
-                        pattern: 'seed',
-                    }],
-                    kline_daily: [],
-                };
+                const initialAssetData = this._buildInitialAssetData(assetDef);
                 entriesTemplate.push({
                     name: `${keys.asset_prefix}${assetCode}`,
                     content: JSON.stringify(initialAssetData, null, 2),
@@ -1558,24 +1725,24 @@ export class DataManager {
             '- 手续费会额外从现金扣除。开仓方向与已有反向仓位冲突时，明确的 Open/Add 指令会失败，应先平掉反向仓位。',
             '',
             '明确操作（推荐，语义不会随现有仓位变化）：',
-            '[Trade.OpenLong("account_id", "BTCUSD", 1000, 2, 72000, 66000)]：无仓位时开多。',
-            '[Trade.AddLong("account_id", "BTCUSD", 500, 2, 72000, 66000)]：给已有多头加仓。',
-            '[Trade.CloseLong("account_id", "BTCUSD")]：全额平掉该资产多头，amount 等参数无需填写。',
-            '[Trade.OpenShort("account_id", "BTCUSD", 1000, 2, 62000, 71000)]：无仓位时开空。',
-            '[Trade.AddShort("account_id", "BTCUSD", 500, 2, 62000, 71000)]：给已有空头加仓。',
-            '[Trade.CloseShort("account_id", "BTCUSD")]：全额平掉该资产空头，amount 等参数无需填写。',
-            '[Trade.SetRisk("account_id", "BTCUSD", 73000, 65000)]：只调整已有仓位的止盈、止损；对应值填 0 可清空。',
+            '[Trade.OpenLong("account_id", "EURUSD", 1000, 5, 1.1000, 1.0600)]：无仓位时开多。',
+            '[Trade.AddLong("account_id", "EURUSD", 500, 5, 1.1000, 1.0600)]：给已有多头加仓。',
+            '[Trade.CloseLong("account_id", "EURUSD")]：全额平掉该货币对多头，amount 等参数无需填写。',
+            '[Trade.OpenShort("account_id", "GBPUSD", 1000, 5, 1.2300, 1.3100)]：无仓位时开空。',
+            '[Trade.AddShort("account_id", "GBPUSD", 500, 5, 1.2300, 1.3100)]：给已有空头加仓。',
+            '[Trade.CloseShort("account_id", "GBPUSD")]：全额平掉该货币对空头，amount 等参数无需填写。',
+            '[Trade.SetRisk("account_id", "EURUSD", 1.1050, 1.0550)]：只调整已有仓位的止盈、止损；对应值填 0 可清空。',
             '',
             '快捷操作（行为取决于当前仓位）：',
-            '[Trade.Buy("account_id", "BTCUSD", 1000, 2, 72000, 66000)]：无仓位则开多，已有多头则加多，已有空头则全额平空。',
-            '[Trade.Sell("account_id", "ETHUSD", 500, 3, 3100, 3700)]：无仓位则开空，已有空头则加空，已有多头则全额平多。',
+            '[Trade.Buy("account_id", "EURUSD", 1000, 5, 1.1000, 1.0600)]：无仓位则开多，已有多头则加多，已有空头则全额平空。',
+            '[Trade.Sell("account_id", "GBPUSD", 500, 5, 1.2300, 1.3100)]：无仓位则开空，已有空头则加空，已有多头则全额平多。',
             '使用 Buy/Sell 平仓时，amount、leverage、止盈和止损参数会被忽略；为避免误判，平仓优先使用 CloseLong/CloseShort。',
             '',
             '多账户示例：',
             '<command>',
-            '[Trade.OpenLong("acct_example_a", "BTCUSD", 1000, 2, 72000, 66000)]',
-            '[Trade.OpenShort("acct_example_b", "ETHUSD", 800, 3, 2800, 3500)]',
-            '[Trade.SetRisk("acct_example_c", "BTCUSD", 74000, 0)]',
+            '[Trade.OpenLong("acct_example_a", "EURUSD", 1000, 5, 1.1000, 1.0600)]',
+            '[Trade.OpenShort("acct_example_b", "GBPUSD", 800, 5, 1.2300, 1.3100)]',
+            '[Trade.SetRisk("acct_example_c", "USDJPY", 152.00, 0)]',
             '</command>',
             '只输出确实要执行的操作；观望时不要生成交易指令。每个账户独立判断、独立计算资金和持仓，不得混用 account_id。',
         ].join('\n');

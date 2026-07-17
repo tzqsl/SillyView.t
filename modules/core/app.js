@@ -568,7 +568,7 @@ export class SillyViewApp {
                 this.logger.warn('初始化预热跳过：没有可用资产。');
                 return;
             }
-            const activeAssetCode = assetCodes.includes(this.ui.currentAsset) ? this.ui.currentAsset : (assetCodes[0] || 'BTCUSD');
+            const activeAssetCode = assetCodes.includes(this.ui.currentAsset) ? this.ui.currentAsset : (assetCodes[0] || 'EURUSD');
             const actionsThisTurn = this.data.getActionsThisTurn();
 
             this.ui.renderInitializationProgress({

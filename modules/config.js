@@ -7,66 +7,6 @@
  */
 
 const ASSET_DEFINITIONS = {
-    'BTCUSD': {
-        code: 'BTCUSD',
-        name: '比特币',
-        type: 'Crypto',
-        description: '领先的加密货币，以其高波动性而闻名，24/7全天候交易。',
-        initial_price: 68000.00,
-        quick_mode_params: { volatility: 0.02, drift: 0.0002 },
-        trade_config: { spread_bps: 8, slippage_bps: 4, fee_rate: 0.001, maintenance_margin_rate: 0.005, funding_rate_hourly: 0.00004 },
-        macro_exposure: { risk: 1.15, usd: -0.45, rates: -0.25, inflation: 0.10, energy: 0.05, crypto: 1.00 },
-        trading_hours_per_day: 24,
-        max_leverage: 100,
-    },
-    'ETHUSD': {
-        code: 'ETHUSD',
-        name: '以太坊',
-        type: 'Crypto',
-        description: '第二大加密货币，同样具有高波动性，是许多去中心化应用的基础。',
-        initial_price: 3500.00,
-        quick_mode_params: { volatility: 0.025, drift: 0.0003 },
-        trade_config: { spread_bps: 10, slippage_bps: 5, fee_rate: 0.001, maintenance_margin_rate: 0.006, funding_rate_hourly: 0.00005 },
-        macro_exposure: { risk: 1.25, usd: -0.50, rates: -0.30, inflation: 0.10, energy: 0.05, crypto: 1.20 },
-        trading_hours_per_day: 24,
-        max_leverage: 100,
-    },
-    'NASDAQ100': {
-        code: 'NASDAQ100',
-        name: '纳斯达克100指数',
-        type: 'Index',
-        description: '代表了100家最大的非金融类公司的市场指数，以科技股为主。',
-        initial_price: 18000.00,
-        quick_mode_params: { volatility: 0.007, drift: 0.0005 },
-        trade_config: { spread_bps: 2, slippage_bps: 1, fee_rate: 0.0005, maintenance_margin_rate: 0.05, funding_rate_hourly: 0.00001 },
-        macro_exposure: { risk: 1.00, usd: -0.20, rates: -0.90, inflation: -0.45, energy: -0.10, crypto: 0.15 },
-        trading_hours_per_day: 8,
-        max_leverage: 10,
-    },
-    'GOLD': {
-        code: 'GOLD',
-        name: '黄金',
-        type: 'Commodity',
-        description: '传统的避险资产，通常在市场不确定时表现良好。',
-        initial_price: 2300.00,
-        quick_mode_params: { volatility: 0.005, drift: 0.0001 },
-        trade_config: { spread_bps: 3, slippage_bps: 1, fee_rate: 0.0004, maintenance_margin_rate: 0.025, funding_rate_hourly: 0.00001 },
-        macro_exposure: { risk: -0.35, usd: -0.75, rates: -0.65, inflation: 0.55, energy: 0.10, crypto: -0.10 },
-        trading_hours_per_day: 8,
-        max_leverage: 20,
-    },
-    'OIL': {
-        code: 'OIL',
-        name: '原油',
-        type: 'Commodity',
-        description: '全球经济的重要能源，价格受地缘政治和供需关系影响巨大。',
-        initial_price: 80.00,
-        quick_mode_params: { volatility: 0.012, drift: 0 },
-        trade_config: { spread_bps: 5, slippage_bps: 3, fee_rate: 0.0006, maintenance_margin_rate: 0.035, funding_rate_hourly: 0.00002 },
-        macro_exposure: { risk: 0.40, usd: -0.35, rates: -0.15, inflation: 0.45, energy: 1.20, crypto: 0.00 },
-        trading_hours_per_day: 8,
-        max_leverage: 20,
-    },
     'EURUSD': {
         code: 'EURUSD',
         name: '欧元/美元',
@@ -75,8 +15,68 @@ const ASSET_DEFINITIONS = {
         initial_price: 1.0800,
         quick_mode_params: { volatility: 0.0025, drift: 0 },
         trade_config: { spread_bps: 1, slippage_bps: 0.5, fee_rate: 0.0002, maintenance_margin_rate: 0.02, funding_rate_hourly: 0.000005 },
-        macro_exposure: { risk: 0.15, usd: -1.00, rates: 0.35, inflation: -0.10, energy: -0.15, crypto: 0.00 },
-        trading_hours_per_day: 8,
+        macro_exposure: { risk: 0.15, usd: -1.00, rates: 0.35, inflation: -0.10, energy: -0.15 },
+        trading_hours_per_day: 24,
+        max_leverage: 50,
+    },
+    'GBPUSD': {
+        code: 'GBPUSD',
+        name: '英镑/美元',
+        type: 'Forex',
+        description: '波动较活跃的主要货币对，重点受英国经济、英格兰银行与美元周期影响。',
+        initial_price: 1.2700,
+        quick_mode_params: { volatility: 0.0030, drift: 0 },
+        trade_config: { spread_bps: 1.4, slippage_bps: 0.7, fee_rate: 0.0002, maintenance_margin_rate: 0.02, funding_rate_hourly: 0.000006 },
+        macro_exposure: { risk: 0.25, usd: -0.90, rates: 0.25, inflation: -0.10, energy: -0.10 },
+        trading_hours_per_day: 24,
+        max_leverage: 50,
+    },
+    'USDJPY': {
+        code: 'USDJPY',
+        name: '美元/日元',
+        type: 'Forex',
+        description: '反映美日利差与避险资金流向的主要货币对。',
+        initial_price: 148.00,
+        quick_mode_params: { volatility: 0.0023, drift: 0 },
+        trade_config: { spread_bps: 1.2, slippage_bps: 0.6, fee_rate: 0.0002, maintenance_margin_rate: 0.02, funding_rate_hourly: 0.000006 },
+        macro_exposure: { risk: 0.35, usd: 0.85, rates: 0.80, inflation: 0.05, energy: 0.10 },
+        trading_hours_per_day: 24,
+        max_leverage: 50,
+    },
+    'AUDUSD': {
+        code: 'AUDUSD',
+        name: '澳元/美元',
+        type: 'Forex',
+        description: '对全球风险偏好、亚洲经济与大宗商品周期较敏感的货币对。',
+        initial_price: 0.6500,
+        quick_mode_params: { volatility: 0.0032, drift: 0 },
+        trade_config: { spread_bps: 1.5, slippage_bps: 0.8, fee_rate: 0.0002, maintenance_margin_rate: 0.02, funding_rate_hourly: 0.000007 },
+        macro_exposure: { risk: 0.75, usd: -0.85, rates: 0.10, inflation: 0.05, energy: 0.25 },
+        trading_hours_per_day: 24,
+        max_leverage: 50,
+    },
+    'USDCAD': {
+        code: 'USDCAD',
+        name: '美元/加元',
+        type: 'Forex',
+        description: '受美加经济差异、美元强弱与能源出口周期共同驱动的货币对。',
+        initial_price: 1.3600,
+        quick_mode_params: { volatility: 0.0024, drift: 0 },
+        trade_config: { spread_bps: 1.4, slippage_bps: 0.7, fee_rate: 0.0002, maintenance_margin_rate: 0.02, funding_rate_hourly: 0.000006 },
+        macro_exposure: { risk: -0.20, usd: 0.75, rates: 0.20, inflation: -0.05, energy: -0.55 },
+        trading_hours_per_day: 24,
+        max_leverage: 50,
+    },
+    'USDCHF': {
+        code: 'USDCHF',
+        name: '美元/瑞郎',
+        type: 'Forex',
+        description: '由美元周期、欧美利差和避险需求主导的主要货币对。',
+        initial_price: 0.8800,
+        quick_mode_params: { volatility: 0.0021, drift: 0 },
+        trade_config: { spread_bps: 1.3, slippage_bps: 0.6, fee_rate: 0.0002, maintenance_margin_rate: 0.02, funding_rate_hourly: 0.000005 },
+        macro_exposure: { risk: 0.30, usd: 0.70, rates: 0.45, inflation: -0.05, energy: 0.00 },
+        trading_hours_per_day: 24,
         max_leverage: 50,
     }
 };
@@ -97,61 +97,61 @@ export const MACRO_EVENT_SYSTEM = {
   core_mechanism: {
     description: "每2个小时使用一个范围在[1, 100]的随机数P来模拟市场的不可预测性。P的值决定了下一个市场事件的方向和强度。",
     input_variable: "P = {{roll:1d100}}",
-    principle: "P离100越近，事件越【利好】，市场上涨动力越强。P离1越近，事件越【利空】，市场下跌压力越大。"
+    principle: "涨跌始终相对于当前目标货币对：P越接近100，基础货币相对计价货币越强；P越接近1，基础货币相对计价货币越弱。"
   },
   logic_tiers: [
     {
       range: "[100, 100]",
       level: "极端利好 (Extreme Bullish)",
-      ai_instruction: "当前市场处于“极端利好”阶段。生成“黑天鹅”级别的重大利好新闻。这应该是足以改变市场格局的事件。例如：革命性的技术突破被证实、某个主要经济体宣布全面拥抱该技术、关键性的有利法案被通过。（增长范围 > 15%）",
+      ai_instruction: "为目标货币对生成极端上行事件，例如基础货币央行意外大幅加息、计价货币央行紧急降息，或关键政策发生突变。必须说明两种货币为何产生强弱差。（涨幅通常 1% ~ 2.5%）",
       suggested_patterns: ["bull_run"]
     },
     {
       range: "[96, 99]",
       level: "重大利好 (Major Bullish)",
-      ai_instruction: "当前市场处于“重大利好”阶段。生成足以引发市场FOMO情绪的重磅消息。例如：某项关键技术获得颠覆性进展、大型金融机构宣布推出相关投资产品、地缘政治风险大幅缓解。（增长范围 8% ~ 15%）",
+      ai_instruction: "为目标货币对生成重大上行事件，例如基础货币经济数据大幅超预期、央行转鹰，或计价货币遭遇明显政策利空。（涨幅通常 0.7% ~ 1.5%）",
       suggested_patterns: ["bull_run"]
     },
     {
       range: "[91, 95]",
       level: "显著利好 (Significant Bullish)",
-      ai_instruction: "当前市场处于“显著利好”阶段。生成强劲的积极消息，能推动市场持续上涨。例如：行业巨头宣布建立战略合作、某项重要应用的用户数量激增、大型投资机构宣布增持。（增长范围 4% ~ 8%）",
+      ai_instruction: "为目标货币对生成显著上行事件，例如利差预期扩大、就业或通胀数据支持基础货币，推动资金持续流入。（涨幅通常 0.4% ~ 0.9%）",
       suggested_patterns: ["bull_run", "reversal_bull"]
     },
     {
       range: "[81, 90]",
       level: "温和利好 (Moderate Bullish)",
-      ai_instruction: "当前市场处于“温和利好”阶段。生成偏向积极的市场情绪消息。例如：分析师普遍上调目标价、一项有利的行业数据公布、市场传出收购意向的流言。（增长范围 2% ~ 4%）",
+      ai_instruction: "为目标货币对生成温和上行事件，例如次级经济数据略好于预期、央行官员措辞偏鹰或风险流向轻微有利。（涨幅通常 0.15% ~ 0.5%）",
       suggested_patterns: ["reversal_bull", "consolidation"]
     },
     {
       range: "[21, 80]",
       level: "中性区域 (Neutral Zone)",
-      ai_instruction: "当前市场处于“中性区域”阶段。这是市场的常态。生成多空交织、方向不明的新闻，或者描述市场在“消化前期消息”、“等待新的催化剂”。例如：市场对昨天的消息反应不一、分析师们产生了分歧、交易量萎缩，市场情绪趋于谨慎。（波动范围 -2% ~ +2%）",
+      ai_instruction: "生成符合外汇常态的中性事件：市场等待央行会议或关键数据，多空因素互相抵消，货币对维持区间波动。（波动通常 -0.3% ~ +0.3%）",
       suggested_patterns: ["consolidation", "volatile"]
     },
      {
       range: "[11, 20]",
       level: "温和利空 (Moderate Bearish)",
-      ai_instruction: "当前市场处于“温和利空”阶段。生成偏向负面的市场情绪消息。例如：关键人物发表谨慎言论、出现技术阻力位、部分投资者选择获利了结。（下跌范围 2% ~ 4%）",
+      ai_instruction: "为目标货币对生成温和下行事件，例如基础货币数据略弱、央行措辞偏鸽或短线资金流向计价货币。（跌幅通常 0.15% ~ 0.5%）",
       suggested_patterns: ["reversal_bear", "consolidation"]
     },
     {
       range: "[6, 10]",
       level: "显著利空 (Significant Bearish)",
-      ai_instruction: "当前市场处于“显著利空”阶段。生成强劲的负面消息，能引发市场的抛售。例如：低于预期的经济数据公布、监管机构宣布将进行调查、某项核心技术被发现存在安全漏洞。（下跌范围 4% ~ 8%）",
+      ai_instruction: "为目标货币对生成显著下行事件，例如基础货币关键数据明显不及预期、降息概率上升或利差快速收窄。（跌幅通常 0.4% ~ 0.9%）",
       suggested_patterns: ["bear_crash", "reversal_bear"]
     },
     {
       range: "[2, 5]",
       level: "重大利空 (Major Bearish)",
-      ai_instruction: "当前市场处于“重大利空”阶段。生成足以引发市场抛售的重磅坏消息。例如：主要经济体经济数据显著恶化、某家大型公司宣布盈利预警、一项关键合作谈判破裂。（下跌范围 8% ~ 15%）",
+      ai_instruction: "为目标货币对生成重大下行事件，例如基础货币央行意外转鸽、经济衰退风险陡升，或计价货币获得强政策支撑。（跌幅通常 0.7% ~ 1.5%）",
       suggested_patterns: ["bear_crash"]
     },
     {
       range: "[1, 1]",
       level: "极端利空 (Extreme Bearish)",
-      ai_instruction: "当前市场处于“极端利空”阶段。生成“黑天鹅”级别的重大利空新闻。这应该是足以引发恐慌性抛售的事件。例如：主要经济体宣布发布严厉禁令、发生重大的安全事故导致信任危机、某家大型交易所宣布倒闭。（下跌范围 > 15%）",
+      ai_instruction: "为目标货币对生成极端下行事件，例如基础货币央行紧急降息、汇率政策突变、主权信用危机，或计价货币央行意外大幅加息。（跌幅通常 1% ~ 2.5%）",
       suggested_patterns: ["bear_crash"]
     }
   ]
@@ -159,7 +159,7 @@ export const MACRO_EVENT_SYSTEM = {
 
 
 export const SillyViewConfig = {
-    version: '2.1.0',
+    version: '2.2.0',
     extension_name: 'SillyView',
 
     // Expose asset definitions for other modules
@@ -198,7 +198,7 @@ export const SillyViewConfig = {
     // Default state for a new game
     default_game_state: {
         config: {
-            version: '2.1.0',
+            version: '2.2.0',
             max_hourly_records: 240,
             max_minute_records: 720,
             initial_bootstrap_done: false,
@@ -225,7 +225,6 @@ export const SillyViewConfig = {
                 rate_pressure: 0,
                 inflation_pressure: 0,
                 energy_pressure: 0,
-                crypto_sentiment: 0,
                 volatility_regime: 1
             }
         },

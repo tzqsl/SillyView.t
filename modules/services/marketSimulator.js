@@ -60,7 +60,6 @@ export class MarketSimulator {
             rate_pressure: macroState.rate_pressure || 0,
             inflation_pressure: macroState.inflation_pressure || 0,
             energy_pressure: macroState.energy_pressure || 0,
-            crypto_sentiment: macroState.crypto_sentiment || 0,
             volatility_regime: macroState.volatility_regime || 1,
         };
 
@@ -70,13 +69,11 @@ export class MarketSimulator {
         next.rate_pressure = this._clamp(next.rate_pressure * 0.96 + this._normalRandom() * 0.04, -1, 1);
         next.inflation_pressure = this._clamp(next.inflation_pressure * 0.97 + this._normalRandom() * 0.035, -1, 1);
         next.energy_pressure = this._clamp(next.energy_pressure * 0.90 + this._normalRandom() * 0.12, -1, 1);
-        next.crypto_sentiment = this._clamp(next.crypto_sentiment * 0.88 + this._normalRandom() * 0.16, -1, 1);
 
         const stress = Math.max(
             Math.abs(next.risk_sentiment),
             Math.abs(next.usd_strength),
-            Math.abs(next.energy_pressure),
-            Math.abs(next.crypto_sentiment)
+            Math.abs(next.energy_pressure)
         );
         next.volatility_regime = this._clamp(0.75 + stress * 0.9 + Math.random() * 0.25, 0.6, 2.4);
         return next;
@@ -126,17 +123,13 @@ export class MarketSimulator {
             (exposure.usd || 0) * (macro.usd_strength || 0) +
             (exposure.rates || 0) * (macro.rate_pressure || 0) +
             (exposure.inflation || 0) * (macro.inflation_pressure || 0) +
-            (exposure.energy || 0) * (macro.energy_pressure || 0) +
-            (exposure.crypto || 0) * (macro.crypto_sentiment || 0);
+            (exposure.energy || 0) * (macro.energy_pressure || 0);
 
         return factorScore * 0.0012;
     }
 
     _calculateVolume(assetDef, open, close, volatility, macroState) {
         const typeBase = {
-            Crypto: 850000,
-            Index: 420000,
-            Commodity: 320000,
             Forex: 1200000,
         };
         const base = typeBase[assetDef.type] || 300000;

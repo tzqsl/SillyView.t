@@ -31,7 +31,7 @@ export class UIRenderer {
         this.isAnimating = false;
         this.isPanelVisible = false;
         this.isInitialized = false;
-        this.currentAsset = 'BTCUSD';
+        this.currentAsset = 'EURUSD';
         this.currentTimeframe = 'HOURLY';
         this.activeSidebarTab = 'trade'; // Default tab
         this.tradeMode = 'spot';

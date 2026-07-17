@@ -10,7 +10,7 @@ const PRIORITY_RULES = [
     { rank: 1, pattern: /核心世界规则与AI行为准则|最高准则|市场不为任何人服务/ },
     { rank: 2, pattern: /演绎模式|pattern_list|bull_run|bear_crash/ },
     { rank: 3, pattern: /核心市场概念|市场本质|价格波动|市场情绪/ },
-    { rank: 4, pattern: /主要交易市场特性|market_profiles|股票市场|虚拟货币市场|期货\/大宗商品市场/ },
+    { rank: 4, pattern: /主要交易市场特性|market_profiles|外汇市场/ },
     { rank: 5, pattern: /K线图谱与形态解读|K线基础|关键K线/ },
 ];
 

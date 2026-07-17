@@ -24,16 +24,16 @@
   "comment": "这是AI可见的市场摘要。请基于此信息进行决策。",
   "market_summary": [
     {
-      "code": "BTCUSD",
-      "name": "比特币",
-      "latest_price": 68250.75,
-      "recent_close_history": [68050.00, 68550.00, 68250.75]
+      "code": "EURUSD",
+      "name": "欧元/美元",
+      "latest_price": 1.0825,
+      "recent_close_history": [1.0805, 1.0855, 1.0825]
     },
     {
-       "code": "NASDAQ100",
-       "name": "纳斯达克100指数",
-       "latest_price": 18050.00,
-       "recent_close_history": [18000.00, 18100.00, 18050.00]
+       "code": "USDJPY",
+       "name": "美元/日元",
+       "latest_price": 148.25,
+       "recent_close_history": [147.90, 148.40, 148.25]
     }
   ],
   "player_cash": 87250.00,
@@ -53,7 +53,7 @@
 
 用于生成一根新的K线。这是驱动市场价格变化的核心指令。
 
--   `asset_code` (string, **必需**): 交易品种代码 (例如: `"BTCUSD"`)。
+-   `asset_code` (string, **必需**): 外汇货币对代码 (例如: `"EURUSD"`)。
 -   `timeframe` (string, **必需**): 时间单位 (目前支持: `"HOURLY"`)。
 -   `close_price` (number, **必需**): 该K线的最终收盘价。
 -   `pattern` (string, **必需**): 描述该K线走势的“模式”。
@@ -79,19 +79,19 @@
 > ```
 > <command>
 > [Time.Set("2025年09月23日-星期二-10:00", "上午", "秋季", "晴")]
-> [Market.Advance("NASDAQ100", "HOURLY", 18055.00, "sideways")]
+> [Market.Advance("USDJPY", "HOURLY", 148.30, "sideways")]
 > </command>
 > ```
 
 #### 示例 2: 带有环境突变的推进
 
 > **背景**: 当前是黄昏，天气晴朗。
-> **你的叙事**: 黄昏时分，天色骤变，一场突如其来的暴雨席卷了整个城市，也给火热的市场情绪浇上了一盆冷水。一则关于比特币监管的不利传闻开始发酵，引发了小规模的恐慌性抛售。
+> **你的叙事**: 黄昏时分，美联储官员意外释放鹰派信号，美元短线走强，欧元兑美元快速回落。
 > **你的指令**:
 > ```
 > <command>
 > [Time.Set("2025年09月24日-星期三-19:00", "黄昏", "秋季", "雷雨")]
-> [Market.Advance("BTCUSD", "HOURLY", 67500.00, "bear_crash")]
+> [Market.Advance("EURUSD", "HOURLY", 1.0710, "bear_crash")]
 > </command>
 > ```
 
