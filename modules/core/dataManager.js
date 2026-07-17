@@ -74,6 +74,29 @@ export class DataManager {
         return `${this.config.extension_name}_${charName}`;
     }
 
+    async _getCharacterName() {
+        const charName = await this.th.substitudeMacros('{{char}}');
+        return (!charName || charName === '{{char}}') ? 'current' : charName;
+    }
+
+    _sanitizeName(value) {
+        return String(value || 'account')
+            .trim()
+            .replace(/[\\/:*?"<>|#\[\]{}]/g, '_')
+            .replace(/\s+/g, '_')
+            .slice(0, 48) || 'account';
+    }
+
+    _hashString(value) {
+        let hash = 0;
+        const text = String(value || '');
+        for (let i = 0; i < text.length; i++) {
+            hash = ((hash << 5) - hash) + text.charCodeAt(i);
+            hash |= 0;
+        }
+        return Math.abs(hash).toString(36);
+    }
+
     async loadInitialState() {
         this.logger.log("正在加载初始状态...");
         const lorebookName = await this._getLorebookName();
@@ -89,9 +112,11 @@ export class DataManager {
             this.logger.log(`游戏世界书 "${lorebookName}" 已找到，正在加载数据...`);
             await this.loadAllEntries(lorebookName);
             await this.ensureRequiredContextEntries(lorebookName);
+            await this.autoDiscoverAndSyncManagedAccounts();
             await this.updateDialogueContext();
             this.ui.renderMainInterface();
         } else {
+            await this.autoDiscoverAndSyncManagedAccounts();
             this.logger.log("未找到游戏世界书，渲染创建界面。");
             this.ui.renderCreationInterface();
         }
@@ -376,6 +401,7 @@ export class DataManager {
         this.hasGameBook = true;
         this.isInitialized = true;
         this.contextEntriesEnsuredFor = lorebookName;
+        await this.autoDiscoverAndSyncManagedAccounts();
         await this.updateAIContext();
         this.ui.renderMainInterface();
     }
@@ -761,6 +787,7 @@ export class DataManager {
             summary: lines,
         }));
         await this.updateKlineContext(availableAssets, portfolio, market);
+        await this.syncSillyViewFxWorldbook();
     }
 
     async updateKlineContext(availableAssets = null, portfolio = null, market = null) {
@@ -779,6 +806,373 @@ export class DataManager {
             selected_assets: klineAssetCodes,
             assets: recentKlines,
         }));
+    }
+
+    _parseAmount(value) {
+        if (typeof value === 'number') return value;
+        const text = String(value || '').replace(/[,，\s]/g, '');
+        const base = parseFloat(text);
+        if (!Number.isFinite(base)) return NaN;
+        if (text.includes('亿')) return base * 100000000;
+        if (text.includes('万')) return base * 10000;
+        return base;
+    }
+
+    _extractLineField(text, names) {
+        for (const name of names) {
+            const pattern = new RegExp(`${name}\\s*[:：=]\\s*([^\\n\\r;；,，]+)`, 'i');
+            const match = String(text || '').match(pattern);
+            if (match) return match[1].trim();
+        }
+        return '';
+    }
+
+    _normalizeBankAccountRecord(record, source) {
+        if (!record || typeof record !== 'object') return null;
+
+        const owner = record.owner_name || record.owner || record.account_name || record.name || record['户名'] || record['账户名'] || record['姓名'] || record['角色'];
+        const bank = record.bank_name || record.bank || record['开户行'] || record['银行'] || record['开户银行'];
+        const balance = this._parseAmount(record.balance ?? record.cash ?? record['余额'] ?? record['存款'] ?? record['银行卡余额'] ?? record['现金']);
+        const debt = this._parseAmount(record.debt ?? record['负债'] ?? record['债务'] ?? 0);
+        const accountNo = record.account_no || record.accountNo || record.account_number || record.card_no || record['账号'] || record['卡号'] || '';
+
+        if (!owner || !bank || !Number.isFinite(balance)) return null;
+
+        const identity = accountNo || `${owner}|${bank}|${source.worldbook}|${source.entry}`;
+        return {
+            account_id: `acct_${this._sanitizeName(owner)}_${this._hashString(identity)}`,
+            owner_name: String(owner).trim(),
+            bank_name: String(bank).trim(),
+            bank_account_no: String(accountNo || '').trim(),
+            initial_cash: Math.max(0, balance),
+            initial_debt: Number.isFinite(debt) ? Math.max(0, debt) : 0,
+            source_worldbook: source.worldbook,
+            source_entry: source.entry,
+        };
+    }
+
+    _parseBankAccountBlock(text, source) {
+        const owner = this._extractLineField(text, ['户名', '账户名', '姓名', '角色', 'owner', 'name']);
+        const bank = this._extractLineField(text, ['开户行', '开户银行', '银行', 'bank']);
+        const balance = this._extractLineField(text, ['余额', '存款', '银行卡余额', '现金', 'balance', 'cash']);
+        const debt = this._extractLineField(text, ['负债', '债务', 'debt']);
+        const accountNo = this._extractLineField(text, ['账号', '卡号', 'account_no', 'account_number', 'card_no']);
+        return this._normalizeBankAccountRecord({ owner, bank, balance, debt, accountNo }, source);
+    }
+
+    _extractBankAccountsFromEntry(entry, worldbookName) {
+        const content = String(entry?.content || '');
+        const source = { worldbook: worldbookName, entry: entry?.name || 'unknown' };
+        const accounts = [];
+
+        try {
+            const parsed = JSON.parse(content);
+            const records = Array.isArray(parsed) ? parsed : [parsed];
+            records.forEach(record => {
+                const normalized = this._normalizeBankAccountRecord(record, source);
+                if (normalized) accounts.push(normalized);
+            });
+        } catch (error) {
+            const matchedBlocks = content.match(/开户行\s*[:：=][\s\S]*?(?=\n\s*开户行\s*[:：=]|\n\s*---|\s*$)/g);
+            const blocks = matchedBlocks && matchedBlocks.length > 1 ? matchedBlocks : [content];
+            blocks.forEach(block => {
+                const normalized = this._parseBankAccountBlock(block, source);
+                if (normalized) accounts.push(normalized);
+            });
+        }
+
+        return accounts;
+    }
+
+    async scanBoundBankAccounts() {
+        const charBooks = await this.th.getCharWorldbookNames('current');
+        const names = [charBooks.primary, ...(charBooks.additional || [])].filter(Boolean);
+        const lorebookName = await this._getLorebookName();
+        const fxName = this.config.multi_account.fx_worldbook_name;
+        const accountsById = new Map();
+
+        for (const worldbookName of names) {
+            if (
+                worldbookName === fxName ||
+                worldbookName === lorebookName ||
+                worldbookName.startsWith(this.config.multi_account.account_worldbook_prefix)
+            ) continue;
+            let entries = [];
+            try {
+                entries = await this.th.getWorldbook(worldbookName);
+            } catch (error) {
+                this.logger.warn(`扫描开户行世界书失败: ${worldbookName}`, error);
+                continue;
+            }
+
+            for (const entry of entries || []) {
+                this._extractBankAccountsFromEntry(entry, worldbookName).forEach(account => {
+                    if (!accountsById.has(account.account_id)) accountsById.set(account.account_id, account);
+                });
+            }
+        }
+
+        return [...accountsById.values()];
+    }
+
+    async _ensureAdditionalWorldbooks(worldbookNames) {
+        const charBooks = await this.th.getCharWorldbookNames('current');
+        const additional = [...(charBooks.additional || [])];
+        let changed = false;
+        for (const name of worldbookNames.filter(Boolean)) {
+            if (!additional.includes(name)) {
+                additional.push(name);
+                changed = true;
+            }
+        }
+        if (changed) {
+            await this.th.rebindCharWorldbooks('current', {
+                primary: charBooks.primary,
+                additional,
+            });
+        }
+    }
+
+    _createManagedAccountState(account, worldbookName) {
+        const portfolio = this.dependencies.win._.cloneDeep(this.config.default_game_state.player_portfolio);
+        portfolio.cash = account.initial_cash;
+        portfolio.starting_cash = account.initial_cash;
+        portfolio.debt = account.initial_debt || 0;
+        portfolio.assets = {};
+        portfolio.actions_this_turn = [];
+        portfolio.asset_history = [{ time: 0, value: account.initial_cash - (account.initial_debt || 0) }];
+        portfolio.transaction_log = [{
+            time: 0,
+            description: `开户导入: ${account.bank_name}`,
+            amount: account.initial_cash,
+        }];
+
+        return {
+            version: 1,
+            account_id: account.account_id,
+            owner_name: account.owner_name,
+            bank_name: account.bank_name,
+            bank_account_no: account.bank_account_no,
+            source_worldbook: account.source_worldbook,
+            source_entry: account.source_entry,
+            worldbook_name: worldbookName,
+            portfolio,
+            created_at: Date.now(),
+            updated_at: Date.now(),
+        };
+    }
+
+    async _ensureManagedAccountWorldbook(account) {
+        const charName = await this._getCharacterName();
+        const worldbookName = `${this.config.multi_account.account_worldbook_prefix}${this._sanitizeName(charName)}_${account.account_id}`;
+        const allBooks = await this.th.getWorldbookNames();
+        const stateKey = this.config.multi_account.account_state_key;
+
+        if (!allBooks.includes(worldbookName)) {
+            const state = this._createManagedAccountState(account, worldbookName);
+            await this.th.createOrReplaceWorldbook(worldbookName, [
+                {
+                    name: stateKey,
+                    enabled: true,
+                    content: JSON.stringify(state, null, 2),
+                },
+            ]);
+            return worldbookName;
+        }
+
+        await this.th.updateWorldbookWith(worldbookName, entries => {
+            let stateEntry = entries.find(entry => entry.name === stateKey);
+            if (!stateEntry) {
+                stateEntry = {
+                    name: stateKey,
+                    enabled: true,
+                    content: JSON.stringify(this._createManagedAccountState(account, worldbookName), null, 2),
+                };
+                entries.push(stateEntry);
+                return entries;
+            }
+
+            try {
+                const state = JSON.parse(stateEntry.content);
+                state.owner_name = state.owner_name || account.owner_name;
+                state.bank_name = state.bank_name || account.bank_name;
+                state.bank_account_no = state.bank_account_no || account.bank_account_no;
+                state.source_worldbook = state.source_worldbook || account.source_worldbook;
+                state.source_entry = state.source_entry || account.source_entry;
+                state.worldbook_name = worldbookName;
+                state.updated_at = Date.now();
+                stateEntry.content = JSON.stringify(state, null, 2);
+            } catch (error) {
+                stateEntry.content = JSON.stringify(this._createManagedAccountState(account, worldbookName), null, 2);
+            }
+            stateEntry.enabled = true;
+            return entries;
+        });
+
+        return worldbookName;
+    }
+
+    async getManagedAccountStates() {
+        const charBooks = await this.th.getCharWorldbookNames('current');
+        const prefix = this.config.multi_account.account_worldbook_prefix;
+        const stateKey = this.config.multi_account.account_state_key;
+        const names = (charBooks.additional || []).filter(name => name.startsWith(prefix));
+        const states = [];
+
+        for (const worldbookName of names) {
+            try {
+                const entries = await this.th.getWorldbook(worldbookName);
+                const stateEntry = entries.find(entry => entry.name === stateKey);
+                if (!stateEntry?.content) continue;
+                const state = JSON.parse(stateEntry.content);
+                state.worldbook_name = worldbookName;
+                states.push(state);
+            } catch (error) {
+                this.logger.warn(`读取多账户世界书失败: ${worldbookName}`, error);
+            }
+        }
+
+        return states;
+    }
+
+    async _writeManagedAccountState(state) {
+        const worldbookName = state.worldbook_name;
+        const stateKey = this.config.multi_account.account_state_key;
+        state.updated_at = Date.now();
+        await this.th.updateWorldbookWith(worldbookName, entries => {
+            let stateEntry = entries.find(entry => entry.name === stateKey);
+            if (!stateEntry) {
+                stateEntry = { name: stateKey, enabled: true, content: '' };
+                entries.push(stateEntry);
+            }
+            stateEntry.content = JSON.stringify(state, null, 2);
+            stateEntry.enabled = true;
+            return entries;
+        });
+    }
+
+    _buildFxTradeCommandGuide() {
+        return [
+            '【SillyView 多账户交易指令】',
+            '用途：AI 可用这些指令替多个角色账户进行股票/加密/外汇模拟交易。所有指令必须放在消息末尾唯一的 <command>...</command> 块中。',
+            '',
+            '账户编号必须使用 sv_fx_accounts_query 中列出的 account_id。',
+            '',
+            '买入/卖出快捷指令：',
+            '- [Trade.Buy("account_id", "asset_code", amount, leverage, take_profit, stop_loss)]：买入。无仓位则开多，已有多头则加仓，已有空头则平空。',
+            '- [Trade.Sell("account_id", "asset_code", amount, leverage, take_profit, stop_loss)]：卖出。无仓位则开空，已有空头则加仓，已有多头则平多。',
+            '',
+            '明确仓位指令：',
+            '- [Trade.OpenLong("account_id", "BTCUSD", 1000, 3, 72000, 66000)]',
+            '- [Trade.OpenShort("account_id", "BTCUSD", 1000, 3, 62000, 71000)]',
+            '- [Trade.AddLong("account_id", "ETHUSD", 500, 2, 3800, 3300)]',
+            '- [Trade.AddShort("account_id", "ETHUSD", 500, 2, 3100, 3700)]',
+            '- [Trade.CloseLong("account_id", "BTCUSD")]',
+            '- [Trade.CloseShort("account_id", "BTCUSD")]',
+            '- [Trade.SetRisk("account_id", "BTCUSD", take_profit, stop_loss)]：仅调整止盈止损，填 0 表示清空对应价格。',
+            '',
+            '约束：',
+            '- amount 表示保证金/投入金额，leverage 为杠杆倍数，1 表示现货级别仓位。',
+            '- 止盈止损可填 0 代表不设置。',
+            '- 交易盈亏会自动写入对应账户世界书，并在 sv_fx_accounts_query 中更新。',
+        ].join('\n');
+    }
+
+    _buildManagedAccountsQuery(states) {
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+        const lines = [
+            '【SillyView 多账户实时账目查询】',
+            `更新时间: t=${market.current_time_index || 0}, minute=${market.minute_time_index || 0}`,
+            'AI 交易时必须使用 account_id。',
+            '',
+        ];
+
+        if (states.length === 0) {
+            lines.push('暂无已识别开户行账户。');
+            return lines.join('\n');
+        }
+
+        for (const state of states) {
+            const portfolio = state.portfolio || {};
+            const stats = this.calculatePerformanceStats(portfolio);
+            lines.push(`账户 ${state.account_id} | 户名: ${state.owner_name} | 开户行: ${state.bank_name}`);
+            lines.push(`- 现金 ${Number(portfolio.cash || 0).toFixed(2)} | 债务 ${Number(portfolio.debt || 0).toFixed(2)} | 净值 ${stats.netWorth.toFixed(2)} | 收益率 ${stats.returnPct >= 0 ? '+' : ''}${stats.returnPct.toFixed(2)}% | 已实现盈亏 ${stats.realizedPnl >= 0 ? '+' : ''}${stats.realizedPnl.toFixed(2)}`);
+
+            const positionLines = [];
+            for (const assetCode of Object.keys(portfolio.assets || {})) {
+                const position = this.positionCalculator.calculate(assetCode, portfolio);
+                if (!position.type || position.totalAmount <= 0) continue;
+                const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+                const lastPrice = Number(assetData?.current_price || position.avgEntryPrice || 0);
+                const pnl = position.type === 'short'
+                    ? (position.avgEntryPrice - lastPrice) * position.totalShares
+                    : (lastPrice - position.avgEntryPrice) * position.totalShares;
+                const controls = portfolio.assets?.[assetCode]?.risk_controls || {};
+                positionLines.push(`  * ${assetCode} ${position.type === 'short' ? '空头' : '多头'} ${position.leverage}x | 保证金 ${position.totalAmount.toFixed(2)} | 入场 ${position.avgEntryPrice.toFixed(4)} | 现价 ${lastPrice.toFixed(4)} | 浮动盈亏 ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} | 止盈 ${controls.take_profit || '未设'} | 止损 ${controls.stop_loss || '未设'}`);
+            }
+            lines.push(...(positionLines.length > 0 ? positionLines : ['  * 无持仓']));
+            lines.push('');
+        }
+
+        return lines.join('\n');
+    }
+
+    _buildRecentNewsContent() {
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+        const news = (market.news_feed || []).slice(0, 10);
+        if (news.length === 0) return '【SillyView 最近十条新闻】\n暂无市场新闻。';
+        return [
+            '【SillyView 最近十条新闻】',
+            ...news.map(item => `- [t=${item.time_index}] ${item.asset_code || 'GLOBAL'}: ${item.headline}`),
+        ].join('\n');
+    }
+
+    async syncSillyViewFxWorldbook() {
+        const fxName = this.config.multi_account.fx_worldbook_name;
+        const states = await this.getManagedAccountStates();
+        if (states.length === 0) return;
+
+        const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
+        const entries = [
+            {
+                name: this.config.multi_account.command_entry_key,
+                enabled: true,
+                content: this._buildFxTradeCommandGuide(),
+            },
+            {
+                name: this.config.multi_account.account_query_key,
+                enabled: true,
+                content: this._buildManagedAccountsQuery(states),
+            },
+            {
+                name: this.config.world_book_keys.kline_context,
+                enabled: true,
+                content: JSON.stringify(klineContext, null, 2),
+            },
+            {
+                name: this.config.multi_account.recent_news_key,
+                enabled: true,
+                content: this._buildRecentNewsContent(),
+            },
+        ];
+
+        await this.th.createOrReplaceWorldbook(fxName, entries);
+        await this._ensureAdditionalWorldbooks([fxName, ...states.map(state => state.worldbook_name)]);
+    }
+
+    async autoDiscoverAndSyncManagedAccounts() {
+        const accounts = await this.scanBoundBankAccounts();
+        if (accounts.length === 0) return [];
+
+        const accountWorldbooks = [];
+        for (const account of accounts) {
+            accountWorldbooks.push(await this._ensureManagedAccountWorldbook(account));
+        }
+
+        await this._ensureAdditionalWorldbooks(accountWorldbooks);
+        await this.syncSillyViewFxWorldbook();
+        this.logger.success(`已同步 ${accounts.length} 个开户行账户到 SillyView 多账户系统。`);
+        return accounts;
     }
 
     async getMarketWorldbookContext() {
@@ -935,6 +1329,317 @@ export class DataManager {
         });
 
         return updated ? normalized : null;
+    }
+
+    _recordAccountTransaction(portfolio, description, amount) {
+        const market = this.getState(this.config.world_book_keys.global_market);
+        const time = market ? market.current_time_index : 0;
+        if (!portfolio.transaction_log) portfolio.transaction_log = [];
+        portfolio.transaction_log.unshift({ time, description, amount });
+        if (portfolio.transaction_log.length > 100) portfolio.transaction_log.length = 100;
+    }
+
+    _recordAccountHistory(portfolio) {
+        if (!portfolio) return;
+        const value = this._calculatePortfolioMarkedValue(portfolio);
+        const market = this.getState(this.config.world_book_keys.global_market);
+        const time = market ? market.current_time_index : Date.now();
+        if (!portfolio.asset_history) portfolio.asset_history = [];
+        const last = portfolio.asset_history[portfolio.asset_history.length - 1];
+        if (last && last.time === time) {
+            last.value = value;
+        } else {
+            portfolio.asset_history.push({ time, value });
+        }
+        if (portfolio.asset_history.length > 365) portfolio.asset_history = portfolio.asset_history.slice(-365);
+    }
+
+    async _getManagedAccountStateById(accountId) {
+        const states = await this.getManagedAccountStates();
+        return states.find(state => state.account_id === accountId) || null;
+    }
+
+    async getManagedAccountOpenAssetCodes() {
+        const states = await this.getManagedAccountStates();
+        const assetCodes = new Set();
+        for (const state of states) {
+            const assets = state.portfolio?.assets || {};
+            for (const assetCode of Object.keys(assets)) {
+                if ((assets[assetCode]?.trades || []).length > 0) assetCodes.add(assetCode);
+            }
+        }
+        return [...assetCodes];
+    }
+
+    async updateManagedAccountRiskControls(accountId, assetCode, riskControls) {
+        const state = await this._getManagedAccountStateById(accountId);
+        if (!state) return false;
+
+        const portfolio = state.portfolio || {};
+        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        if (!position.type || position.totalAmount <= 0) return false;
+
+        const normalized = this._normalizeRiskControls(riskControls) || { take_profit: null, stop_loss: null };
+        if (!portfolio.assets) portfolio.assets = {};
+        if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
+
+        if (normalized.take_profit === null && normalized.stop_loss === null) {
+            delete portfolio.assets[assetCode].risk_controls;
+        } else {
+            portfolio.assets[assetCode].risk_controls = normalized;
+        }
+
+        if (!portfolio.actions_this_turn) portfolio.actions_this_turn = [];
+        portfolio.actions_this_turn.push({
+            id: Date.now(),
+            text: `AI调整 ${assetCode} 止盈 ${normalized.take_profit || '未设置'} / 止损 ${normalized.stop_loss || '未设置'}`,
+            executedAt: null,
+            intent: 'adjust_risk_controls',
+            assetCode,
+            riskControls: normalized,
+        });
+
+        state.portfolio = portfolio;
+        this._recordAccountHistory(portfolio);
+        await this._writeManagedAccountState(state);
+        await this.syncSillyViewFxWorldbook();
+        return true;
+    }
+
+    _getAccountIntentFromTradeCommand(commandType, position) {
+        const type = String(commandType || '').toLowerCase();
+        const explicit = {
+            openlong: 'open_long',
+            addlong: 'add_long',
+            closelong: 'close_long',
+            openshort: 'open_short',
+            addshort: 'add_short',
+            closeshort: 'close_short',
+        }[type];
+        if (explicit) return explicit;
+
+        if (type === 'buy') {
+            if (position.type === 'short') return 'close_short';
+            if (position.type === 'long') return 'add_long';
+            return 'open_long';
+        }
+        if (type === 'sell') {
+            if (position.type === 'long') return 'close_long';
+            if (position.type === 'short') return 'add_short';
+            return 'open_short';
+        }
+        return null;
+    }
+
+    async executeManagedAccountTrade(accountId, commandType, assetCode, amount = 0, leverage = 1, riskControls = null) {
+        const state = await this._getManagedAccountStateById(accountId);
+        if (!state) {
+            this.logger.warn(`多账户交易失败，找不到账户: ${accountId}`);
+            return false;
+        }
+        if (!this.config.asset_definitions[assetCode]) {
+            this.logger.warn(`多账户交易失败，未知资产: ${assetCode}`);
+            return false;
+        }
+
+        const portfolio = state.portfolio || {};
+        if (!portfolio.assets) portfolio.assets = {};
+        portfolio.cash = Number(portfolio.cash || 0);
+
+        const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+        const lastCandle = assetData?.kline_minute?.slice(-1)[0] || assetData?.kline_hourly?.slice(-1)[0];
+        const rawPrice = Number(assetData?.current_price || lastCandle?.close || 0);
+        if (!rawPrice) return false;
+
+        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        const intent = this._getAccountIntentFromTradeCommand(commandType, position);
+        if (!intent) return false;
+
+        const maxLeverage = this.config.asset_definitions[assetCode]?.max_leverage || 1;
+        const normalizedLeverage = Math.min(Math.max(1, Math.floor(Number(leverage) || 1)), maxLeverage);
+        const normalizedAmount = Math.max(0, Number(amount) || 0);
+        const tradeConfig = this._getTradeConfig(assetCode);
+        const price = this._calculateExecutionPrice(assetCode, intent, rawPrice);
+        const totalPositionValue = intent.startsWith('close') ? position.positionValue : normalizedAmount * normalizedLeverage;
+        const fee = totalPositionValue * (tradeConfig.fee_rate ?? 0.001);
+        let actionText = '';
+
+        switch (intent) {
+            case 'open_long':
+                if (position.type) return false;
+            // fallthrough
+            case 'add_long':
+                if (position.type === 'short' || normalizedAmount <= 0) return false;
+                if (portfolio.cash < normalizedAmount + fee) return false;
+                portfolio.cash -= normalizedAmount + fee;
+                if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
+                portfolio.assets[assetCode].trades.push({ time: lastCandle?.time || 0, price, amount: normalizedAmount, type: 'long', leverage: normalizedLeverage });
+                actionText = `${state.owner_name} ${intent === 'open_long' ? '开多' : '加仓多'} ${assetCode} ${normalizedLeverage}x`;
+                actionText += this._applyRiskControls(portfolio, assetCode, riskControls);
+                this._recordAccountTransaction(portfolio, actionText, -normalizedAmount);
+                this._recordAccountTransaction(portfolio, '交易手续费', -fee);
+                break;
+
+            case 'open_short':
+                if (position.type) return false;
+            // fallthrough
+            case 'add_short':
+                if (position.type === 'long' || normalizedAmount <= 0) return false;
+                if (portfolio.cash < normalizedAmount + fee) return false;
+                portfolio.cash -= normalizedAmount + fee;
+                if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
+                portfolio.assets[assetCode].trades.push({ time: lastCandle?.time || 0, price, amount: normalizedAmount, type: 'short', leverage: normalizedLeverage });
+                actionText = `${state.owner_name} ${intent === 'open_short' ? '开空' : '加仓空'} ${assetCode} ${normalizedLeverage}x`;
+                actionText += this._applyRiskControls(portfolio, assetCode, riskControls);
+                this._recordAccountTransaction(portfolio, actionText, -normalizedAmount);
+                this._recordAccountTransaction(portfolio, '交易手续费', -fee);
+                break;
+
+            case 'close_long': {
+                if (position.type !== 'long') return false;
+                const pnl = (price - position.avgEntryPrice) * position.totalShares;
+                portfolio.cash += position.totalAmount + pnl - fee;
+                this._recordAccountTransaction(portfolio, `平多仓 ${assetCode}`, position.totalAmount + pnl);
+                this._recordAccountTransaction(portfolio, '交易手续费', -fee);
+                this._recordAccountTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl);
+                portfolio.assets[assetCode].trades = [];
+                delete portfolio.assets[assetCode].risk_controls;
+                actionText = `${state.owner_name} 平多 ${assetCode}`;
+                break;
+            }
+
+            case 'close_short': {
+                if (position.type !== 'short') return false;
+                const pnl = (position.avgEntryPrice - price) * position.totalShares;
+                portfolio.cash += position.totalAmount + pnl - fee;
+                this._recordAccountTransaction(portfolio, `平空仓 ${assetCode}`, position.totalAmount + pnl);
+                this._recordAccountTransaction(portfolio, '交易手续费', -fee);
+                this._recordAccountTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl);
+                portfolio.assets[assetCode].trades = [];
+                delete portfolio.assets[assetCode].risk_controls;
+                actionText = `${state.owner_name} 平空 ${assetCode}`;
+                break;
+            }
+
+            default:
+                return false;
+        }
+
+        if (!portfolio.actions_this_turn) portfolio.actions_this_turn = [];
+        portfolio.actions_this_turn.push({
+            id: Date.now(),
+            text: actionText,
+            executedAt: price,
+            intent,
+            amount: normalizedAmount,
+            leverage: normalizedLeverage,
+            assetCode,
+        });
+
+        state.portfolio = portfolio;
+        this._recordAccountHistory(portfolio);
+        await this._writeManagedAccountState(state);
+        await this.syncSillyViewFxWorldbook();
+        this.logger.log(`多账户交易完成: ${actionText} @ ${price.toFixed(4)}`);
+        return true;
+    }
+
+    async processManagedAccountTradeCommand(command) {
+        if (command.module !== 'Trade') return false;
+        const [accountId, assetCode] = command.args;
+        if (typeof accountId !== 'string' || typeof assetCode !== 'string') return false;
+
+        if (command.type === 'SetRisk') {
+            const [, , takeProfit = 0, stopLoss = 0] = command.args;
+            return await this.updateManagedAccountRiskControls(accountId, assetCode, {
+                take_profit: Number(takeProfit) || null,
+                stop_loss: Number(stopLoss) || null,
+            });
+        }
+
+        const [, , amount = 0, leverage = 1, takeProfit = 0, stopLoss = 0] = command.args;
+        return await this.executeManagedAccountTrade(
+            accountId,
+            command.type,
+            assetCode,
+            Number(amount) || 0,
+            Number(leverage) || 1,
+            {
+                take_profit: Number(takeProfit) || null,
+                stop_loss: Number(stopLoss) || null,
+            }
+        );
+    }
+
+    async closeManagedAccountPositionAtPrice(state, assetCode, closePrice, reason = 'risk_control') {
+        const portfolio = state.portfolio || {};
+        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        if (!position.type || position.totalAmount <= 0) return false;
+
+        const fee = position.positionValue * (this._getTradeConfig(assetCode).fee_rate ?? 0.001);
+        const pnl = position.type === 'long'
+            ? (closePrice - position.avgEntryPrice) * position.totalShares
+            : (position.avgEntryPrice - closePrice) * position.totalShares;
+        portfolio.cash = (portfolio.cash || 0) + position.totalAmount + pnl - fee;
+        if (!portfolio.assets?.[assetCode]) return false;
+        portfolio.assets[assetCode].trades = [];
+        delete portfolio.assets[assetCode].risk_controls;
+        const label = reason === 'take_profit' ? '止盈' : (reason === 'liquidation' ? '爆仓强平' : '止损');
+        this._recordAccountTransaction(portfolio, `${label}平仓 ${assetCode}`, position.totalAmount + pnl);
+        this._recordAccountTransaction(portfolio, '交易手续费', -fee);
+        this._recordAccountTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl);
+        this._recordAccountHistory(portfolio);
+        state.portfolio = portfolio;
+        await this._writeManagedAccountState(state);
+        return true;
+    }
+
+    async processManagedAccountRiskForCandle(assetCode, candle) {
+        if (!candle) return false;
+        const states = await this.getManagedAccountStates();
+        let changed = false;
+
+        for (const state of states) {
+            const portfolio = state.portfolio || {};
+            const position = this.positionCalculator.calculate(assetCode, portfolio);
+            if (!position.type || position.totalAmount <= 0) continue;
+
+            if (position.isLeveraged && position.liquidationPrice > 0) {
+                const hitLiquidation = position.type === 'long'
+                    ? Number(candle.low || candle.close) <= position.liquidationPrice
+                    : Number(candle.high || candle.close) >= position.liquidationPrice;
+                if (hitLiquidation) {
+                    changed = await this.closeManagedAccountPositionAtPrice(state, assetCode, position.liquidationPrice, 'liquidation') || changed;
+                    continue;
+                }
+            }
+
+            const controls = portfolio.assets?.[assetCode]?.risk_controls;
+            if (!controls) continue;
+
+            const takeProfit = Number(controls.take_profit);
+            const stopLoss = Number(controls.stop_loss);
+            const open = Number(candle.open || candle.close || position.avgEntryPrice || 0);
+            const high = Number(candle.high || open);
+            const low = Number(candle.low || open);
+            const hits = [];
+
+            if (position.type === 'long') {
+                if (Number.isFinite(takeProfit) && takeProfit > 0 && high >= takeProfit) hits.push({ type: 'take_profit', price: takeProfit, distance: Math.abs(takeProfit - open) });
+                if (Number.isFinite(stopLoss) && stopLoss > 0 && low <= stopLoss) hits.push({ type: 'stop_loss', price: stopLoss, distance: Math.abs(stopLoss - open) });
+            } else {
+                if (Number.isFinite(takeProfit) && takeProfit > 0 && low <= takeProfit) hits.push({ type: 'take_profit', price: takeProfit, distance: Math.abs(takeProfit - open) });
+                if (Number.isFinite(stopLoss) && stopLoss > 0 && high >= stopLoss) hits.push({ type: 'stop_loss', price: stopLoss, distance: Math.abs(stopLoss - open) });
+            }
+
+            if (hits.length > 0) {
+                hits.sort((a, b) => a.distance - b.distance);
+                changed = await this.closeManagedAccountPositionAtPrice(state, assetCode, hits[0].price, hits[0].type) || changed;
+            }
+        }
+
+        if (changed) await this.syncSillyViewFxWorldbook();
+        return changed;
     }
 
     async executeAndRecordTrade(intent, amount, assetCode, executionPrice = null, leverage = 1, riskControls = null) {
@@ -1261,6 +1966,58 @@ export class DataManager {
         });
 
         this.logger.log(`结算 ${normalizedHours} 小时资金费率: ${(-totalCost).toFixed(2)}。`);
+        return totalCost;
+    }
+
+    async accrueManagedAccountFundingFees(hours = 1) {
+        const states = await this.getManagedAccountStates();
+        if (states.length === 0) return 0;
+
+        const normalizedHours = Math.max(1, Math.floor(Number(hours) || 1));
+        const market = this.getState(this.config.world_book_keys.global_market);
+        const time = market ? market.current_time_index : 0;
+        let totalCost = 0;
+        let changed = false;
+
+        for (const state of states) {
+            const portfolio = state.portfolio || {};
+            if (!portfolio.assets) continue;
+
+            const fundingItems = [];
+            for (const assetCode of Object.keys(portfolio.assets)) {
+                const position = this.positionCalculator.calculate(assetCode, portfolio);
+                if (!position.isLeveraged || !position.type || position.positionValue <= 0) continue;
+
+                const rate = Number(this._getTradeConfig(assetCode).funding_rate_hourly || 0);
+                if (!Number.isFinite(rate) || rate === 0) continue;
+
+                const signedCost = position.positionValue * rate * normalizedHours * (position.type === 'long' ? 1 : -1);
+                if (Math.abs(signedCost) < 0.01) continue;
+                fundingItems.push({ assetCode, amount: signedCost });
+            }
+
+            if (fundingItems.length === 0) continue;
+
+            const accountCost = fundingItems.reduce((sum, item) => sum + item.amount, 0);
+            portfolio.cash = (portfolio.cash || 0) - accountCost;
+            if (!portfolio.transaction_log) portfolio.transaction_log = [];
+            fundingItems.forEach(item => {
+                const label = item.amount >= 0 ? '资金费率支出' : '资金费率收入';
+                portfolio.transaction_log.unshift({
+                    time,
+                    description: `${label} (${item.assetCode})`,
+                    amount: -item.amount,
+                });
+            });
+            if (portfolio.transaction_log.length > 100) portfolio.transaction_log.length = 100;
+            state.portfolio = portfolio;
+            this._recordAccountHistory(portfolio);
+            await this._writeManagedAccountState(state);
+            totalCost += accountCost;
+            changed = true;
+        }
+
+        if (changed) await this.syncSillyViewFxWorldbook();
         return totalCost;
     }
     

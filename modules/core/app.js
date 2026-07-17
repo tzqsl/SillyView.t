@@ -105,6 +105,9 @@ export class SillyViewApp {
 
         let triggered = false;
         for (const candle of hourlyCandles) {
+            const accountTriggered = await this.data.processManagedAccountRiskForCandle(assetCode, candle);
+            if (accountTriggered) triggered = true;
+
             const result = await this.data.triggerRiskControlsForCandle(assetCode, candle);
             if (result?.triggered) {
                 triggered = true;
@@ -248,6 +251,14 @@ export class SillyViewApp {
                     hasUpdatedTimeline = true;
                 } else {
                     Logger.warn('收到了格式不正确的 Time.Set 指令，已忽略:', command.args);
+                }
+            }
+            else if (command.module === 'Trade') {
+                const ok = await this.data.processManagedAccountTradeCommand(command);
+                if (ok) {
+                    hasUpdatedFinancials = true;
+                } else {
+                    Logger.warn('收到了无法执行的 Trade 指令，已忽略:', command.args);
                 }
             }
             
@@ -405,6 +416,7 @@ export class SillyViewApp {
         
         await this._checkLiquidations();
         await this.data.accrueFundingFees(1);
+        await this.data.accrueManagedAccountFundingFees(1);
         await this.data.recordAssetHistory();
         await this.data.updateAIContext();
         await this.data.saveAllEntries();
@@ -465,6 +477,7 @@ export class SillyViewApp {
                 });
                 this.data.clearActionsThisTurn();
                 await this.data.accrueFundingFees(hoursToAdvance);
+                await this.data.accrueManagedAccountFundingFees(hoursToAdvance);
                 await this.data.recordAssetHistory();
                 await this.data.updateAIContext();
                 this.ui.renderAll();
@@ -484,7 +497,8 @@ export class SillyViewApp {
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
         const openPositionCodes = Object.keys(portfolio.assets || {})
             .filter(assetCode => (portfolio.assets[assetCode]?.trades || []).length > 0);
-        const activeAssetsForAI = new Set([this.ui.currentAsset, ...tradedAssetCodes, ...openPositionCodes]);
+        const managedAccountAssetCodes = await this.data.getManagedAccountOpenAssetCodes();
+        const activeAssetsForAI = new Set([this.ui.currentAsset, ...tradedAssetCodes, ...openPositionCodes, ...managedAccountAssetCodes]);
         
         await this.data.updateAIContext();
         const finalPrompt = await this.aiDirector.buildAdvanceTurnPrompt(actionsThisTurn, activeAssetsForAI, this.ui.currentAsset, currentTimeframe);
@@ -511,6 +525,7 @@ export class SillyViewApp {
             this.ui.tradeView.renderThisTurnActions();
 
             await this.data.accrueFundingFees(currentTimeframe === 'DAILY' ? 24 : 1);
+            await this.data.accrueManagedAccountFundingFees(currentTimeframe === 'DAILY' ? 24 : 1);
             await this.data.recordAssetHistory();
             await this.data.updateAIContext();
             await this.data.saveAllEntries();
