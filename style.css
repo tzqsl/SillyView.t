@@ -191,11 +191,61 @@
     flex-grow: 1;
     display: flex;
     flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+.sv-chart-stage {
+    position: relative;
+    width: 100%;
+    flex-grow: 1;
+    min-height: 0;
+    background-color: var(--bg-gray-900);
 }
 
 #sillyview-chart-container {
+    position: absolute;
+    inset: 0;
     width: 100%;
-    flex-grow: 1;
+    height: 100%;
+}
+
+#sv-chart-type-selector {
+    position: absolute;
+    top: 0.75rem;
+    right: 4.5rem;
+    z-index: 10;
+    display: flex;
+    padding: 0.2rem;
+    background-color: rgba(31, 41, 55, 0.92);
+    border: 1px solid var(--border-gray-700);
+    border-radius: 0.375rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+}
+
+#sv-chart-type-selector button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    min-width: 3.75rem;
+    height: 1.8rem;
+    padding: 0 0.5rem;
+    border: 0;
+    border-radius: 0.25rem;
+    background: transparent;
+    color: var(--text-gray-400);
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+#sv-chart-type-selector button:hover:not(.active-chart-type) {
+    color: var(--text-white);
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+#sv-chart-type-selector button.active-chart-type {
+    color: var(--cyan-400);
     background-color: var(--bg-gray-900);
 }
 

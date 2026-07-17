@@ -33,6 +33,7 @@ export class UIRenderer {
         this.isInitialized = false;
         this.currentAsset = 'EURUSD';
         this.currentTimeframe = 'HOURLY';
+        this.currentChartType = 'candlestick';
         this.activeSidebarTab = 'trade'; // Default tab
         this.tradeMode = 'spot';
         
@@ -149,7 +150,13 @@ export class UIRenderer {
                 </header>
                 <main class="sv-main-content">
                     <div class="sv-left-panel">
-                        <div id="sillyview-chart-container"></div>
+                        <div class="sv-chart-stage">
+                            <div id="sillyview-chart-container"></div>
+                            <div id="sv-chart-type-selector" aria-label="图表类型">
+                                <button id="sv-chart-candlestick" type="button" title="蜡烛图" aria-label="蜡烛图"><i class="fas fa-chart-bar"></i><span>K线</span></button>
+                                <button id="sv-chart-line" type="button" title="折线图" aria-label="折线图"><i class="fas fa-chart-line"></i><span>折线</span></button>
+                            </div>
+                        </div>
                         <div class="sv-time-controls">
                             <h2 style="font-size:0.875rem; font-weight: 600; color:var(--text-gray-400);">时间控制:</h2>
                             <button id="sillyview-end-turn-btn" class="sv-button sv-button-blue">结束回合</button>
@@ -170,6 +177,7 @@ export class UIRenderer {
         this.renderRightSidebar(); 
         this.dependencies.events.bindMainInterfaceEvents();
         this.setTimeframe(this.currentTimeframe);
+        this.setChartType(this.currentChartType);
         
         this.renderAll();
     }
@@ -324,8 +332,10 @@ export class UIRenderer {
         this.chartManager.initialize(chartContainer);
         
         this.chartManager.subscribeCrosshairMove(param => {
-            const { candlestickSeries } = this.chartManager.getSeries();
-            const candleData = param.time ? param.seriesData.get(candlestickSeries) : null;
+            const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.currentAsset}`);
+            const candleData = param.time !== undefined && param.time !== null
+                ? this._getKlineDataForTimeframe(assetData).find(candle => candle.time === param.time)
+                : null;
             if (this.activeSidebarTab === 'trade') {
                 this._updateDataWindow(candleData);
             }
@@ -618,6 +628,29 @@ export class UIRenderer {
             dailyBtn.classList.toggle('active-timescale', timeframe === 'DAILY');
         }
         if (shouldRender) this.renderChartData();
+    }
+
+    setChartType(chartType) {
+        const normalizedType = chartType === 'line' ? 'line' : 'candlestick';
+        const shouldRender = this.currentChartType !== normalizedType;
+        this.currentChartType = normalizedType;
+        this.chartManager.setChartType(normalizedType);
+
+        const candlestickBtn = this.parentDoc.getElementById('sv-chart-candlestick');
+        const lineBtn = this.parentDoc.getElementById('sv-chart-line');
+        if (candlestickBtn && lineBtn) {
+            candlestickBtn.classList.toggle('active-chart-type', normalizedType === 'candlestick');
+            lineBtn.classList.toggle('active-chart-type', normalizedType === 'line');
+            candlestickBtn.setAttribute('aria-pressed', String(normalizedType === 'candlestick'));
+            lineBtn.setAttribute('aria-pressed', String(normalizedType === 'line'));
+        }
+
+        if (!shouldRender) return;
+        if (this.avgCostLine) this.chartManager.removePriceLine(this.avgCostLine);
+        if (this.liquidationLine) this.chartManager.removePriceLine(this.liquidationLine);
+        this.avgCostLine = null;
+        this.liquidationLine = null;
+        this.renderChartData();
     }
 
     setTradeMode(mode) {

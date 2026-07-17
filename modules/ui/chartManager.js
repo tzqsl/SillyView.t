@@ -14,8 +14,10 @@ export class ChartManager {
 
         this.chart = null;
         this.candlestickSeries = null;
+        this.lineSeries = null;
         this.volumeSeries = null;
         this.resizeObserver = null;
+        this.chartType = 'candlestick';
     }
 
     isInitialized() {
@@ -47,6 +49,16 @@ export class ChartManager {
         this.candlestickSeries = this.chart.addCandlestickSeries({
             upColor: '#22c55e', downColor: '#ef4444', borderDownColor: '#ef4444',
             borderUpColor: '#22c55e', wickDownColor: '#ef4444', wickUpColor: '#22c55e',
+        });
+
+        this.lineSeries = this.chart.addLineSeries({
+            color: '#22d3ee',
+            lineWidth: 2,
+            crosshairMarkerVisible: true,
+            crosshairMarkerRadius: 4,
+            priceLineVisible: true,
+            lastValueVisible: true,
+            visible: false,
         });
 
         this.volumeSeries = this.chart.addHistogramSeries({
@@ -88,15 +100,23 @@ export class ChartManager {
     }
 
     setData(candlestickData, volumeData) {
-        if (!this.candlestickSeries || !this.volumeSeries) return;
-        this.candlestickSeries.setData(this._normalizeSeriesData(candlestickData));
+        if (!this.candlestickSeries || !this.lineSeries || !this.volumeSeries) return;
+        const normalizedCandles = this._normalizeSeriesData(candlestickData);
+        this.candlestickSeries.setData(normalizedCandles);
+        this.lineSeries.setData(normalizedCandles.map(candle => ({
+            time: candle.time,
+            value: Number(candle.close),
+        })));
         this.volumeSeries.setData(this._normalizeSeriesData(volumeData));
     }
 
     update(candle, volume) {
-        if (!this.candlestickSeries || !this.volumeSeries) return;
+        if (!this.candlestickSeries || !this.lineSeries || !this.volumeSeries) return;
         try {
-            if (candle) this.candlestickSeries.update(candle);
+            if (candle) {
+                this.candlestickSeries.update(candle);
+                this.lineSeries.update({ time: candle.time, value: Number(candle.close) });
+            }
             if (volume) this.volumeSeries.update(volume);
         } catch (error) {
             this.logger.warn('Chart realtime update skipped:', error);
@@ -104,18 +124,37 @@ export class ChartManager {
     }
 
     setMarkers(markers) {
-        if (!this.candlestickSeries) return;
-        this.candlestickSeries.setMarkers(markers);
+        const activeSeries = this._getActivePriceSeries();
+        if (!activeSeries) return;
+        this.candlestickSeries.setMarkers([]);
+        this.lineSeries.setMarkers([]);
+        activeSeries.setMarkers(markers);
     }
 
     createPriceLine(options) {
-        if (!this.candlestickSeries) return null;
-        return this.candlestickSeries.createPriceLine(options);
+        const series = this._getActivePriceSeries();
+        if (!series) return null;
+        return { series, line: series.createPriceLine(options) };
     }
 
-    removePriceLine(line) {
-        if (!this.candlestickSeries || !line) return;
-        this.candlestickSeries.removePriceLine(line);
+    removePriceLine(priceLineHandle) {
+        if (!priceLineHandle) return;
+        const series = priceLineHandle.series || this._getActivePriceSeries();
+        const line = priceLineHandle.line || priceLineHandle;
+        if (!series || !line) return;
+        series.removePriceLine(line);
+    }
+
+    _getActivePriceSeries() {
+        return this.chartType === 'line' ? this.lineSeries : this.candlestickSeries;
+    }
+
+    setChartType(chartType) {
+        const normalizedType = chartType === 'line' ? 'line' : 'candlestick';
+        this.chartType = normalizedType;
+        if (!this.candlestickSeries || !this.lineSeries) return;
+        this.candlestickSeries.applyOptions({ visible: normalizedType === 'candlestick' });
+        this.lineSeries.applyOptions({ visible: normalizedType === 'line' });
     }
 
     subscribeCrosshairMove(callback) {
@@ -131,6 +170,8 @@ export class ChartManager {
     getSeries() {
         return {
             candlestickSeries: this.candlestickSeries,
+            lineSeries: this.lineSeries,
+            activePriceSeries: this._getActivePriceSeries(),
             volumeSeries: this.volumeSeries,
         };
     }
@@ -162,6 +203,7 @@ export class ChartManager {
             this.chart = null;
         }
         this.candlestickSeries = null;
+        this.lineSeries = null;
         this.volumeSeries = null;
         this.logger.log("ChartManager destroyed chart instance.");
     }

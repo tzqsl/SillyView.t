@@ -385,6 +385,8 @@ export class EventHandler {
         const minuteBtn = this.parentDoc.getElementById('sv-timescale-minute');
         const hourlyBtn = this.parentDoc.getElementById('sv-timescale-hourly');
         const dailyBtn = this.parentDoc.getElementById('sv-timescale-daily');
+        const candlestickChartBtn = this.parentDoc.getElementById('sv-chart-candlestick');
+        const lineChartBtn = this.parentDoc.getElementById('sv-chart-line');
         const assetSelector = this.parentDoc.getElementById('sillyview-asset-selector');
         const syncBtn = this.parentDoc.getElementById('sillyview-sync-ai-btn');
         const next5mBtn = this.parentDoc.getElementById('sillyview-next-5m-btn');
@@ -406,6 +408,8 @@ export class EventHandler {
         if (minuteBtn) minuteBtn.addEventListener('click', () => this.ui.setTimeframe('MINUTE'));
         if (hourlyBtn) hourlyBtn.addEventListener('click', () => this.ui.setTimeframe('HOURLY'));
         if (dailyBtn) dailyBtn.addEventListener('click', () => this.ui.setTimeframe('DAILY'));
+        if (candlestickChartBtn) candlestickChartBtn.addEventListener('click', () => this.ui.setChartType('candlestick'));
+        if (lineChartBtn) lineChartBtn.addEventListener('click', () => this.ui.setChartType('line'));
         if (assetSelector) assetSelector.addEventListener('change', (event) => this.ui.switchAsset(event.target.value));
 
         // Sidebar Delegated Events
