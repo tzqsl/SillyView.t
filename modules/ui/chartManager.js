@@ -42,13 +42,23 @@ export class ChartManager {
                 horzLines: { color: 'rgba(197, 203, 206, 0.1)' },
             },
             crosshair: { mode: this.win.LightweightCharts.CrosshairMode.Normal },
-            rightPriceScale: { borderColor: 'rgba(197, 203, 206, 0.2)' },
+            rightPriceScale: {
+                visible: true,
+                borderVisible: true,
+                borderColor: 'rgba(197, 203, 206, 0.32)',
+                ticksVisible: true,
+                alignLabels: true,
+                entireTextOnly: true,
+                autoScale: true,
+            },
             timeScale: { borderColor: 'rgba(197, 203, 206, 0.2)', timeVisible: true, secondsVisible: false },
         });
 
         this.candlestickSeries = this.chart.addCandlestickSeries({
             upColor: '#22c55e', downColor: '#ef4444', borderDownColor: '#ef4444',
             borderUpColor: '#22c55e', wickDownColor: '#ef4444', wickUpColor: '#22c55e',
+            priceLineVisible: true,
+            lastValueVisible: true,
         });
 
         this.lineSeries = this.chart.addLineSeries({
@@ -99,9 +109,23 @@ export class ChartManager {
         });
     }
 
+    _getForexPriceFormat(candles) {
+        const lastPrice = [...candles].reverse().find(candle => Number.isFinite(Number(candle?.close)))?.close;
+        const isYenStyleQuote = Number(lastPrice) >= 10;
+        const precision = isYenStyleQuote ? 3 : 5;
+        return {
+            type: 'price',
+            precision,
+            minMove: 10 ** -precision,
+        };
+    }
+
     setData(candlestickData, volumeData) {
         if (!this.candlestickSeries || !this.lineSeries || !this.volumeSeries) return;
         const normalizedCandles = this._normalizeSeriesData(candlestickData);
+        const priceFormat = this._getForexPriceFormat(normalizedCandles);
+        this.candlestickSeries.applyOptions({ priceFormat });
+        this.lineSeries.applyOptions({ priceFormat });
         this.candlestickSeries.setData(normalizedCandles);
         this.lineSeries.setData(normalizedCandles.map(candle => ({
             time: candle.time,
