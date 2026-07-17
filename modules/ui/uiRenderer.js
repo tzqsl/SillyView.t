@@ -377,6 +377,9 @@ export class UIRenderer {
     }
     
     renderChartData() {
+        // A timeframe switch replaces the whole series. Restoring the previous
+        // timeframe's idle candle here would append an incompatible timestamp.
+        this._stopIdleFluctuation({ restore: false });
         const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.currentAsset}`);
         if (!assetData) return;
         const klineData = this._getKlineDataForTimeframe(assetData);
@@ -617,6 +620,7 @@ export class UIRenderer {
     }
 
     setTimeframe(timeframe) {
+        if (this.isAnimating) return;
         const shouldRender = this.currentTimeframe !== timeframe;
         this.currentTimeframe = timeframe;
         const minuteBtn = this.parentDoc.getElementById('sv-timescale-minute');
@@ -746,7 +750,7 @@ export class UIRenderer {
     }
 
     _startIdleFluctuation() {
-        this._stopIdleFluctuation();
+        this._stopIdleFluctuation({ restore: false });
         if (!this.chartManager.isInitialized()) return;
 
         const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.currentAsset}`);
@@ -778,16 +782,17 @@ export class UIRenderer {
         this.idleAnimationId = requestAnimationFrame(fluctuate);
     }
 
-    _stopIdleFluctuation() {
+    _stopIdleFluctuation({ restore = true } = {}) {
         if (this.idleAnimationId) {
             cancelAnimationFrame(this.idleAnimationId);
             this.idleAnimationId = null;
 
             // Restore the chart to the actual last candle state
-            if (this.lastRealCandle) {
+            if (restore && this.lastRealCandle) {
                 this.chartManager.update(this.lastRealCandle);
                 if(this.activeSidebarTab === 'trade') this.updatePnlAndPriceLines(this.lastRealCandle.close);
             }
         }
+        if (!restore) this.lastRealCandle = null;
     }
 }
