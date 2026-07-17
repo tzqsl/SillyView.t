@@ -23,8 +23,6 @@ export class PositionCalculator {
         }
 
         const tradeType = trades[0].type; // 'long' or 'short'
-        const leverage = trades[0].leverage || 1;
-        const isLeveraged = leverage > 1;
 
         let margin = 0;
         let totalPositionValue = 0;
@@ -38,6 +36,8 @@ export class PositionCalculator {
             return { type: null, totalAmount: 0, avgEntryPrice: 0, totalShares: 0, isLeveraged: false, leverage: 1, positionValue: 0, liquidationPrice: 0 };
         }
 
+        const leverage = Number((totalPositionValue / margin).toFixed(4));
+        const isLeveraged = leverage > 1.000001;
         const avgEntryPrice = trades.reduce((sum, t) => sum + t.price * (t.amount * (t.leverage || 1)), 0) / totalPositionValue;
         const totalShares = totalPositionValue / avgEntryPrice;
         const maintenanceMarginRate = this.config?.asset_definitions?.[assetCode]?.trade_config?.maintenance_margin_rate ?? 0.01;

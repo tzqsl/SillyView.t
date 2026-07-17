@@ -2033,9 +2033,32 @@ export class DataManager {
         };
     }
 
+    _areRiskControlsValidForPosition(position, riskControls, marketPrice = null) {
+        if (!position?.type || !riskControls) return false;
+        const referencePrice = Number(marketPrice ?? position.avgEntryPrice ?? 0);
+        if (!Number.isFinite(referencePrice) || referencePrice <= 0) return false;
+        const takeProfit = riskControls.take_profit;
+        const stopLoss = riskControls.stop_loss;
+
+        if (position.type === 'long') {
+            if (takeProfit !== null && takeProfit <= referencePrice) return false;
+            if (stopLoss !== null && stopLoss >= referencePrice) return false;
+        } else {
+            if (takeProfit !== null && takeProfit >= referencePrice) return false;
+            if (stopLoss !== null && stopLoss <= referencePrice) return false;
+        }
+        return true;
+    }
+
     _applyRiskControls(portfolio, assetCode, riskControls) {
         const normalized = this._normalizeRiskControls(riskControls);
         if (!normalized || (normalized.take_profit === null && normalized.stop_loss === null)) return '';
+        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        const marketPrice = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`)?.current_price;
+        if (!this._areRiskControlsValidForPosition(position, normalized, marketPrice)) {
+            this.logger.warn(`已忽略方向错误的止盈止损: ${assetCode}`);
+            return '';
+        }
 
         if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
         const current = portfolio.assets[assetCode].risk_controls || {};
@@ -2053,6 +2076,10 @@ export class DataManager {
     async updatePositionRiskControls(assetCode, riskControls) {
         const portfolioKey = this.config.world_book_keys.player_portfolio;
         const normalized = this._normalizeRiskControls(riskControls) || { take_profit: null, stop_loss: null };
+        const currentPortfolio = this.getState(portfolioKey);
+        const currentPosition = this.positionCalculator.calculate(assetCode, currentPortfolio);
+        const marketPrice = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`)?.current_price;
+        if (!this._areRiskControlsValidForPosition(currentPosition, normalized, marketPrice)) return null;
 
         let updated = false;
         await this.updateState(portfolioKey, portfolio => {
@@ -2204,25 +2231,86 @@ export class DataManager {
         return true;
     }
     
-    async liquidatePosition(assetCode, liquidationPrice) {
-        this.dependencies.win.toastr.error(`${assetCode} 仓位已被强制平仓！`, "爆仓！");
-        const portfolioKey = this.config.world_book_keys.player_portfolio;
-        let portfolio = this.getState(portfolioKey);
-        const position = this.positionCalculator.calculate(assetCode, portfolio);
+    _selectFirstCandleTrigger(candle, candidates) {
+        if (!candle || !Array.isArray(candidates) || candidates.length === 0) return null;
+        const open = Number(candle.open ?? candle.close);
+        const close = Number(candle.close ?? open);
+        const high = Math.max(Number(candle.high ?? open), open, close);
+        const low = Math.min(Number(candle.low ?? open), open, close);
+        if (![open, close, high, low].every(Number.isFinite)) return null;
 
-        const marginLost = position.totalAmount;
-        await this.logTransaction(`爆仓强平 (${assetCode})`, -marginLost, true);
-        
-        // **FIX**: Added guard to prevent crash if portfolio.assets is missing.
-        if (portfolio.assets && portfolio.assets[assetCode]) {
-            portfolio.assets[assetCode].trades = [];
+        const validCandidates = candidates.filter(candidate =>
+            Number.isFinite(Number(candidate.price)) && Number(candidate.price) > 0
+        );
+        const immediate = validCandidates.filter(candidate =>
+            candidate.condition === 'above'
+                ? open >= candidate.price
+                : open <= candidate.price
+        );
+        if (immediate.length > 0) {
+            immediate.sort((a, b) => Math.abs(a.price - open) - Math.abs(b.price - open));
+            return immediate[0];
         }
-        
-        this._stateCache.set(portfolioKey, portfolio);
-        await this.saveAllEntries();
+
+        const path = close >= open ? [open, low, high, close] : [open, high, low, close];
+        for (let index = 0; index < path.length - 1; index++) {
+            const from = path[index];
+            const to = path[index + 1];
+            const segmentLow = Math.min(from, to);
+            const segmentHigh = Math.max(from, to);
+            const crossed = validCandidates.filter(candidate =>
+                candidate.price >= segmentLow && candidate.price <= segmentHigh
+            );
+            if (crossed.length > 0) {
+                crossed.sort((a, b) => Math.abs(a.price - from) - Math.abs(b.price - from));
+                return crossed[0];
+            }
+        }
+        return null;
     }
 
-    async closePositionAtPrice(assetCode, closePrice, reason = 'risk_control') {
+    async liquidatePosition(assetCode, liquidationPrice, triggerCandle = null) {
+        this.dependencies.win.toastr.error(`${assetCode} 仓位已被强制平仓！`, "爆仓！");
+        const portfolioKey = this.config.world_book_keys.player_portfolio;
+        const portfolio = this.getState(portfolioKey);
+        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        if (!position.type || position.totalAmount <= 0) return null;
+
+        const tradeConfig = this._getTradeConfig(assetCode);
+        const fee = position.positionValue * (tradeConfig.fee_rate ?? 0.001);
+        const realizedPnl = position.type === 'long'
+            ? (liquidationPrice - position.avgEntryPrice) * position.totalShares
+            : (position.avgEntryPrice - liquidationPrice) * position.totalShares;
+        const remainingEquity = Math.max(0, position.totalAmount + realizedPnl - fee);
+        const market = this.getState(this.config.world_book_keys.global_market);
+        await this.updateState(portfolioKey, state => {
+            if (!state.assets) state.assets = {};
+            if (!state.assets[assetCode]) state.assets[assetCode] = { trades: [] };
+            state.assets[assetCode].trades = [];
+            delete state.assets[assetCode].risk_controls;
+            state.cash = Number(state.cash || 0) + remainingEquity;
+            if (!Array.isArray(state.transaction_log)) state.transaction_log = [];
+            state.transaction_log.unshift({
+                time: market?.current_time_index || 0,
+                description: `爆仓强平 (${assetCode})`,
+                amount: remainingEquity,
+            });
+            state.transaction_log.unshift({ time: market?.current_time_index || 0, description: '交易手续费', amount: -fee });
+            state.transaction_log.unshift({ time: market?.current_time_index || 0, description: `已实现盈亏 (${assetCode})`, amount: realizedPnl });
+            if (state.transaction_log.length > 100) state.transaction_log.length = 100;
+            return state;
+        });
+        return {
+            triggered: true,
+            triggerType: 'liquidation',
+            price: liquidationPrice,
+            pnl: realizedPnl,
+            fee,
+            triggerCandle,
+        };
+    }
+
+    async closePositionAtPrice(assetCode, closePrice, reason = 'risk_control', triggerCandle = null) {
         const portfolioKey = this.config.world_book_keys.player_portfolio;
         const market = this.getState(this.config.world_book_keys.global_market);
         const portfolio = this.getState(portfolioKey);
@@ -2261,6 +2349,13 @@ export class DataManager {
             price: closePrice,
             pnl: realizedPnl,
             fee,
+            triggerCandle: triggerCandle ? {
+                time: triggerCandle.time,
+                open: Number(triggerCandle.open),
+                high: Number(triggerCandle.high),
+                low: Number(triggerCandle.low),
+                close: Number(triggerCandle.close),
+            } : null,
         };
     }
 
@@ -2271,37 +2366,26 @@ export class DataManager {
         const position = this.positionCalculator.calculate(assetCode, portfolio);
         if (!position.type || position.totalAmount <= 0) return null;
 
-        const assetPortfolio = portfolio?.assets?.[assetCode];
-        const riskControls = assetPortfolio?.risk_controls;
-        if (!riskControls) return null;
-
+        const riskControls = portfolio?.assets?.[assetCode]?.risk_controls || {};
         const takeProfit = Number(riskControls.take_profit);
         const stopLoss = Number(riskControls.stop_loss);
-        const open = Number(candle.open || candle.close || position.avgEntryPrice || 0);
-        const high = Number(candle.high || open);
-        const low = Number(candle.low || open);
-
-        const hits = [];
+        const candidates = [];
         if (position.type === 'long') {
-            if (Number.isFinite(takeProfit) && takeProfit > 0 && high >= takeProfit) hits.push({ type: 'take_profit', price: takeProfit, distance: Math.abs(takeProfit - open) });
-            if (Number.isFinite(stopLoss) && stopLoss > 0 && low <= stopLoss) hits.push({ type: 'stop_loss', price: stopLoss, distance: Math.abs(stopLoss - open) });
+            if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'above' });
+            if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'below' });
+            if (position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'below' });
         } else if (position.type === 'short') {
-            if (Number.isFinite(takeProfit) && takeProfit > 0 && low <= takeProfit) hits.push({ type: 'take_profit', price: takeProfit, distance: Math.abs(takeProfit - open) });
-            if (Number.isFinite(stopLoss) && stopLoss > 0 && high >= stopLoss) hits.push({ type: 'stop_loss', price: stopLoss, distance: Math.abs(stopLoss - open) });
+            if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'below' });
+            if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'above' });
+            if (position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'above' });
         }
 
-        if (hits.length === 0) return null;
-        if (hits.length > 1) {
-            const candleDirectionUp = Number(candle.close || open) >= open;
-            const preferredType = candleDirectionUp ? 'take_profit' : 'stop_loss';
-            const preferredHit = hits.find(hit => hit.type === preferredType);
-            if (preferredHit) {
-                return await this.closePositionAtPrice(assetCode, preferredHit.price, preferredHit.type);
-            }
+        const firstTrigger = this._selectFirstCandleTrigger(candle, candidates);
+        if (!firstTrigger) return null;
+        if (firstTrigger.type === 'liquidation') {
+            return await this.liquidatePosition(assetCode, firstTrigger.price, candle);
         }
-
-        hits.sort((a, b) => a.distance - b.distance);
-        return await this.closePositionAtPrice(assetCode, hits[0].price, hits[0].type);
+        return await this.closePositionAtPrice(assetCode, firstTrigger.price, firstTrigger.type, candle);
     }
     
     async takeLoan(amount) {
@@ -2488,6 +2572,8 @@ export class DataManager {
         if (!position.type || position.totalAmount <= 0) return false;
 
         const normalized = this._normalizeRiskControls(riskControls) || { take_profit: null, stop_loss: null };
+        const marketPrice = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`)?.current_price;
+        if (!this._areRiskControlsValidForPosition(position, normalized, marketPrice)) return false;
         if (!portfolio.assets) portfolio.assets = {};
         if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
         if (normalized.take_profit === null && normalized.stop_loss === null) {
@@ -2657,36 +2743,24 @@ export class DataManager {
             const position = this.positionCalculator.calculate(assetCode, portfolio);
             if (!position.type || position.totalAmount <= 0) continue;
 
-            if (position.isLeveraged && position.liquidationPrice > 0) {
-                const hit = position.type === 'long'
-                    ? Number(candle.low || candle.close) <= position.liquidationPrice
-                    : Number(candle.high || candle.close) >= position.liquidationPrice;
-                if (hit) {
-                    changed = await this.closeManagedAccountPositionAtPrice(state, assetCode, position.liquidationPrice, 'liquidation') || changed;
-                    continue;
-                }
-            }
-
-            const controls = portfolio.assets?.[assetCode]?.risk_controls;
-            if (!controls) continue;
+            const controls = portfolio.assets?.[assetCode]?.risk_controls || {};
             const takeProfit = Number(controls.take_profit);
             const stopLoss = Number(controls.stop_loss);
-            const open = Number(candle.open || candle.close || position.avgEntryPrice || 0);
-            const high = Number(candle.high || open);
-            const low = Number(candle.low || open);
-            const hits = [];
+            const candidates = [];
 
             if (position.type === 'long') {
-                if (Number.isFinite(takeProfit) && takeProfit > 0 && high >= takeProfit) hits.push({ type: 'take_profit', price: takeProfit, distance: Math.abs(takeProfit - open) });
-                if (Number.isFinite(stopLoss) && stopLoss > 0 && low <= stopLoss) hits.push({ type: 'stop_loss', price: stopLoss, distance: Math.abs(stopLoss - open) });
+                if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'above' });
+                if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'below' });
+                if (position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'below' });
             } else {
-                if (Number.isFinite(takeProfit) && takeProfit > 0 && low <= takeProfit) hits.push({ type: 'take_profit', price: takeProfit, distance: Math.abs(takeProfit - open) });
-                if (Number.isFinite(stopLoss) && stopLoss > 0 && high >= stopLoss) hits.push({ type: 'stop_loss', price: stopLoss, distance: Math.abs(stopLoss - open) });
+                if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'below' });
+                if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'above' });
+                if (position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'above' });
             }
 
-            if (hits.length > 0) {
-                hits.sort((a, b) => a.distance - b.distance);
-                changed = await this.closeManagedAccountPositionAtPrice(state, assetCode, hits[0].price, hits[0].type) || changed;
+            const firstTrigger = this._selectFirstCandleTrigger(candle, candidates);
+            if (firstTrigger) {
+                changed = await this.closeManagedAccountPositionAtPrice(state, assetCode, firstTrigger.price, firstTrigger.type) || changed;
             }
         }
 

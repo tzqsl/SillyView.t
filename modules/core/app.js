@@ -113,8 +113,13 @@ export class SillyViewApp {
             const result = await this.data.triggerRiskControlsForCandle(assetCode, candle);
             if (result?.triggered) {
                 triggered = true;
+                if (result.triggerType === 'liquidation') break;
+                const triggerCandle = result.triggerCandle;
+                const rangeText = triggerCandle
+                    ? `（K线 H ${triggerCandle.high.toFixed(5)} / L ${triggerCandle.low.toFixed(5)}）`
+                    : '';
                 this.dependencies.win.toastr.info(
-                    `${assetCode} ${result.triggerType === 'take_profit' ? '止盈' : '止损'}触发，成交价 ${result.price.toFixed(4)}。`
+                    `${assetCode} ${result.triggerType === 'take_profit' ? '止盈' : '止损'}触发，成交价 ${result.price.toFixed(5)} ${rangeText}。`
                 );
                 break;
             }

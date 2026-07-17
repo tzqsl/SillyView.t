@@ -693,7 +693,6 @@ export class UIRenderer {
         return new Promise(resolve => {
             const startTime = performance.now();
             const { open, high, low, close } = targetCandle;
-            const assetCode = this.currentAsset;
             const path = (close > open) ? [open, low, high, close] : [open, high, low, close];
             const segments = path.length - 1;
             const segmentDuration = duration / segments;
@@ -718,15 +717,6 @@ export class UIRenderer {
                 const endPrice = path[currentSegmentIndex + 1];
                 const newPrice = startPrice + (endPrice - startPrice) * segmentProgress;
                 this.liveAnimationPrice = newPrice;
-    
-                const wasLiquidated = await this.app._checkLiquidations({ [assetCode]: newPrice });
-                if (wasLiquidated) {
-                    this.logger.warn(`清算事件已触发，正在停止动画...`);
-                    if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
-                    this.animationFrameId = null;
-                    resolve();
-                    return;
-                }
 
                 let currentHigh = open, currentLow = open;
                 for(let i = 0; i <= currentSegmentIndex; i++) {
