@@ -116,6 +116,7 @@ export class DataManager {
             await this.ensureRequiredContextEntries(lorebookName);
             await this.autoDiscoverAndSyncManagedAccounts();
             await this.updateDialogueContext();
+            await this.runInitialBootstrapIfNeeded();
             this.ui.renderMainInterface();
         } else {
             await this.autoDiscoverAndSyncManagedAccounts();
@@ -405,7 +406,41 @@ export class DataManager {
         this.contextEntriesEnsuredFor = lorebookName;
         await this.autoDiscoverAndSyncManagedAccounts();
         await this.updateAIContext();
+        await this.runInitialBootstrapIfNeeded();
         this.ui.renderMainInterface();
+    }
+
+    async runInitialBootstrapIfNeeded() {
+        const keys = this.config.world_book_keys;
+        const configState = this.getState(keys.config) || {};
+        if (configState.initial_bootstrap_done) return false;
+
+        const app = this.dependencies.app;
+        if (!app?.runInitialBootstrapTurn) {
+            this.logger.warn('初始化预热流程不可用，跳过自动推进。');
+            return false;
+        }
+
+        this.logger.log('正在执行初始化预热：自动快速推进一天，并发送一次后台AI结束回合提示词。');
+        try {
+            await app.runInitialBootstrapTurn();
+            await this.updateState(keys.config, config => ({
+                ...(config || {}),
+                initial_bootstrap_done: true,
+                initial_bootstrap_at: Date.now(),
+                initial_bootstrap_error: null,
+            }));
+            return true;
+        } catch (error) {
+            this.logger.error('初始化预热失败。', error);
+            this.dependencies.win.toastr?.error(`初始化预热失败: ${error.message || error}`);
+            await this.updateState(keys.config, config => ({
+                ...(config || {}),
+                initial_bootstrap_error: String(error.message || error),
+                initial_bootstrap_failed_at: Date.now(),
+            }));
+            return false;
+        }
     }
     
     async resetAllData() {

@@ -19,6 +19,7 @@ export class SillyViewApp {
         this.previousStateSnapshot = null;
         this.quickModeStartState = null;
         this.lastMinuteAdvanceMessageId = null;
+        this.initialBootstrapRunning = false;
 
         // Dependencies are set in init() by the main script.js entry point
         this.data = null;
@@ -145,6 +146,7 @@ export class SillyViewApp {
 
     async processGeneratedMarketText(msg, options = {}) {
         const requiredAssetCodes = options.requiredAssetCodes || [];
+        const silent = options.silent === true;
 
         // **FIX**: Check if this turn started as a key moment BEFORE processing.
         const marketBefore = this.data.getState(SillyViewConfig.world_book_keys.global_market);
@@ -264,7 +266,20 @@ export class SillyViewApp {
             
             if (newCandles && newCandles.length > 0 && assetCodeForUpdate) {
                 const minuteCandles = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(assetCodeForUpdate, newCandles);
-                await this.ui.handleAiResponse(newCandles, msg, assetCodeForUpdate, minuteCandles);
+                if (silent) {
+                    await this.data.updateAssetCandles(assetCodeForUpdate, newCandles, minuteCandles);
+                    const assetDef = SillyViewConfig.asset_definitions[assetCodeForUpdate];
+                    if (assetDef) await this.data.aggregateHourlyToDaily(assetCodeForUpdate, assetDef.trading_hours_per_day);
+                    const newTimeIndex = newCandles.slice(-1)[0].time;
+                    const newMinuteIndex = minuteCandles.length > 0 ? minuteCandles[minuteCandles.length - 1].time : newTimeIndex * 60;
+                    await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
+                        market.current_time_index = Math.max(market.current_time_index || 0, newTimeIndex);
+                        market.minute_time_index = Math.max(market.minute_time_index || 0, newMinuteIndex);
+                        return market;
+                    });
+                } else {
+                    await this.ui.handleAiResponse(newCandles, msg, assetCodeForUpdate, minuteCandles);
+                }
                 advancedAssetCodes.add(assetCodeForUpdate);
                 headlineAssetCodes.add(assetCodeForUpdate);
                 maxAdvancedTimeIndex = Math.max(maxAdvancedTimeIndex, newCandles[newCandles.length - 1].time || 0);
@@ -298,7 +313,7 @@ export class SillyViewApp {
                 });
             }
             await this._checkLiquidations();
-            this.ui.renderAll();
+            if (!silent) this.ui.renderAll();
         }
 
         if (maxAdvancedTimeIndex > 0) {
@@ -315,12 +330,12 @@ export class SillyViewApp {
                 this.logger.log(`AI turn complete. New random candle count: ${m.remaining_candles}`);
                 return m;
             });
-            this.ui.updateUIVisibility();
+            if (!silent) this.ui.updateUIVisibility();
         } else if (hasUpdatedFinancials || hasUpdatedTimeline || hasUpdatedTargets) {
-            this.ui.renderAll();
+            if (!silent) this.ui.renderAll();
         } else if (!hasAdvanced) {
             // If no commands were processed, ensure buttons are re-enabled
-            this.ui.tradeView.updateActionButtonsState(false, false);
+            if (!silent) this.ui.tradeView.updateActionButtonsState(false, false);
         }
         
         await this.data.updateAIContext();
@@ -373,6 +388,85 @@ export class SillyViewApp {
             Logger.log("快速模式已手动禁用。");
         }
         this.ui.updateUIVisibility();
+    }
+
+    async _advanceInitializationQuickDay() {
+        const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
+        const assetCodes = configState.available_assets || Object.keys(SillyViewConfig.asset_definitions);
+        if (assetCodes.length === 0) return;
+        const maxHours = Math.max(...assetCodes.map(assetCode => SillyViewConfig.asset_definitions[assetCode]?.trading_hours_per_day || 24));
+        let maxTimeIndex = 0;
+
+        await this.marketSimulator.advanceMarketRegime(maxHours);
+        await this.marketSimulator.advanceMacroState(maxHours);
+
+        for (const assetCode of assetCodes) {
+            const assetDef = SillyViewConfig.asset_definitions[assetCode];
+            if (!assetDef) continue;
+
+            const hours = assetDef.trading_hours_per_day || 24;
+            const hourlyCandles = this.marketSimulator.calculateCandlesForQuickMode(assetCode, hours);
+            const minuteCandles = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(assetCode, hourlyCandles);
+            await this.data.updateAssetCandles(assetCode, hourlyCandles, minuteCandles);
+            await this.data.aggregateHourlyToDaily(assetCode, hours);
+            await this._checkRiskControlsForHourlyCandles(assetCode, hourlyCandles);
+            if (hourlyCandles.length > 0) {
+                maxTimeIndex = Math.max(maxTimeIndex, hourlyCandles[hourlyCandles.length - 1].time || 0);
+            }
+        }
+
+        if (maxTimeIndex > 0) {
+            await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
+                market.current_time_index = Math.max(market.current_time_index || 0, maxTimeIndex);
+                market.minute_time_index = Math.max(market.minute_time_index || 0, maxTimeIndex * 60);
+                market.remaining_candles = 0;
+                return market;
+            });
+        }
+
+        await this._checkLiquidations();
+        await this.data.accrueFundingFees(24);
+        await this.data.accrueManagedAccountFundingFees(24);
+        await this.data.recordAssetHistory();
+        await this.data.updateAIContext();
+        await this.data.saveAllEntries();
+    }
+
+    async runInitialBootstrapTurn() {
+        if (this.initialBootstrapRunning) return;
+        this.initialBootstrapRunning = true;
+
+        try {
+            this.logger.log('初始化预热：开始静默快速推进一天。');
+            await this._advanceInitializationQuickDay();
+
+            const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
+            const assetCodes = configState.available_assets || Object.keys(SillyViewConfig.asset_definitions);
+            if (assetCodes.length === 0) {
+                this.logger.warn('初始化预热跳过：没有可用资产。');
+                return;
+            }
+            const activeAssetCode = assetCodes.includes(this.ui.currentAsset) ? this.ui.currentAsset : (assetCodes[0] || 'BTCUSD');
+            const actionsThisTurn = this.data.getActionsThisTurn();
+
+            this.logger.log('初始化预热：正在发送一次后台AI结束回合提示词。');
+            const prompt = await this.aiDirector.buildAdvanceTurnPrompt(actionsThisTurn, new Set(assetCodes), activeAssetCode, 'DAILY');
+            const marketResponse = await this.backgroundAI.generateMarketResponse(prompt);
+            await this.processGeneratedMarketText(marketResponse, {
+                requiredAssetCodes: assetCodes,
+                silent: true,
+            });
+
+            this.data.clearActionsThisTurn();
+            await this.data.accrueFundingFees(24);
+            await this.data.accrueManagedAccountFundingFees(24);
+            await this.data.recordAssetHistory();
+            await this.data.updateAIContext();
+            await this.data.saveAllEntries();
+            this.logger.success('初始化预热完成。');
+        } finally {
+            this.initialBootstrapRunning = false;
+        }
     }
     
     async advanceQuickModeHour() {

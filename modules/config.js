@@ -201,6 +201,7 @@ export const SillyViewConfig = {
             version: '2.1.0',
             max_hourly_records: 240,
             max_minute_records: 720,
+            initial_bootstrap_done: false,
             background_ai: { ...DEFAULT_BACKGROUND_AI_SETTINGS },
             // The list of assets to be created at the start of a new game
             available_assets: Object.keys(ASSET_DEFINITIONS)
