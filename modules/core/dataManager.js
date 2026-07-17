@@ -926,24 +926,9 @@ export class DataManager {
         };
     }
 
-    _selectKlineContextAssets(availableAssets, portfolio) {
-        const selected = new Set();
-        if (this.ui?.currentAsset && availableAssets.includes(this.ui.currentAsset)) {
-            selected.add(this.ui.currentAsset);
-        }
-
-        for (const assetCode of Object.keys(portfolio?.assets || {})) {
-            if (availableAssets.includes(assetCode) && (portfolio.assets[assetCode]?.trades || []).length > 0) {
-                selected.add(assetCode);
-            }
-            if (selected.size >= 3) break;
-        }
-
-        if (selected.size === 0 && availableAssets.length > 0) {
-            selected.add(availableAssets[0]);
-        }
-
-        return [...selected].slice(0, 3);
+    _selectKlineContextAssets(availableAssets) {
+        const configuredAssets = Array.isArray(availableAssets) ? availableAssets : [];
+        return [...new Set(configuredAssets)].filter(assetCode => this.config.asset_definitions[assetCode]);
     }
 
     _buildRecentKlineContext(assetCodes) {
@@ -1055,9 +1040,8 @@ export class DataManager {
         const keys = this.config.world_book_keys;
         const configState = this.getState(keys.config);
         const resolvedAssets = availableAssets || configState?.available_assets || Object.keys(this.config.asset_definitions);
-        const resolvedPortfolio = portfolio || this.getState(keys.player_portfolio) || {};
         const resolvedMarket = market || this.getState(keys.global_market) || {};
-        const klineAssetCodes = this._selectKlineContextAssets(resolvedAssets, resolvedPortfolio);
+        const klineAssetCodes = this._selectKlineContextAssets(resolvedAssets);
         const recentKlines = this._buildRecentKlineContext(klineAssetCodes);
 
         await this.updateState(keys.kline_context, () => ({
@@ -1322,8 +1306,6 @@ export class DataManager {
             owner_name: account.owner_name,
             bank_name: account.bank_name,
             bank_account_no: account.bank_account_no,
-            source_worldbook: account.source_worldbook,
-            source_entry: account.source_entry,
             worldbook_name: this.config.multi_account.control_worldbook_name,
             state_entry_name: stateEntryName,
             portfolio,
@@ -1336,6 +1318,8 @@ export class DataManager {
         const stateEntry = (entries || []).find(entry => entry.name === stateEntryName);
         if (!stateEntry?.content) return null;
         const state = JSON.parse(stateEntry.content);
+        delete state.source_worldbook;
+        delete state.source_entry;
         state.state_entry_name = stateEntryName;
         state.worldbook_name = this.config.multi_account.control_worldbook_name;
         return state;
@@ -1355,6 +1339,8 @@ export class DataManager {
             const stateEntry = entries.find(entry => entry.name === stateEntryName);
             if (!stateEntry?.content) return null;
             const state = JSON.parse(stateEntry.content);
+            delete state.source_worldbook;
+            delete state.source_entry;
             state.worldbook_name = controlName;
             state.state_entry_name = this._getManagedAccountStateEntryName(state.account_id || account.account_id);
             return state;
@@ -1475,8 +1461,8 @@ export class DataManager {
                 state.owner_name = state.owner_name || account.owner_name;
                 state.bank_name = state.bank_name || account.bank_name;
                 state.bank_account_no = state.bank_account_no || account.bank_account_no;
-                state.source_worldbook = state.source_worldbook || account.source_worldbook;
-                state.source_entry = state.source_entry || account.source_entry;
+                delete state.source_worldbook;
+                delete state.source_entry;
                 state.worldbook_name = controlName;
                 state.state_entry_name = stateEntryName;
                 state.updated_at = Date.now();
@@ -1494,8 +1480,6 @@ export class DataManager {
             bank_name: account.bank_name,
             worldbook_name: controlName,
             state_entry_name: stateEntryName,
-            source_worldbook: account.source_worldbook,
-            source_entry: account.source_entry,
         };
     }
 
@@ -1545,6 +1529,8 @@ export class DataManager {
     async _writeManagedAccountState(state) {
         const controlName = this.config.multi_account.control_worldbook_name;
         const stateEntryName = state.state_entry_name || this._getManagedAccountStateEntryName(state.account_id);
+        delete state.source_worldbook;
+        delete state.source_entry;
         state.updated_at = Date.now();
         state.worldbook_name = controlName;
         state.state_entry_name = stateEntryName;
@@ -1562,19 +1548,36 @@ export class DataManager {
     _buildManagedTradeCommandGuide() {
         return [
             '【SillyView 多账户交易指令】',
-            '账户编号必须使用 sv_accounts_query 中列出的 account_id。所有完整指令必须放在消息末尾唯一 <command>...</command> 块中。',
+            '用途：让角色 AI 操作 SillyView_accounts 中彼此独立的账户。交易前先读取 sv_accounts_query、sv_kline_context 和 sv_fx_recent_news。',
+            '输出规则：账户编号必须原样使用 sv_accounts_query 中的 account_id；资产代码必须使用 sv_kline_context 中的 code。所有指令放在回复末尾唯一的 <command>...</command> 块中，一行一条；不要把指令写在正文或代码块里。',
             '',
-            '[Trade.Buy("account_id", "BTCUSD", 1000, 2, 72000, 66000)]：买入；无仓位开多，已有多头加仓，已有空头平空。',
-            '[Trade.Sell("account_id", "ETHUSD", 500, 3, 3100, 3700)]：卖出；无仓位开空，已有空头加仓，已有多头平多。',
-            '[Trade.OpenLong("account_id", "BTCUSD", 1000, 2, 72000, 66000)]',
-            '[Trade.OpenShort("account_id", "BTCUSD", 1000, 2, 62000, 71000)]',
-            '[Trade.AddLong("account_id", "BTCUSD", 500, 2, 72000, 66000)]',
-            '[Trade.AddShort("account_id", "BTCUSD", 500, 2, 62000, 71000)]',
-            '[Trade.CloseLong("account_id", "BTCUSD")]',
-            '[Trade.CloseShort("account_id", "BTCUSD")]',
-            '[Trade.SetRisk("account_id", "BTCUSD", 73000, 65000)]：调整止盈止损，填 0 清空对应价格。',
+            '通用参数顺序：("account_id", "asset_code", amount, leverage, take_profit, stop_loss)。',
+            '- amount：本次投入的保证金，不是含杠杆后的名义仓位；必须大于 0 且不能超过账户可用现金。',
+            '- leverage：整数杠杆，最低 1，超过该资产上限时会自动压到上限；杠杆会放大盈利、亏损和爆仓风险。',
+            '- take_profit / stop_loss：触发价格，填 0 表示不设置。多头止盈应高于现价、止损应低于现价；空头相反。',
+            '- 手续费会额外从现金扣除。开仓方向与已有反向仓位冲突时，明确的 Open/Add 指令会失败，应先平掉反向仓位。',
             '',
-            'amount 是保证金/投入金额，leverage 为杠杆倍数，take_profit/stop_loss 可填 0 表示不设置。',
+            '明确操作（推荐，语义不会随现有仓位变化）：',
+            '[Trade.OpenLong("account_id", "BTCUSD", 1000, 2, 72000, 66000)]：无仓位时开多。',
+            '[Trade.AddLong("account_id", "BTCUSD", 500, 2, 72000, 66000)]：给已有多头加仓。',
+            '[Trade.CloseLong("account_id", "BTCUSD")]：全额平掉该资产多头，amount 等参数无需填写。',
+            '[Trade.OpenShort("account_id", "BTCUSD", 1000, 2, 62000, 71000)]：无仓位时开空。',
+            '[Trade.AddShort("account_id", "BTCUSD", 500, 2, 62000, 71000)]：给已有空头加仓。',
+            '[Trade.CloseShort("account_id", "BTCUSD")]：全额平掉该资产空头，amount 等参数无需填写。',
+            '[Trade.SetRisk("account_id", "BTCUSD", 73000, 65000)]：只调整已有仓位的止盈、止损；对应值填 0 可清空。',
+            '',
+            '快捷操作（行为取决于当前仓位）：',
+            '[Trade.Buy("account_id", "BTCUSD", 1000, 2, 72000, 66000)]：无仓位则开多，已有多头则加多，已有空头则全额平空。',
+            '[Trade.Sell("account_id", "ETHUSD", 500, 3, 3100, 3700)]：无仓位则开空，已有空头则加空，已有多头则全额平多。',
+            '使用 Buy/Sell 平仓时，amount、leverage、止盈和止损参数会被忽略；为避免误判，平仓优先使用 CloseLong/CloseShort。',
+            '',
+            '多账户示例：',
+            '<command>',
+            '[Trade.OpenLong("acct_example_a", "BTCUSD", 1000, 2, 72000, 66000)]',
+            '[Trade.OpenShort("acct_example_b", "ETHUSD", 800, 3, 2800, 3500)]',
+            '[Trade.SetRisk("acct_example_c", "BTCUSD", 74000, 0)]',
+            '</command>',
+            '只输出确实要执行的操作；观望时不要生成交易指令。每个账户独立判断、独立计算资金和持仓，不得混用 account_id。',
         ].join('\n');
     }
 
@@ -1662,7 +1665,7 @@ export class DataManager {
         if (accounts.length > 0) {
             lines.push('已写入角色专属账号状态词条:');
             for (const account of accounts) {
-                lines.push(`- ${account.account_id} | ${account.owner_name} | ${account.bank_name} | ${account.state_entry_name} | 来源 ${account.source_worldbook}/${account.source_entry || '未命名词条'}`);
+                lines.push(`- ${account.account_id} | ${account.owner_name} | ${account.bank_name} | ${account.state_entry_name}`);
             }
         } else {
             lines.push('未识别到开户行账户。请确认开户行所在世界书仍绑定在当前角色卡主/附加世界书中，并且词条包含“开户行”和“户名/账户名/姓名”及“余额/存款/现金”等字段。');
@@ -1710,7 +1713,7 @@ export class DataManager {
         if (scanDiagnostics) {
             entries.push({
                 name: this.config.multi_account.scan_report_key,
-                enabled: true,
+                enabled: false,
                 content: this._buildManagedScanReport(scanDiagnostics, accountEntries || []),
             });
         }
@@ -1729,6 +1732,8 @@ export class DataManager {
             const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
             this._upsertWorldbookEntry(entries, this.config.world_book_keys.kline_context, JSON.stringify(klineContext, null, 2), true);
             this._upsertWorldbookEntry(entries, this.config.multi_account.recent_news_key, this._buildManagedRecentNews(), true);
+            const scanReportEntry = entries.find(entry => entry.name === this.config.multi_account.scan_report_key);
+            if (scanReportEntry) scanReportEntry.enabled = false;
             return entries;
         });
     }
@@ -1751,7 +1756,7 @@ export class DataManager {
                 updated_at: Date.now(),
                 accounts: accountEntries,
             }, null, 2), true);
-            this._upsertWorldbookEntry(entries, this.config.multi_account.scan_report_key, this._buildManagedScanReport(scanResult.diagnostics, accountEntries), true);
+            this._upsertWorldbookEntry(entries, this.config.multi_account.scan_report_key, this._buildManagedScanReport(scanResult.diagnostics, accountEntries), false);
             return entries;
         });
         await this.syncManagedAccountsWorldbook();
