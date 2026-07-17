@@ -168,7 +168,6 @@ export const SillyViewConfig = {
     market_context_worldbooks: ['SillyView_fx'],
     multi_account: {
         control_worldbook_name: 'SillyView_accounts',
-        account_worldbook_prefix: 'SillyView_account_',
         account_index_key: 'sv_accounts_index',
         account_state_key: 'sv_account_state',
         command_entry_key: 'sv_accounts_trade_commands',

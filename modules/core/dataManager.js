@@ -932,6 +932,7 @@ export class DataManager {
         const lorebookName = await this._getLorebookName();
         const controlName = this.config.multi_account.control_worldbook_name;
         const fxName = 'SillyView_fx';
+        const legacyAccountWorldbookPrefix = 'SillyView_account_';
         const names = [charBooks.primary, ...(charBooks.additional || [])].filter(Boolean);
         const targets = [];
         const skipped = [];
@@ -941,7 +942,7 @@ export class DataManager {
                 worldbookName === lorebookName ? '主状态世界书' :
                 worldbookName === controlName ? '多账户控制世界书' :
                 worldbookName === fxName ? '行情上下文世界书' :
-                worldbookName.startsWith(this.config.multi_account.account_worldbook_prefix) ? '多账户状态世界书' :
+                worldbookName.startsWith(legacyAccountWorldbookPrefix) ? '历史多账户状态世界书' :
                 '';
 
             if (reason) {
@@ -1036,7 +1037,11 @@ export class DataManager {
         return entry;
     }
 
-    _createManagedAccountState(account, worldbookName) {
+    _getManagedAccountStateEntryName(accountId) {
+        return `${this.config.multi_account.account_state_key}_${accountId}`;
+    }
+
+    _createManagedAccountState(account, stateEntryName) {
         const portfolio = this.dependencies.win._.cloneDeep(this.config.default_game_state.player_portfolio);
         portfolio.cash = account.initial_cash;
         portfolio.starting_cash = account.initial_cash;
@@ -1054,28 +1059,58 @@ export class DataManager {
             bank_account_no: account.bank_account_no,
             source_worldbook: account.source_worldbook,
             source_entry: account.source_entry,
-            worldbook_name: worldbookName,
+            worldbook_name: this.config.multi_account.control_worldbook_name,
+            state_entry_name: stateEntryName,
             portfolio,
             created_at: Date.now(),
             updated_at: Date.now(),
         };
     }
 
-    async _ensureManagedAccountWorldbook(account) {
-        const charName = await this._getCharacterName();
-        const worldbookName = `${this.config.multi_account.account_worldbook_prefix}${this._sanitizeName(charName)}_${account.account_id}`;
-        const stateKey = this.config.multi_account.account_state_key;
-        const initialState = this._createManagedAccountState(account, worldbookName);
-        await this._ensureWorldbookExists(worldbookName, [{
-            name: stateKey,
-            enabled: true,
-            content: JSON.stringify(initialState, null, 2),
-        }]);
+    _parseManagedAccountStateFromEntries(entries, stateEntryName) {
+        const stateEntry = (entries || []).find(entry => entry.name === stateEntryName);
+        if (!stateEntry?.content) return null;
+        const state = JSON.parse(stateEntry.content);
+        state.state_entry_name = stateEntryName;
+        state.worldbook_name = this.config.multi_account.control_worldbook_name;
+        return state;
+    }
 
-        await this.th.updateWorldbookWith(worldbookName, entries => {
-            let stateEntry = entries.find(entry => entry.name === stateKey);
+    async _readLegacyManagedAccountState(account) {
+        const controlName = this.config.multi_account.control_worldbook_name;
+        if (!account?.worldbook_name || account.worldbook_name === controlName) return null;
+
+        try {
+            const entries = await this.th.getWorldbook(account.worldbook_name);
+            const stateEntryName = account.state_entry_name || this.config.multi_account.account_state_key;
+            const stateEntry = entries.find(entry => entry.name === stateEntryName);
+            if (!stateEntry?.content) return null;
+            const state = JSON.parse(stateEntry.content);
+            state.worldbook_name = controlName;
+            state.state_entry_name = this._getManagedAccountStateEntryName(state.account_id || account.account_id);
+            return state;
+        } catch (error) {
+            this.logger.warn(`读取旧账号世界书失败: ${account.worldbook_name}`, error);
+            return null;
+        }
+    }
+
+    async _ensureManagedAccountEntry(account) {
+        const controlName = this.config.multi_account.control_worldbook_name;
+        const stateEntryName = this._getManagedAccountStateEntryName(account.account_id);
+        const initialState = this._createManagedAccountState(account, stateEntryName);
+        const previousIndex = await this._readManagedAccountIndex();
+        const previousAccount = previousIndex.find(item => item.account_id === account.account_id);
+        const legacyState = await this._readLegacyManagedAccountState(previousAccount);
+
+        await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries([], []));
+        await this.th.updateWorldbookWith(controlName, entries => {
+            let stateEntry = entries.find(entry => entry.name === stateEntryName);
             if (!stateEntry) {
-                this._upsertWorldbookEntry(entries, stateKey, JSON.stringify(initialState, null, 2));
+                const state = legacyState || initialState;
+                state.worldbook_name = controlName;
+                state.state_entry_name = stateEntryName;
+                this._upsertWorldbookEntry(entries, stateEntryName, JSON.stringify(state, null, 2));
                 return entries;
             }
 
@@ -1086,11 +1121,12 @@ export class DataManager {
                 state.bank_account_no = state.bank_account_no || account.bank_account_no;
                 state.source_worldbook = state.source_worldbook || account.source_worldbook;
                 state.source_entry = state.source_entry || account.source_entry;
-                state.worldbook_name = worldbookName;
+                state.worldbook_name = controlName;
+                state.state_entry_name = stateEntryName;
                 state.updated_at = Date.now();
                 stateEntry.content = JSON.stringify(state, null, 2);
             } catch (error) {
-                stateEntry.content = JSON.stringify(this._createManagedAccountState(account, worldbookName), null, 2);
+                stateEntry.content = JSON.stringify(initialState, null, 2);
             }
             stateEntry.enabled = true;
             return entries;
@@ -1100,7 +1136,8 @@ export class DataManager {
             account_id: account.account_id,
             owner_name: account.owner_name,
             bank_name: account.bank_name,
-            worldbook_name: worldbookName,
+            worldbook_name: controlName,
+            state_entry_name: stateEntryName,
             source_worldbook: account.source_worldbook,
             source_entry: account.source_entry,
         };
@@ -1121,19 +1158,28 @@ export class DataManager {
 
     async getManagedAccountStates() {
         const index = await this._readManagedAccountIndex();
-        const stateKey = this.config.multi_account.account_state_key;
         const states = [];
+        const controlName = this.config.multi_account.control_worldbook_name;
+        let controlEntries = [];
+
+        try {
+            controlEntries = await this.th.getWorldbook(controlName);
+        } catch (error) {
+            controlEntries = [];
+        }
 
         for (const account of index) {
             try {
-                const entries = await this.th.getWorldbook(account.worldbook_name);
-                const stateEntry = entries.find(entry => entry.name === stateKey);
-                if (!stateEntry?.content) continue;
-                const state = JSON.parse(stateEntry.content);
-                state.worldbook_name = account.worldbook_name;
+                const stateEntryName = account.state_entry_name || this._getManagedAccountStateEntryName(account.account_id);
+                let state = this._parseManagedAccountStateFromEntries(controlEntries, stateEntryName);
+                if (!state) state = await this._readLegacyManagedAccountState(account);
+                if (!state) continue;
+                state.account_id = state.account_id || account.account_id;
+                state.state_entry_name = stateEntryName;
+                state.worldbook_name = controlName;
                 states.push(state);
             } catch (error) {
-                this.logger.warn(`读取账号世界书失败: ${account.worldbook_name}`, error);
+                this.logger.warn(`读取账号状态词条失败: ${account.state_entry_name || account.account_id}`, error);
             }
         }
 
@@ -1141,15 +1187,18 @@ export class DataManager {
     }
 
     async _writeManagedAccountState(state) {
-        const stateKey = this.config.multi_account.account_state_key;
+        const controlName = this.config.multi_account.control_worldbook_name;
+        const stateEntryName = state.state_entry_name || this._getManagedAccountStateEntryName(state.account_id);
         state.updated_at = Date.now();
-        await this._ensureWorldbookExists(state.worldbook_name, [{
-            name: stateKey,
+        state.worldbook_name = controlName;
+        state.state_entry_name = stateEntryName;
+        await this._ensureWorldbookExists(controlName, [{
+            name: stateEntryName,
             enabled: true,
             content: JSON.stringify(state, null, 2),
         }]);
-        await this.th.updateWorldbookWith(state.worldbook_name, entries => {
-            this._upsertWorldbookEntry(entries, stateKey, JSON.stringify(state, null, 2), true);
+        await this.th.updateWorldbookWith(controlName, entries => {
+            this._upsertWorldbookEntry(entries, stateEntryName, JSON.stringify(state, null, 2), true);
             return entries;
         });
     }
@@ -1255,9 +1304,9 @@ export class DataManager {
         }
 
         if (accounts.length > 0) {
-            lines.push('已建立角色专属账号世界书:');
+            lines.push('已写入角色专属账号状态词条:');
             for (const account of accounts) {
-                lines.push(`- ${account.account_id} | ${account.owner_name} | ${account.bank_name} | ${account.worldbook_name} | 来源 ${account.source_worldbook}/${account.source_entry || '未命名词条'}`);
+                lines.push(`- ${account.account_id} | ${account.owner_name} | ${account.bank_name} | ${account.state_entry_name} | 来源 ${account.source_worldbook}/${account.source_entry || '未命名词条'}`);
             }
         } else {
             lines.push('未识别到开户行账户。请确认开户行所在世界书仍绑定在当前角色卡主/附加世界书中，并且词条包含“开户行”和“户名/账户名/姓名”及“余额/存款/现金”等字段。');
@@ -1274,7 +1323,7 @@ export class DataManager {
                 name: this.config.multi_account.account_index_key,
                 enabled: true,
                 content: JSON.stringify({
-                    comment: 'SillyView 多账户索引。账号完整状态保存在各自 SillyView_account_* 世界书中。',
+                    comment: 'SillyView 多账户索引。账号完整状态保存在本世界书内各自的 sv_account_state_* 词条中。',
                     updated_at: Date.now(),
                     accounts: accountEntries,
                 }, null, 2),
@@ -1334,7 +1383,7 @@ export class DataManager {
         const controlName = this.config.multi_account.control_worldbook_name;
         const accountEntries = [];
         for (const account of accounts) {
-            accountEntries.push(await this._ensureManagedAccountWorldbook(account));
+            accountEntries.push(await this._ensureManagedAccountEntry(account));
         }
 
         const states = await this.getManagedAccountStates();
@@ -1342,7 +1391,7 @@ export class DataManager {
         await this._ensureAdditionalWorldbook(controlName);
         await this.th.updateWorldbookWith(controlName, entries => {
             this._upsertWorldbookEntry(entries, this.config.multi_account.account_index_key, JSON.stringify({
-                comment: 'SillyView 多账户索引。账号完整状态保存在各自 SillyView_account_* 世界书中。',
+                comment: 'SillyView 多账户索引。账号完整状态保存在本世界书内各自的 sv_account_state_* 词条中。',
                 updated_at: Date.now(),
                 accounts: accountEntries,
             }, null, 2), true);
