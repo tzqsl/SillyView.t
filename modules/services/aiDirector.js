@@ -94,25 +94,22 @@ export class AIDirector {
         }).join('、');
         taskLines.push(`本回合必须推进以下全部相关资产：${requiredAssetList}。`);
         taskLines.push('你现在可以用目标指令操盘：没有有效长线目标的相关资产，优先设置一个新的长线目标；没有有效短线目标的当前重点资产，设置一个新的短线目标。已有目标未到期时，新闻、价格推进和 pattern 必须与目标方向或诱多/诱空路径一致。');
-        taskLines.push('目标指令格式: [Market.SetLongTarget(asset_code, target_price, hours, "pattern", "reason", confidence)]，hours 建议 4-24；[Market.SetShortTarget(asset_code, target_price, minutes, "pattern", "reason", confidence)]，minutes 建议 8-90。长线与短线共用同一套预设 pattern，必须从下列模式中选择。');
-        taskLines.push('目标涨跌方向由 target_price 相对当前价决定：pattern 只描述到达目标前的路径与波动，不能与目标价方向矛盾。confidence 为 0-1 数字，数值越大表示走势越强地贴合目标。');
-        taskLines.push('预设 pattern 含义: bull_trend=稳步上涨；bear_trend=稳步下跌；consolidation=目标价接近现价的区间整理；fake_breakout=先向上假突破再转向下跌目标；fake_breakdown=先向下假跌破再转向上涨目标；washout=快速下探洗盘后转向上涨目标。');
-        taskLines.push('预设 pattern 含义（续）: bull_trap=诱多后转向下跌目标；bear_trap=诱空后转向上涨目标；panic_sell=恐慌性快速下跌；short_squeeze=逼空式快速上涨。上涨目标优先用 bull_trend、fake_breakdown、washout、bear_trap、short_squeeze；下跌目标优先用 bear_trend、fake_breakout、bull_trap、panic_sell。');
-        taskLines.push('目标指令示例: 上涨长线 [Market.SetLongTarget("EURUSD", 1.1000, 12, "bull_trend", "美元走弱推动欧元上行", 0.7)]；先诱多后下跌的短线 [Market.SetShortTarget("EURUSD", 1.0860, 30, "bull_trap", "上破失败后卖盘回流", 0.75)]。目标到期后系统会自动删除并等待你设置下一段目标。');
-        taskLines.push('如果要取消目标，使用 [Market.ClearTarget(asset_code, "long"|"short"|"all")]。');
+        taskLines.push('目标指令格式: [Market.SetLongTarget(asset_code, target_price, hours, "pattern", "reason", confidence)] 或 [Market.SetShortTarget(asset_code, target_price, minutes, "pattern", "reason", confidence)]；长短线共用目标 pattern，时长建议分别为4-24小时、8-90分钟。');
+        taskLines.push('target_price 决定目标涨跌方向，pattern 只描述路径；confidence 为0-1且越大越贴合目标。目标 pattern 含义和方向配对以参考资料为准，已有目标未到期时不得长期反向推进。');
+        taskLines.push('取消目标使用 [Market.ClearTarget(asset_code, "long"|"short"|"all")]；目标到期后系统自动删除。');
         taskLines.push('新增新闻必须使用 [Market.AddNews("asset_code或GLOBAL", "新闻正文", duration_hours)]，duration_hours 为 1-168 的有效小时数。新闻会在有效期内影响后续市场判断，到期后自动退出后台上下文。');
         taskLines.push('必须让分K走势服务于已设立的短线/长线目标：短线目标决定分K入场节奏，长线目标决定小时级方向过滤。若分K信号与目标背离，可以用洗盘、回踩、假突破等 pattern 解释，但不要长期反向推进。');
         taskLines.push(`对于每个相关资产，都必须分别使用 [Market.Advance] 或 [Market.AdvanceSeries] 指令决定其${timeUnit}的收盘价和走势。当前正在查看的 ${currentAssetName} 可以作为叙事重点，但不能忽略其他已交易或持仓资产。`);
         taskLines.push(`timeframe 使用 "${currentTimeframe}"。close_price / final_close_price 必须是数字。pattern 从 bull_run、bear_crash、volatile、consolidation、reversal_bull、reversal_bear、sideways、fake_breakout、fake_breakdown、washout、bull_trap、bear_trap 中选择。`);
-        taskLines.push('必须同时使用 [Time.Set] 指令推进世界时间。');
+        taskLines.push('必须同时使用 [Time.Set("YYYY年MM月DD日-星期X-HH:MM", "时段", "季节", "天气")] 推进世界时间。');
         taskLines.push('只有当本回合发生目标切换、关键转折、异常波动或宏观事件时才添加一条限时新闻；普通噪声推进不要添加新闻。不要使用 <headline> 标签。');
         taskLines.push('最后必须输出一个且只有一个 <command>...</command> 块；所有完整指令都放在这个块内。');
         taskLines.push('除最后的 <command> 块外，不要在正文、解释或示例中输出完整的 [Module.Action(...)] 指令。');
         
-        const contextString = `<context>{{newline}}${contextLines.join('{{newline}}')}{{newline}}</context>`;
-        const taskString = `<task>{{newline}}${taskLines.join('{{newline}}')}{{newline}}</task>`;
+        const contextString = `<context>\n${contextLines.join('\n')}\n</context>`;
+        const taskString = `<task>\n${taskLines.join('\n')}\n</task>`;
         
-        return `${contextString}{{newline}}{{newline}}${taskString}`;
+        return `${contextString}\n\n${taskString}`;
     }
 
     buildSyncPrompt(quickModeStartState, quickModeEndState) {
@@ -169,7 +166,7 @@ export class AIDirector {
         // AI Instruction
         contextLines.push(`\n[导演指示：请仅根据以上市场变化和有效新闻生成一段承上启下的市场评论。不要读取或推断玩家账户，不要使用任何指令。]`);
 
-        const contextString = `<context>{{newline}}${contextLines.join('{{newline}}')}{{newline}}</context>`;
+        const contextString = `<context>\n${contextLines.join('\n')}\n</context>`;
         
         return contextString;
     }
