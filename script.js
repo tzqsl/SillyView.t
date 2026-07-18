@@ -13,6 +13,7 @@ import { AIDirector } from './modules/services/aiDirector.js';
 import { BackgroundAIService } from './modules/services/backgroundAIService.js';
 import { MarketSimulator } from './modules/services/marketSimulator.js';
 import { PositionCalculator } from './modules/services/positionCalculator.js';
+import { RoleDecisionService } from './modules/services/roleDecisionService.js';
 import { UIRenderer } from './modules/ui/uiRenderer.js';
 import { EventHandler } from './modules/ui/eventHandler.js';
 import { Modals } from './modules/ui/modals.js';
@@ -75,6 +76,7 @@ async function mainInitialize() {
         const data = new DataManager({ ...baseDependencies, positionCalculator });
         const marketSimulator = new MarketSimulator({ ...baseDependencies, data });
         const backgroundAI = new BackgroundAIService({ ...baseDependencies, data });
+        const roleDecision = new RoleDecisionService({ ...baseDependencies, data, commandParser });
 
         const tradeView = new TradeView({ ...baseDependencies, data, positionCalculator });
         const assetsView = new AssetsView({ ...baseDependencies, data, positionCalculator });
@@ -96,7 +98,7 @@ async function mainInitialize() {
         const aiDirector = new AIDirector({ ...baseDependencies, data, positionCalculator });
         aiDirector.ui = ui;
 
-        const events = new EventHandler({ ...baseDependencies, data, ui, modals, positionCalculator });
+        const events = new EventHandler({ ...baseDependencies, data, ui, modals, positionCalculator, roleDecision });
         
         app.init({
             ...baseDependencies,
@@ -106,6 +108,7 @@ async function mainInitialize() {
             commandParser,
             aiDirector,
             backgroundAI,
+            roleDecision,
             marketSimulator,
             positionCalculator,
             modals,

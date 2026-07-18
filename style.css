@@ -506,6 +506,7 @@
 .sv-debug-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
 .sv-debug-grid { display: grid; grid-template-columns: minmax(16rem, 0.8fr) minmax(20rem, 1.2fr); gap: 0.75rem; }
 .sv-debug-grid section { min-width: 0; }
+.sv-debug-grid .sv-debug-full-width { grid-column: 1 / -1; }
 .sv-debug-grid h4 { margin: 0 0 0.375rem; font-size: 0.8125rem; color: var(--text-gray-300); }
 .sv-debug-grid pre {
     height: 22rem; margin: 0; padding: 0.75rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;

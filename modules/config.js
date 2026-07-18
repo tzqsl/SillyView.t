@@ -92,13 +92,21 @@ const DEFAULT_BACKGROUND_AI_SETTINGS = {
     timeout_ms: 60000,
 };
 
+const DEFAULT_ROLE_AI_SETTINGS = {
+    enabled: false,
+    debug_enabled: false,
+    max_observation_rounds: 4,
+    timeout_ms: 60000,
+};
+
 export const SillyViewConfig = {
-    version: '2.5.1',
+    version: '2.6.0',
     extension_name: 'SillyView',
 
     // Expose asset definitions for other modules
     asset_definitions: ASSET_DEFINITIONS,
     background_ai_defaults: DEFAULT_BACKGROUND_AI_SETTINGS,
+    role_ai_defaults: DEFAULT_ROLE_AI_SETTINGS,
     market_context_worldbooks: ['SillyView_fx'],
     multi_account: {
         control_worldbook_name: 'SillyView_accounts',
@@ -132,12 +140,13 @@ export const SillyViewConfig = {
     // Default state for a new game
     default_game_state: {
         config: {
-            version: '2.5.1',
+            version: '2.6.0',
             max_hourly_records: 240,
             max_minute_records: 720,
             initial_bootstrap_done: false,
             auto_advance: { enabled: false },
             background_ai: { ...DEFAULT_BACKGROUND_AI_SETTINGS },
+            role_ai: { ...DEFAULT_ROLE_AI_SETTINGS },
             // The list of assets to be created at the start of a new game
             available_assets: Object.keys(ASSET_DEFINITIONS)
         },

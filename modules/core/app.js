@@ -24,6 +24,8 @@ export class SillyViewApp {
         this.autoAdvanceTimer = null;
         this.autoAdvanceRunning = false;
         this.autoAdvanceElapsedMinutes = 0;
+        this.pendingRoleTurnContext = null;
+        this.lastRoleInjectionId = null;
 
         // Dependencies are set in init() by the main script.js entry point
         this.data = null;
@@ -32,6 +34,7 @@ export class SillyViewApp {
         this.commandParser = null;
         this.aiDirector = null;
         this.backgroundAI = null;
+        this.roleDecision = null;
         this.marketSimulator = null;
         this.positionCalculator = null;
         this.logger = null;
@@ -47,6 +50,7 @@ export class SillyViewApp {
         this.commandParser = dependencies.commandParser;
         this.aiDirector = dependencies.aiDirector;
         this.backgroundAI = dependencies.backgroundAI;
+        this.roleDecision = dependencies.roleDecision;
         this.marketSimulator = dependencies.marketSimulator;
         this.positionCalculator = dependencies.positionCalculator;
         this.tradeView = dependencies.tradeView;
@@ -432,6 +436,41 @@ export class SillyViewApp {
 
     async finishRoleObservation(sessionId = null, options = {}) {
         return await this.data.endManagedObservationSession(sessionId, options);
+    }
+
+    captureRoleTurnForUserMessage(messageId) {
+        if (!this.roleDecision?.isEnabled() && !this.roleDecision?.isDebugEnabled()) return;
+        const context = this.roleDecision.captureTurnContext(messageId);
+        if (!context) return;
+        if (this.roleDecision.isEnabled()) this.pendingRoleTurnContext = context;
+        this.events?.refreshRoleDebugWindow?.();
+    }
+
+    async prepareFrontendRoleInjection(type, option = {}, dryRun = false) {
+        if (dryRun || !this.pendingRoleTurnContext || !this.roleDecision?.isEnabled()) return;
+        if (option?.automatic_trigger || !['normal', 'continue', undefined, null].includes(type)) return;
+        const context = this.pendingRoleTurnContext;
+        this.pendingRoleTurnContext = null;
+
+        try {
+            const result = await this.roleDecision.run(context);
+            if (!result?.frontend_injection) return;
+            if (!this.th?.injectPrompts) throw new Error('TavernHelper.injectPrompts 不可用。');
+            const injectionId = `sillyview-role-context-${context.user_message_id}-${Date.now()}`;
+            this.th.injectPrompts([{
+                id: injectionId,
+                position: 'in_chat',
+                depth: 0,
+                role: 'system',
+                content: result.frontend_injection,
+                should_scan: false,
+            }], { once: true });
+            this.lastRoleInjectionId = injectionId;
+            this.logger.success(`角色决策已注入本次前台生成: message ${context.user_message_id}`);
+        } catch (error) {
+            this.logger.error('角色决策流程失败，前台生成将继续但不注入角色决策。', error);
+            this.dependencies.win.toastr?.warning(`角色决策流程失败: ${error.message || error}`);
+        }
     }
 
     async processGeneratedMarketText(msg, options = {}) {
@@ -1081,11 +1120,17 @@ export class SillyViewApp {
         }
         if (eventTypes.MESSAGE_SENT) {
             eventSource.on(eventTypes.MESSAGE_SENT, (id) => {
+                this.captureRoleTurnForUserMessage(id);
                 setTimeout(() => {
                     this.advanceMinutesForUserMessage(id).catch(error => {
                         this.logger.warn('Failed to advance minute candles for user message:', error);
                     });
                 }, 100);
+            });
+        }
+        if (eventTypes.GENERATION_AFTER_COMMANDS) {
+            eventSource.on(eventTypes.GENERATION_AFTER_COMMANDS, async (type, option, dryRun) => {
+                await this.prepareFrontendRoleInjection(type, option, dryRun);
             });
         }
         eventSource.on(eventTypes.MESSAGE_RECEIVED, (id) => this.debouncedMainProcessor(id, false));
@@ -1102,6 +1147,7 @@ export class SillyViewApp {
         });
         eventSource.on(eventTypes.CHAT_CHANGED, () => {
             this.previousStateSnapshot = null;
+            this.pendingRoleTurnContext = null;
             this.stopAutoAdvanceTimer();
             if (this.ui.isPanelVisible) {
                 this.data.loadInitialState();

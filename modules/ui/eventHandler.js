@@ -16,6 +16,7 @@ export class EventHandler {
         this.data = dependencies.data;
         this.modals = dependencies.modals;
         this.positionCalculator = dependencies.positionCalculator || dependencies.data?.positionCalculator;
+        this.roleDecision = dependencies.roleDecision;
         this.resizeTimeout = null;
     }
 
@@ -26,6 +27,43 @@ export class EventHandler {
             return config;
         });
         return settings;
+    }
+
+    async setRoleAIEnabled(enabled) {
+        await this.data.updateState(this.dependencies.config.world_book_keys.config, config => {
+            config.role_ai = {
+                ...this.dependencies.config.role_ai_defaults,
+                ...(config.role_ai || {}),
+                enabled: Boolean(enabled),
+            };
+            return config;
+        });
+    }
+
+    async setRoleDebugEnabled(enabled) {
+        await this.data.updateState(this.dependencies.config.world_book_keys.config, config => {
+            config.role_ai = {
+                ...this.dependencies.config.role_ai_defaults,
+                ...(config.role_ai || {}),
+                debug_enabled: Boolean(enabled),
+            };
+            return config;
+        });
+    }
+
+    refreshRoleDebugWindow() {
+        const captureEl = this.parentDoc.getElementById('sv-role-capture-debug');
+        const pipelineEl = this.parentDoc.getElementById('sv-role-pipeline-debug');
+        if (captureEl) {
+            captureEl.textContent = this.roleDecision?.lastCapture
+                ? JSON.stringify(this.roleDecision.lastCapture, null, 2)
+                : '尚未截取用户消息。';
+        }
+        if (pipelineEl) {
+            pipelineEl.textContent = this.roleDecision?.lastRun
+                ? JSON.stringify(this.roleDecision.lastRun, null, 2)
+                : '尚未运行。';
+        }
     }
 
     async openObservationDebugWindow() {
@@ -60,6 +98,14 @@ export class EventHandler {
                         <h4>二轮临时上下文</h4>
                         <pre id="sv-observation-debug-context">尚未激活观察数据。</pre>
                     </section>
+                    <section class="sv-debug-full-width">
+                        <h4>自动截取的前文与用户输入</h4>
+                        <pre id="sv-role-capture-debug">尚未截取用户消息。</pre>
+                    </section>
+                    <section class="sv-debug-full-width">
+                        <h4>最近一次角色决策管线</h4>
+                        <pre id="sv-role-pipeline-debug">尚未运行。</pre>
+                    </section>
                 </div>
             </div>`;
         this.parentDoc.body.appendChild(modal);
@@ -70,6 +116,7 @@ export class EventHandler {
             const state = await this.data.getManagedObservationDebugState();
             stateEl.textContent = JSON.stringify(state, null, 2);
             if (state.session?.context) contextEl.textContent = state.session.context;
+            this.refreshRoleDebugWindow();
         };
         const cleanupAndClose = async () => {
             await this.app.finishRoleObservation(null, { markObserved: false });
@@ -543,12 +590,28 @@ export class EventHandler {
             sidebar.addEventListener('change', (event) => {
                 const leverageToggle = event.target.closest('#sillyview-leverage-mode-toggle');
                 const autoAdvanceToggle = event.target.closest('#sv-auto-advance-enabled');
+                const roleAIToggle = event.target.closest('#sv-role-ai-enabled');
+                const roleDebugToggle = event.target.closest('#sv-role-debug-enabled');
                 if (leverageToggle) {
                     this.ui.setTradeMode(leverageToggle.checked ? 'leverage' : 'spot');
                 } else if (autoAdvanceToggle) {
                     this.app.setAutoAdvanceEnabled(autoAdvanceToggle.checked).catch(error => {
                         this.logger.error('切换实时自动推进失败:', error);
                         this.dependencies.win.toastr.error(`切换实时自动推进失败: ${error.message || error}`);
+                    });
+                } else if (roleAIToggle) {
+                    this.setRoleAIEnabled(roleAIToggle.checked).then(() => {
+                        this.dependencies.win.toastr.info(roleAIToggle.checked ? '角色决策流程已启用。' : '角色决策流程已关闭。');
+                    }).catch(error => {
+                        this.logger.error('切换角色决策流程失败:', error);
+                        this.dependencies.win.toastr.error(`切换角色决策流程失败: ${error.message || error}`);
+                    });
+                } else if (roleDebugToggle) {
+                    this.setRoleDebugEnabled(roleDebugToggle.checked).then(() => {
+                        this.dependencies.win.toastr.info(roleDebugToggle.checked ? '角色截取调试已启用。' : '角色截取调试已关闭。');
+                    }).catch(error => {
+                        this.logger.error('切换角色截取调试失败:', error);
+                        this.dependencies.win.toastr.error(`切换角色截取调试失败: ${error.message || error}`);
                     });
                 }
             });

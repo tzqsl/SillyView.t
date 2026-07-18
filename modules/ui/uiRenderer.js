@@ -283,6 +283,8 @@ export class UIRenderer {
     renderSettingsTab(container) {
         const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
         const autoAdvanceEnabled = Boolean(configState.auto_advance?.enabled);
+        const roleAIEnabled = Boolean(configState.role_ai?.enabled);
+        const roleDebugEnabled = Boolean(configState.role_ai?.debug_enabled);
         const bgAI = this._getBackgroundAISettings();
         const sourceOptions = ['openai', 'claude', 'openrouter', 'google', 'mistral', 'cohere']
             .map(source => `<option value="${source}" ${bgAI.source === source ? 'selected' : ''}>${source}</option>`)
@@ -335,6 +337,23 @@ export class UIRenderer {
                         </div>
                         <button id="sv-save-bg-ai-btn" class="sv-button sv-button-blue" style="width:100%;">保存后台模型设置</button>
                     </div>
+                </div>
+                <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--bg-gray-700); margin-bottom: 1rem;">
+                    <h4 style="font-weight: 600; color: var(--cyan-400); margin-bottom: 0.75rem;">角色决策模型</h4>
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+                        <span style="font-size:0.875rem; color:var(--text-gray-300);">发送前生成心理与行为</span>
+                        <span class="sv-toggle-switch">
+                            <input type="checkbox" id="sv-role-ai-enabled" ${roleAIEnabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </span>
+                    </label>
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-top:0.75rem;">
+                        <span style="font-size:0.875rem; color:var(--text-gray-300);">自动记录截取调试</span>
+                        <span class="sv-toggle-switch">
+                            <input type="checkbox" id="sv-role-debug-enabled" ${roleDebugEnabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </span>
+                    </label>
                 </div>
                 <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--bg-gray-700); margin-bottom: 1rem;">
                     <h4 style="font-weight: 600; color: var(--cyan-400); margin-bottom: 0.5rem;">角色观察调试</h4>
