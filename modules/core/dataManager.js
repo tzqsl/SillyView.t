@@ -8,6 +8,7 @@ import { Logger } from '../logger.js';
 import { SillyViewConfig } from '../config.js';
 
 const LEGACY_MANAGED_ACCOUNT_WORLDBOOK_PREFIX = 'SillyView_account_';
+const DEPRECATED_MANAGED_ACCOUNT_ENTRIES = new Set(['sv_accounts_query', 'sv_accounts_scan_report']);
 
 export class DataManager {
     constructor(dependencies) {
@@ -552,8 +553,7 @@ export class DataManager {
 
     _getPreferredAfterKey(key) {
         const keys = this.config.world_book_keys;
-        if (key === keys.kline_context) return keys.dialogue_context;
-        if (key === keys.market_overview) return keys.kline_context;
+        if (key === keys.market_overview) return keys.dialogue_context;
         if (key === keys.market_targets) return keys.market_overview;
         return null;
     }
@@ -592,7 +592,6 @@ export class DataManager {
         const needsEnsure =
             this.contextEntriesEnsuredFor !== lorebookName ||
             !this._stateCache.has(keys.dialogue_context) ||
-            !this._stateCache.has(keys.kline_context) ||
             !this._stateCache.has(keys.market_overview) ||
             !this._stateCache.has(keys.market_targets) ||
             !this._stateCache.has(keys.news_archive) ||
@@ -605,6 +604,9 @@ export class DataManager {
     }
 
     async ensureContextEntries(lorebookName) {
+        const klineKey = this.config.world_book_keys.kline_context;
+        await this.th.updateWorldbookWith(lorebookName, entries => entries.filter(entry => entry.name !== klineKey));
+        this._stateCache.delete(klineKey);
         await this.ensureContextEntry(
             lorebookName,
             this.config.world_book_keys.dialogue_context,
@@ -612,15 +614,9 @@ export class DataManager {
         );
         await this.ensureContextEntry(
             lorebookName,
-            this.config.world_book_keys.kline_context,
-            this.config.default_game_state.kline_context,
-            { afterKey: this.config.world_book_keys.dialogue_context }
-        );
-        await this.ensureContextEntry(
-            lorebookName,
             this.config.world_book_keys.market_overview,
             this.config.default_game_state.market_overview,
-            { enabled: false, afterKey: this.config.world_book_keys.kline_context }
+            { enabled: false, afterKey: this.config.world_book_keys.dialogue_context }
         );
         await this.ensureContextEntry(
             lorebookName,
@@ -723,7 +719,6 @@ export class DataManager {
             { name: keys.player_portfolio, content: JSON.stringify(defaults.player_portfolio, null, 2), enabled: false },
             { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: false },
             { name: keys.dialogue_context, content: JSON.stringify(defaults.dialogue_context, null, 2), enabled: true },
-            { name: keys.kline_context, content: JSON.stringify(defaults.kline_context, null, 2), enabled: false },
             { name: keys.market_overview, content: JSON.stringify(defaults.market_overview, null, 2), enabled: false },
             { name: keys.market_targets, content: JSON.stringify(defaults.market_targets, null, 2), enabled: false },
             { name: keys.news_archive, content: JSON.stringify(defaults.news_archive, null, 2), enabled: false },
@@ -1455,13 +1450,13 @@ export class DataManager {
         const klineAssetCodes = this._selectKlineContextAssets(resolvedAssets);
         const recentKlines = this._buildRecentKlineContext(klineAssetCodes);
 
-        await this.updateState(keys.kline_context, () => ({
+        this._stateCache.set(keys.kline_context, {
             comment: "Compact K-line context for market judgment. Use columns=[t,o,h,l,c].",
             updated_at: resolvedMarket.current_time_index || 0,
             updated_minute_at: resolvedMarket.minute_time_index || 0,
             selected_assets: klineAssetCodes,
             assets: recentKlines,
-        }));
+        });
     }
 
     _parseAmount(value) {
@@ -2019,95 +2014,7 @@ export class DataManager {
         ].join('\n');
     }
 
-    _buildManagedAccountsQuery(states) {
-        const market = this.getState(this.config.world_book_keys.global_market) || {};
-        const lines = [
-            '【SillyView 多账户实时账目查询】',
-            `更新时间: t=${market.current_time_index || 0}, minute=${market.minute_time_index || 0}`,
-            '',
-        ];
-
-        if (states.length === 0) {
-            lines.push('暂无开户行账户。');
-            return lines.join('\n');
-        }
-
-        for (const state of states) {
-            const portfolio = state.portfolio || {};
-            const stats = this.calculatePerformanceStats(portfolio);
-            lines.push(`账户 ${state.account_id} | 户名: ${state.owner_name} | 开户行: ${state.bank_name}`);
-            lines.push(`- 现金 ${Number(portfolio.cash || 0).toFixed(2)} | 债务 ${Number(portfolio.debt || 0).toFixed(2)} | 净值 ${stats.netWorth.toFixed(2)} | 收益率 ${stats.returnPct >= 0 ? '+' : ''}${stats.returnPct.toFixed(2)}% | 已实现盈亏 ${stats.realizedPnl >= 0 ? '+' : ''}${stats.realizedPnl.toFixed(2)}`);
-
-            const positions = [];
-            for (const assetCode of Object.keys(portfolio.assets || {})) {
-                for (const [mode, position] of Object.entries(this.positionCalculator.calculateAll(assetCode, portfolio))) {
-                    if (!position.type || position.totalAmount <= 0) continue;
-                    const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
-                    const lastPrice = Number(assetData?.current_price || position.avgEntryPrice || 0);
-                    const pnl = position.type === 'short'
-                        ? (position.avgEntryPrice - lastPrice) * position.totalShares
-                        : (lastPrice - position.avgEntryPrice) * position.totalShares;
-                    const controls = portfolio.assets?.[assetCode]?.[mode]?.risk_controls || {};
-                    const modeLabel = mode === 'spot' ? '现货' : `${position.leverage}x 杠杆`;
-                    positions.push(`  * ${assetCode} ${modeLabel} ${position.type === 'short' ? '空头' : '多头'} | 本金/保证金 ${position.totalAmount.toFixed(2)} | 入场 ${position.avgEntryPrice.toFixed(4)} | 现价 ${lastPrice.toFixed(4)} | 浮动盈亏 ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} | 止盈 ${controls.take_profit || '未设'} | 止损 ${controls.stop_loss || '未设'}`);
-                }
-            }
-            lines.push(...(positions.length > 0 ? positions : ['  * 无持仓']));
-            lines.push('');
-        }
-
-        return lines.join('\n');
-    }
-
-    _buildManagedScanReport(diagnostics = {}, accountEntries = null) {
-        const accounts = accountEntries || [];
-        const lines = [
-            '【SillyView 多账户开户行扫描报告】',
-            `更新时间: ${new Date().toISOString()}`,
-            `角色卡主世界书: ${diagnostics.primary || '无'}`,
-            `角色卡附加世界书: ${(diagnostics.additional || []).join(', ') || '无'}`,
-            `参与扫描世界书: ${(diagnostics.targets || []).join(', ') || '无'}`,
-            `识别账户数量: ${accounts.length}`,
-            '',
-        ];
-
-        if ((diagnostics.skipped || []).length > 0) {
-            lines.push('跳过世界书:');
-            for (const item of diagnostics.skipped) {
-                lines.push(`- ${item.worldbookName}: ${item.reason}`);
-            }
-            lines.push('');
-        }
-
-        if ((diagnostics.scanned || []).length > 0) {
-            lines.push('扫描明细:');
-            for (const item of diagnostics.scanned) {
-                lines.push(`- ${item.worldbookName}: 词条 ${item.entryCount}, 命中开户行 ${item.matchedCount}`);
-            }
-            lines.push('');
-        }
-
-        if ((diagnostics.readErrors || []).length > 0) {
-            lines.push('读取失败:');
-            for (const item of diagnostics.readErrors) {
-                lines.push(`- ${item.worldbookName}: ${item.message}`);
-            }
-            lines.push('');
-        }
-
-        if (accounts.length > 0) {
-            lines.push('已写入角色专属账号状态词条:');
-            for (const account of accounts) {
-                lines.push(`- ${account.account_id} | ${account.owner_name} | ${account.bank_name} | ${account.state_entry_name}`);
-            }
-        } else {
-            lines.push('未识别到开户行账户。请确认开户行所在世界书仍绑定在当前角色卡主/附加世界书中，并且词条包含“开户行”和“户名/账户名/姓名”及“余额/存款/现金”等字段。');
-        }
-
-        return lines.join('\n');
-    }
-
-    _buildManagedControlEntries(states, accountEntries = null, scanDiagnostics = null) {
+    _buildManagedControlEntries(states, accountEntries = null) {
         const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
         const entries = [];
         if (accountEntries) {
@@ -2128,11 +2035,6 @@ export class DataManager {
                 content: this._buildManagedTradeCommandGuide(states),
             },
             {
-                name: this.config.multi_account.account_query_key,
-                enabled: false,
-                content: this._buildManagedAccountsQuery(states),
-            },
-            {
                 name: this.config.world_book_keys.kline_context,
                 enabled: false,
                 content: JSON.stringify(klineContext, null, 2),
@@ -2143,13 +2045,6 @@ export class DataManager {
                 content: JSON.stringify(this._defaultAutoEventLog(), null, 2),
             },
         );
-        if (scanDiagnostics) {
-            entries.push({
-                name: this.config.multi_account.scan_report_key,
-                enabled: false,
-                content: this._buildManagedScanReport(scanDiagnostics, accountEntries || []),
-            });
-        }
         return entries;
     }
 
@@ -2161,7 +2056,6 @@ export class DataManager {
         await this._ensureAdditionalWorldbook(controlName);
         await this.th.updateWorldbookWith(controlName, entries => {
             this._upsertWorldbookEntry(entries, this.config.multi_account.command_entry_key, this._buildManagedTradeCommandGuide(states), true);
-            this._upsertWorldbookEntry(entries, this.config.multi_account.account_query_key, this._buildManagedAccountsQuery(states), false);
             const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
             this._upsertWorldbookEntry(entries, this.config.world_book_keys.kline_context, JSON.stringify(klineContext, null, 2), false);
             const eventLogEntry = entries.find(entry => entry.name === this.config.multi_account.auto_event_log_key);
@@ -2172,15 +2066,41 @@ export class DataManager {
             }
             const accountIndex = entries.find(entry => entry.name === this.config.multi_account.account_index_key);
             if (accountIndex) accountIndex.enabled = false;
-            const scanReportEntry = entries.find(entry => entry.name === this.config.multi_account.scan_report_key);
-            if (scanReportEntry) scanReportEntry.enabled = false;
             for (const entry of entries) {
                 if (entry.name?.startsWith(`${this.config.multi_account.account_state_key}_`)) {
                     entry.enabled = false;
                 }
             }
-            return entries.filter(entry => entry.name !== this.config.multi_account.recent_news_key);
+            return entries.filter(entry =>
+                entry.name !== this.config.multi_account.recent_news_key &&
+                !DEPRECATED_MANAGED_ACCOUNT_ENTRIES.has(entry.name)
+            );
         });
+    }
+
+    async cleanupRedundantKlineContextEntries() {
+        const klineKey = this.config.world_book_keys.kline_context;
+        const controlName = this.config.multi_account.control_worldbook_name;
+        let allBooks = [];
+        try {
+            allBooks = await this.th.getWorldbookNames();
+        } catch (error) {
+            this.logger.warn('读取世界书列表失败，无法清理重复 K 线上下文。', error);
+            return [];
+        }
+
+        const targets = [...new Set(this.config.market_context_worldbooks || [])]
+            .filter(name => name !== controlName && allBooks.includes(name));
+        const cleaned = [];
+        for (const worldbookName of targets) {
+            let removed = false;
+            await this.th.updateWorldbookWith(worldbookName, entries => {
+                removed = entries.some(entry => entry.name === klineKey);
+                return removed ? entries.filter(entry => entry.name !== klineKey) : entries;
+            });
+            if (removed) cleaned.push(worldbookName);
+        }
+        return cleaned;
     }
 
     _collectManagedObservationScope(commands = []) {
@@ -2320,7 +2240,6 @@ export class DataManager {
         }
         const relevantNames = new Set([
             this.config.multi_account.command_entry_key,
-            this.config.multi_account.account_query_key,
             this.config.world_book_keys.kline_context,
         ]);
         return {
@@ -2390,7 +2309,7 @@ export class DataManager {
         }
 
         const states = await this.getManagedAccountStates();
-        await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries(states, accountEntries, scanResult.diagnostics));
+        await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries(states, accountEntries));
         await this._ensureAdditionalWorldbook(controlName);
         await this.th.updateWorldbookWith(controlName, entries => {
             this._upsertWorldbookEntry(entries, this.config.multi_account.account_index_key, JSON.stringify({
@@ -2398,10 +2317,10 @@ export class DataManager {
                 updated_at: Date.now(),
                 accounts: accountEntries,
             }, null, 2), false);
-            this._upsertWorldbookEntry(entries, this.config.multi_account.scan_report_key, this._buildManagedScanReport(scanResult.diagnostics, accountEntries), false);
-            return entries;
+            return entries.filter(entry => !DEPRECATED_MANAGED_ACCOUNT_ENTRIES.has(entry.name));
         });
         await this.syncManagedAccountsWorldbook();
+        await this.cleanupRedundantKlineContextEntries();
         await this.cleanupLegacyManagedAccountWorldbooks();
         this.logger.success(`已同步 ${accountEntries.length} 个开户行账户到 ${controlName}。`);
         return accountEntries;
@@ -2434,7 +2353,6 @@ export class DataManager {
                 this.config.world_book_keys.news_archive,
                 this.config.world_book_keys.active_market_news,
                 this.config.multi_account.account_index_key,
-                this.config.multi_account.scan_report_key,
             ]);
             for (const worldbookName of namesToRead) {
                 const entries = await this.th.getWorldbook(worldbookName);

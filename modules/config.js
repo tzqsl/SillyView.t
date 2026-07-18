@@ -93,7 +93,7 @@ const DEFAULT_BACKGROUND_AI_SETTINGS = {
 };
 
 export const SillyViewConfig = {
-    version: '2.5.0',
+    version: '2.5.1',
     extension_name: 'SillyView',
 
     // Expose asset definitions for other modules
@@ -105,8 +105,6 @@ export const SillyViewConfig = {
         account_index_key: 'sv_accounts_index',
         account_state_key: 'sv_account_state',
         command_entry_key: 'sv_accounts_trade_commands',
-        account_query_key: 'sv_accounts_query',
-        scan_report_key: 'sv_accounts_scan_report',
         auto_event_log_key: 'sv_auto_event_log',
         recent_news_key: 'sv_accounts_recent_news',
     },
@@ -134,7 +132,7 @@ export const SillyViewConfig = {
     // Default state for a new game
     default_game_state: {
         config: {
-            version: '2.5.0',
+            version: '2.5.1',
             max_hourly_records: 240,
             max_minute_records: 720,
             initial_bootstrap_done: false,
