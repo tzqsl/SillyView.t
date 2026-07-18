@@ -176,6 +176,7 @@ export class DataManager {
         }
 
         const market = this._stateCache.get(keys.global_market) || {};
+        delete market.remaining_candles;
         const timeIndex = Number(market.current_time_index || 0);
         const portfolio = this._stateCache.get(keys.player_portfolio) || {};
         const portfolioChanged = this._settleUnsupportedPortfolioAssets(portfolio, supportedAssets, legacyPrices, timeIndex);
@@ -669,11 +670,7 @@ export class DataManager {
             },
         };
 
-        // Initialize with a random candle count for immediate quick mode use
-        const initialGlobalMarket = {
-            ...defaults.global_market,
-            remaining_candles: Math.floor(Math.random() * 30) + 1
-        };
+        const initialGlobalMarket = { ...defaults.global_market };
 
         const entriesTemplate = [
             { name: keys.config, content: JSON.stringify(initialConfig, null, 2), enabled: false },
@@ -1381,7 +1378,7 @@ export class DataManager {
             '用途：这是给普通对话 AI 阅读的市场状态摘要，用于让角色知道交易世界发生了什么。不要把它当作用户发言。',
             '',
             `时间：${market.current_datetime || '未知'} / ${market.current_period || '未知'} / ${market.current_season || '未知'} / 天气：${market.current_weather || '未知'}`,
-            `市场状态：${market.market_status || 'OPEN'}，市场性格：${market.personality_state || '未知'}，距离关键时刻剩余 ${market.remaining_candles ?? '未知'} 根K线。`,
+            `市场状态：${market.market_status || 'OPEN'}，市场性格：${market.personality_state || '未知'}。`,
             '',
             '账户：',
             `- 现金：${Number(portfolio.cash || 0).toFixed(2)}`,

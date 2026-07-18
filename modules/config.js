@@ -154,7 +154,6 @@ export const SillyViewConfig = {
             market_status: "OPEN",
             personality_state: 'CONSOLIDATION',
             personality_duration_remaining: 10,
-            remaining_candles: 15,
             macro_state: {
                 risk_sentiment: 0,
                 usd_strength: 0,

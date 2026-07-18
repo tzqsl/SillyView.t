@@ -567,8 +567,6 @@ export class UIRenderer {
 
     updateUIVisibility() {
         const isQuickMode = this.data.isQuickModeEnabled();
-        const market = this.data.getState(SillyViewConfig.world_book_keys.global_market);
-        const isKeyMoment = market && market.remaining_candles <= 0;
 
         const endTurnBtn = this.parentDoc.getElementById('sillyview-end-turn-btn');
         const minuteBtns = [
@@ -581,13 +579,7 @@ export class UIRenderer {
         const syncBtn = this.parentDoc.getElementById('sillyview-sync-ai-btn');
         const quickModeToggle = this.parentDoc.getElementById('sillyview-quick-mode-toggle');
     
-        if (isKeyMoment) {
-            if(endTurnBtn) endTurnBtn.style.display = 'block';
-            minuteBtns.forEach(btn => { if (btn) btn.style.display = 'none'; });
-            if(nextHourBtn) nextHourBtn.style.display = 'none';
-            if(advanceDayBtn) advanceDayBtn.style.display = 'none';
-            if(syncBtn) syncBtn.style.display = 'none';
-        } else if (isQuickMode) {
+        if (isQuickMode) {
             if(endTurnBtn) endTurnBtn.style.display = 'none';
             minuteBtns.forEach(btn => { if (btn) btn.style.display = 'block'; });
             if(nextHourBtn) nextHourBtn.style.display = 'block';

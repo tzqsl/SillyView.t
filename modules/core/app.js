@@ -413,10 +413,6 @@ export class SillyViewApp {
         const requiredAssetCodes = options.requiredAssetCodes || [];
         const silent = options.silent === true;
 
-        // **FIX**: Check if this turn started as a key moment BEFORE processing.
-        const marketBefore = this.data.getState(SillyViewConfig.world_book_keys.global_market);
-        const wasKeyMoment = marketBefore && marketBefore.remaining_candles <= 0;
-    
         const commands = this.commandParser.parse(msg);
         let hasAdvanced = false;
         let hasUpdatedFinancials = false;
@@ -601,21 +597,12 @@ export class SillyViewApp {
             await this._recordHeadlineOnce(msg, maxAdvancedTimeIndex, [...headlineAssetCodes]);
         }
 
-        // **FIX**: If the turn started as a key moment, ALWAYS reset the candle count, regardless of what the AI responded with.
         const expiredLongTargetsForAutoTurn = (!silent && !options.skipLongTargetExpiryAutoTurn)
             ? this._collectExpiredLongTargetsForAutoTurn()
             : [];
         await this.data.pruneExpiredMarketTargets();
 
-        if (wasKeyMoment) {
-            this.logger.log("AI turn for key moment has finished. Resetting market breath.");
-            await this.data.updateState(SillyViewConfig.world_book_keys.global_market, m => {
-                m.remaining_candles = Math.floor(Math.random() * 30) + 1;
-                this.logger.log(`AI turn complete. New random candle count: ${m.remaining_candles}`);
-                return m;
-            });
-            if (!silent) this.ui.updateUIVisibility();
-        } else if (hasUpdatedFinancials || hasUpdatedTimeline || hasUpdatedTargets || hasUpdatedNews) {
+        if (hasUpdatedFinancials || hasUpdatedTimeline || hasUpdatedTargets || hasUpdatedNews) {
             if (!silent) this.ui.renderAll();
         } else if (!hasAdvanced) {
             // If no commands were processed, ensure buttons are re-enabled
@@ -688,7 +675,6 @@ export class SillyViewApp {
             await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
                 market.current_time_index = Math.max(market.current_time_index || 0, maxTimeIndex);
                 market.minute_time_index = Math.max(market.minute_time_index || 0, maxTimeIndex * 60);
-                market.remaining_candles = 0;
                 return market;
             });
         }
@@ -760,13 +746,6 @@ export class SillyViewApp {
         this.resetAutoAdvanceTimer('manual_quick_hour');
         if (!this.data.isQuickModeEnabled() || this.ui.isAnimating) return;
 
-        const market = this.data.getState(SillyViewConfig.world_book_keys.global_market);
-        if (market.remaining_candles <= 0) {
-            this.dependencies.win.toastr.info('市场进入关键时刻，请结束回合等待AI导演的下一步指示。');
-            this.ui.updateUIVisibility(); // Force UI update to show the "End Turn" button
-            return;
-        }
-
         Logger.log(`快速模式: 推进 1 小时...`);
     
         const activeAssetCode = this.ui.currentAsset;
@@ -786,7 +765,6 @@ export class SillyViewApp {
         await this.data.updateState(SillyViewConfig.world_book_keys.global_market, m => {
             m.current_time_index = (m.current_time_index || 0) + 1;
             m.minute_time_index = Math.max(m.minute_time_index || 0, m.current_time_index * 60);
-            m.remaining_candles -= 1;
             return m;
         });
 
@@ -813,26 +791,17 @@ export class SillyViewApp {
         if (this.ui.isAnimating) return;
         
         const isQuickMode = this.data.isQuickModeEnabled();
-        const market = this.data.getState(SillyViewConfig.world_book_keys.global_market);
-        const isKeyMoment = market && market.remaining_candles <= 0;
 
-        if (isKeyMoment) {
-            Logger.log("市场呼吸耗尽，强制进入AI回合...");
-            if (isQuickMode) {
-                await this.onQuickModeToggled(false); 
-            }
-        } else if (isQuickMode) {
+        if (isQuickMode) {
             if (await this.triggerLongTargetExpiryTurnIfNeeded()) return;
 
             const activeAssetCode = this.ui.currentAsset;
             const assetDef = SillyViewConfig.asset_definitions[activeAssetCode];
-            const requestedHours = Math.min(assetDef.trading_hours_per_day, market.remaining_candles);
+            const requestedHours = assetDef.trading_hours_per_day;
             const hoursToAdvance = this._getHoursUntilNextLongTargetExpiry(requestedHours);
             
             if (hoursToAdvance < requestedHours) {
                 this.dependencies.win.toastr.info(`长线目标即将到期，本次快速推进在 ${hoursToAdvance} 小时处结束。`);
-            } else if (hoursToAdvance < assetDef.trading_hours_per_day) {
-                this.dependencies.win.toastr.info(`由于市场进入关键时刻，本次仅推进了 ${hoursToAdvance} 小时。`);
             }
     
             await this.marketSimulator.advanceMarketRegime(hoursToAdvance);
@@ -859,7 +828,6 @@ export class SillyViewApp {
                 await this.data.updateState(SillyViewConfig.world_book_keys.global_market, m => {
                     m.current_time_index = (m.current_time_index || 0) + hoursToAdvance;
                     m.minute_time_index = Math.max(m.minute_time_index || 0, m.current_time_index * 60);
-                    m.remaining_candles -= hoursToAdvance;
                     return m;
                 });
                 this.data.clearActionsThisTurn();
