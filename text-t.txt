@@ -118,40 +118,76 @@ description: >
 
 pattern_list:
   - pattern_name: "bull_run"
-    title: "牛市冲锋"
-    description: "强劲的单边上涨行情。通常由重大利好消息或市场极度乐观情绪驱动。"
-    kline_implication: "插件会生成一根实体较长、上影线很短的阳线。"
-    example_narrative: "在‘天工’模型发布的刺激下，市场热情被彻底点燃，买盘蜂拥而至，开启了一轮势不可挡的上涨。"
+    title: "强势上攻"
+    direction: "收盘价应明显高于开盘价"
+    path: "买盘持续推高，盘中向上扩展波幅。"
+    use_when: "重大利好、突破确认或上涨目标进入加速段。"
 
   - pattern_name: "bear_crash"
-    title: "熊市崩盘"
-    description: "猛烈的单边下跌行情。通常由重大利空消息或市场极度恐慌情绪驱动。"
-    kline_implication: "插件会生成一根实体较长、下影线很短的阴线。"
-    example_narrative: "FTX的丑闻像瘟疫一样蔓延，市场的信心瞬间崩溃，恐慌性抛售导致价格直线跳水。"
+    title: "强势下挫"
+    direction: "收盘价应明显低于开盘价"
+    path: "卖盘持续压低，盘中向下扩展波幅。"
+    use_when: "重大利空、跌破确认或下跌目标进入加速段。"
 
   - pattern_name: "consolidation"
-    title: "横盘整理"
-    description: "价格在狭窄的区间内波动，多空双方力量均衡，市场在等待方向。"
-    kline_implication: "插件会生成实体很小、影线也较短的K线，可能是小阳线、小阴线或十字星。"
-    example_narrative: "在经历了昨日的大涨后，市场进入了冷静期，投资者们似乎都在消化消息，价格波动不大。"
+    title: "压缩整理"
+    direction: "收盘价应接近开盘价"
+    path: "经历既有趋势后波幅收窄，多空暂时平衡。"
+    use_when: "消化前期涨跌、蓄势或等待新的催化剂。"
 
   - pattern_name: "reversal_bull"
     title: "看涨反转"
-    description: "价格在下跌后迅速回升，显示出强大的买方支撑，空头力量衰竭。"
-    kline_implication: "插件会生成一根带有长下影线的K线（如锤子线）或者一根直接吞没前一根阴线的阳线。"
-    example_narrative: "尽管开盘时一度下跌，但在关键支撑位上出现了大量买单，价格被强势拉回，收复了全部失地。"
+    direction: "收盘价宜高于开盘价或显著脱离盘中低点"
+    path: "先下探再拉回，留出长下影或收复前期跌幅。"
+    use_when: "下跌趋势衰竭并出现可确认的转强信号。"
 
   - pattern_name: "reversal_bear"
     title: "看跌反转"
-    description: "价格在上涨后迅速回落，显示出强大的卖方压力，多头力量衰竭。"
-    kline_implication: "插件会生成一根带有长上影线的K线（如上吊线）或者一根直接吞没前一根阳线的阴线。"
-    example_narrative: "股价在冲上历史新高后动能不足，获利了结的卖盘如潮水般涌出，价格迅速回落。"
+    direction: "收盘价宜低于开盘价或显著脱离盘中高点"
+    path: "先上冲再回落，留出长上影或吞没前期涨幅。"
+    use_when: "上涨趋势衰竭并出现可确认的转弱信号。"
 
   - pattern_name: "volatile"
     title: "剧烈波动"
-    description: "多空双方激烈交战，价格上下大幅摆动，市场充满不确定性。"
-    kline_implication: "插件会生成一根实体较小，但同时具有很长上影线和下影线的K线。"
-    example_narrative: "关于监管政策的传闻在市场上传播，多空双方观点激烈碰撞，导致价格上蹿下跳，振幅惊人。"
+    direction: "收盘可上可下，但不应凭模式名自行改变目标方向"
+    path: "大幅上下扫盘，同时留出较长上下影线。"
+    use_when: "信息相互矛盾、流动性紧张或多空激烈争夺。"
+
+  - pattern_name: "sideways"
+    title: "常态横盘"
+    direction: "收盘价应接近开盘价"
+    path: "缺乏方向的小幅往返，不强调前期趋势后的蓄势。"
+    use_when: "普通安静时段或没有新消息时；不要为此强行添加新闻。"
+
+  - pattern_name: "fake_breakout"
+    title: "向上假突破"
+    direction: "最终收盘宜回到区间内或转为下跌"
+    path: "先突破阻力位，随后买盘衰竭并回落，形成明显上影。"
+    use_when: "下跌目标中的诱多路径，或突破缺乏成交和基本面支持。"
+
+  - pattern_name: "fake_breakdown"
+    title: "向下假跌破"
+    direction: "最终收盘宜回到区间内或转为上涨"
+    path: "先跌破支撑位，随后卖盘衰竭并拉回，形成明显下影。"
+    use_when: "上涨目标中的诱空路径，或跌破后迅速收复关键位。"
+
+  - pattern_name: "washout"
+    title: "洗盘下探"
+    direction: "最终收盘宜转强或至少显著脱离低点"
+    path: "短暂急跌清理止损和弱势持仓，然后快速修复。"
+    use_when: "上涨趋势未破坏，但需要一段更猛烈的逆向波动。"
+
+  - pattern_name: "bull_trap"
+    title: "诱多陷阱"
+    direction: "最终收盘应偏弱，通常低于开盘价"
+    path: "先营造转强或突破假象，吸引追多后反转下跌。"
+    use_when: "下跌目标中需要先上冲、再回归空头方向。"
+
+  - pattern_name: "bear_trap"
+    title: "诱空陷阱"
+    direction: "最终收盘应偏强，通常高于开盘价"
+    path: "先营造破位或转弱假象，吸引追空后反转上涨。"
+    use_when: "上涨目标中需要先下探、再回归多头方向。"
 
 
 title: "核心世界规则与AI行为准则"
@@ -265,12 +301,16 @@ impartiality_principle:
 
 仅在目标切换、关键转折、异常波动或宏观事件发生时使用。`asset_code` 必须是外汇代码或 `"GLOBAL"`，`duration_hours` 必须是 1-168 的有效小时数。新闻会永久进入前端归档，但到期后自动退出后台市场上下文。不要使用旧的 `<headline>` 标签。
 
-#### 可用的 `pattern` 列表 (适用于两种指令):
+#### 可用的 `pattern` 列表（适用于两种指令）:
 
--   `"bull_run"` (牛市快涨): 适用于重大利好消息。
--   `"bear_crash"` (熊市暴跌): 适用于重大利空消息。
--   `"volatile"` (剧烈波动): 适用于消息混乱、多空双方激烈交战的情况。
--   `"sideways"` (横盘整理): 适用于消息平静、市场在等待方向的时期。
+必须从下列 12 种模式中选择，详细语义以本参考资料的“演绎模式”章节为准：
+
+- 趋势与常态：`bull_run`、`bear_crash`、`volatile`、`consolidation`、`sideways`
+- 反转：`reversal_bull`、`reversal_bear`
+- 假突破与洗盘：`fake_breakout`、`fake_breakdown`、`washout`
+- 陷阱：`bull_trap`、`bear_trap`
+
+`close_price` / `final_close_price` 决定最终涨跌方向，`pattern` 决定盘中路径和影线形态。不得使用与收盘方向矛盾的模式；已有有效目标时，模式还必须与目标方向或其诱多/诱空路径一致。
 
 #### 示例 1: 单K线推进
 

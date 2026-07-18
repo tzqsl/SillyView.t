@@ -92,72 +92,6 @@ const DEFAULT_BACKGROUND_AI_SETTINGS = {
     timeout_ms: 60000,
 };
 
-export const MACRO_EVENT_SYSTEM = {
-  keywords: ["随机性", "市场事件", "利好", "利空", "判定", "roll", "宏观"],
-  core_mechanism: {
-    description: "每2个小时使用一个范围在[1, 100]的随机数P来模拟市场的不可预测性。P的值决定了下一个市场事件的方向和强度。",
-    input_variable: "P = {{roll:1d100}}",
-    principle: "涨跌始终相对于当前目标货币对：P越接近100，基础货币相对计价货币越强；P越接近1，基础货币相对计价货币越弱。"
-  },
-  logic_tiers: [
-    {
-      range: "[100, 100]",
-      level: "极端利好 (Extreme Bullish)",
-      ai_instruction: "为目标货币对生成极端上行事件，例如基础货币央行意外大幅加息、计价货币央行紧急降息，或关键政策发生突变。必须说明两种货币为何产生强弱差。（涨幅通常 1% ~ 2.5%）",
-      suggested_patterns: ["bull_run"]
-    },
-    {
-      range: "[96, 99]",
-      level: "重大利好 (Major Bullish)",
-      ai_instruction: "为目标货币对生成重大上行事件，例如基础货币经济数据大幅超预期、央行转鹰，或计价货币遭遇明显政策利空。（涨幅通常 0.7% ~ 1.5%）",
-      suggested_patterns: ["bull_run"]
-    },
-    {
-      range: "[91, 95]",
-      level: "显著利好 (Significant Bullish)",
-      ai_instruction: "为目标货币对生成显著上行事件，例如利差预期扩大、就业或通胀数据支持基础货币，推动资金持续流入。（涨幅通常 0.4% ~ 0.9%）",
-      suggested_patterns: ["bull_run", "reversal_bull"]
-    },
-    {
-      range: "[81, 90]",
-      level: "温和利好 (Moderate Bullish)",
-      ai_instruction: "为目标货币对生成温和上行事件，例如次级经济数据略好于预期、央行官员措辞偏鹰或风险流向轻微有利。（涨幅通常 0.15% ~ 0.5%）",
-      suggested_patterns: ["reversal_bull", "consolidation"]
-    },
-    {
-      range: "[21, 80]",
-      level: "中性区域 (Neutral Zone)",
-      ai_instruction: "生成符合外汇常态的中性事件：市场等待央行会议或关键数据，多空因素互相抵消，货币对维持区间波动。（波动通常 -0.3% ~ +0.3%）",
-      suggested_patterns: ["consolidation", "volatile"]
-    },
-     {
-      range: "[11, 20]",
-      level: "温和利空 (Moderate Bearish)",
-      ai_instruction: "为目标货币对生成温和下行事件，例如基础货币数据略弱、央行措辞偏鸽或短线资金流向计价货币。（跌幅通常 0.15% ~ 0.5%）",
-      suggested_patterns: ["reversal_bear", "consolidation"]
-    },
-    {
-      range: "[6, 10]",
-      level: "显著利空 (Significant Bearish)",
-      ai_instruction: "为目标货币对生成显著下行事件，例如基础货币关键数据明显不及预期、降息概率上升或利差快速收窄。（跌幅通常 0.4% ~ 0.9%）",
-      suggested_patterns: ["bear_crash", "reversal_bear"]
-    },
-    {
-      range: "[2, 5]",
-      level: "重大利空 (Major Bearish)",
-      ai_instruction: "为目标货币对生成重大下行事件，例如基础货币央行意外转鸽、经济衰退风险陡升，或计价货币获得强政策支撑。（跌幅通常 0.7% ~ 1.5%）",
-      suggested_patterns: ["bear_crash"]
-    },
-    {
-      range: "[1, 1]",
-      level: "极端利空 (Extreme Bearish)",
-      ai_instruction: "为目标货币对生成极端下行事件，例如基础货币央行紧急降息、汇率政策突变、主权信用危机，或计价货币央行意外大幅加息。（跌幅通常 1% ~ 2.5%）",
-      suggested_patterns: ["bear_crash"]
-    }
-  ]
-};
-
-
 export const SillyViewConfig = {
     version: '2.3.0',
     extension_name: 'SillyView',
@@ -176,8 +110,6 @@ export const SillyViewConfig = {
         recent_news_key: 'sv_accounts_recent_news',
     },
     
-    macro_event_system: MACRO_EVENT_SYSTEM,
-
     // World Book Entry Keys
     world_book_keys: {
         config: 'sv_config',

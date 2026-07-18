@@ -15,23 +15,6 @@ export class AIDirector {
         this.ui = null; // Injected by App
     }
     
-    _getMacroEventInstruction() {
-        const p = Math.floor(Math.random() * 100) + 1;
-        const logicTiers = this.config.macro_event_system.logic_tiers;
-        
-        const foundTier = logicTiers.find(tier => {
-            const range = JSON.parse(tier.range);
-            return p >= range[0] && p <= range[1];
-        });
-
-        if (foundTier) {
-            this.logger.log(`Macro Event Roll: ${p}. Tier: ${foundTier.level}`);
-            return `[导演指示：${foundTier.ai_instruction}]`;
-        }
-        return null;
-    }
-
-
     async buildAdvanceTurnPrompt(_actionsThisTurn, activeAssetsForAI, activeAssetCode, currentTimeframe, options = {}) {
         const actionSummary = '请独立推进市场；不要读取、推断或迎合玩家账户、持仓与盈亏。';
 
@@ -98,13 +81,6 @@ export class AIDirector {
         }
         taskLines.push(`${promptPrefix}${actionSummary}`);
 
-        if (globalMarket && globalMarket.current_time_index % 2 === 0) {
-            const instruction = this._getMacroEventInstruction();
-            if (instruction) {
-                taskLines.push(instruction);
-            }
-        }
-
         const currentAssetName = this.config.asset_definitions[activeAssetCode]?.name || activeAssetCode;
         const timeUnit = currentTimeframe === 'HOURLY' ? '下一小时' : '下一个交易日';
         const requiredAssetList = [...activeAssetsForAI].map(code => {
@@ -113,8 +89,11 @@ export class AIDirector {
         }).join('、');
         taskLines.push(`本回合必须推进以下全部相关资产：${requiredAssetList}。`);
         taskLines.push('你现在可以用目标指令操盘：没有有效长线目标的相关资产，优先设置一个新的长线目标；没有有效短线目标的当前重点资产，设置一个新的短线目标。已有目标未到期时，新闻、价格推进和 pattern 必须与目标方向或诱多/诱空路径一致。');
-        taskLines.push('目标指令格式: [Market.SetLongTarget(asset_code, target_price, hours, "pattern", "reason", confidence)]，hours 建议 4-24；[Market.SetShortTarget(asset_code, target_price, minutes, "pattern", "reason", confidence)]，minutes 建议 8-90。');
-        taskLines.push('可选 pattern: bull_trend、bear_trend、consolidation、fake_breakout、fake_breakdown、washout、bull_trap、bear_trap、panic_sell、short_squeeze。confidence 为 0-1 数字。目标到期后系统会自动删除并等待你设置下一段目标。');
+        taskLines.push('目标指令格式: [Market.SetLongTarget(asset_code, target_price, hours, "pattern", "reason", confidence)]，hours 建议 4-24；[Market.SetShortTarget(asset_code, target_price, minutes, "pattern", "reason", confidence)]，minutes 建议 8-90。长线与短线共用同一套预设 pattern，必须从下列模式中选择。');
+        taskLines.push('目标涨跌方向由 target_price 相对当前价决定：pattern 只描述到达目标前的路径与波动，不能与目标价方向矛盾。confidence 为 0-1 数字，数值越大表示走势越强地贴合目标。');
+        taskLines.push('预设 pattern 含义: bull_trend=稳步上涨；bear_trend=稳步下跌；consolidation=目标价接近现价的区间整理；fake_breakout=先向上假突破再转向下跌目标；fake_breakdown=先向下假跌破再转向上涨目标；washout=快速下探洗盘后转向上涨目标。');
+        taskLines.push('预设 pattern 含义（续）: bull_trap=诱多后转向下跌目标；bear_trap=诱空后转向上涨目标；panic_sell=恐慌性快速下跌；short_squeeze=逼空式快速上涨。上涨目标优先用 bull_trend、fake_breakdown、washout、bear_trap、short_squeeze；下跌目标优先用 bear_trend、fake_breakout、bull_trap、panic_sell。');
+        taskLines.push('目标指令示例: 上涨长线 [Market.SetLongTarget("EURUSD", 1.1000, 12, "bull_trend", "美元走弱推动欧元上行", 0.7)]；先诱多后下跌的短线 [Market.SetShortTarget("EURUSD", 1.0860, 30, "bull_trap", "上破失败后卖盘回流", 0.75)]。目标到期后系统会自动删除并等待你设置下一段目标。');
         taskLines.push('如果要取消目标，使用 [Market.ClearTarget(asset_code, "long"|"short"|"all")]。');
         taskLines.push('新增新闻必须使用 [Market.AddNews("asset_code或GLOBAL", "新闻正文", duration_hours)]，duration_hours 为 1-168 的有效小时数。新闻会在有效期内影响后续市场判断，到期后自动退出后台上下文。');
         taskLines.push('必须让分K走势服务于已设立的短线/长线目标：短线目标决定分K入场节奏，长线目标决定小时级方向过滤。若分K信号与目标背离，可以用洗盘、回踩、假突破等 pattern 解释，但不要长期反向推进。');

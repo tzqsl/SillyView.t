@@ -496,7 +496,11 @@ export class MarketSimulator {
             const newCandleArgs = [assetCode, timeframe, finalCloseForThisStep, pattern];
             
             const tempState = { ...assetData, kline_hourly: [lastCandle] };
-            const tempSimulator = { ...this, data: { getState: () => tempState } };
+            const sourceData = this.data;
+            const tempSimulator = Object.create(this);
+            tempSimulator.data = {
+                getState: key => key === assetKey ? tempState : sourceData.getState(key),
+            };
             const generatedCandleArray = tempSimulator.calculateCandlesFromAI(newCandleArgs);
             
             if (generatedCandleArray && generatedCandleArray.length > 0) {
