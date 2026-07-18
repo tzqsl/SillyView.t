@@ -206,7 +206,6 @@ export class MarketSimulator {
         const globalMarket = this.data.getState(this.config.world_book_keys.global_market) || {};
         const shortTarget = this._getActiveMarketTarget(assetCode, 'short', globalMarket);
         const longTarget = this._getActiveMarketTarget(assetCode, 'long', globalMarket);
-        const volatility = this._getPatternMinuteVolatility(shortTarget?.pattern || longTarget?.pattern || pattern, assetDef);
         const candles = [];
         let last = previousMinute;
         const startClose = previousMinute.close;
@@ -222,19 +221,27 @@ export class MarketSimulator {
                 ? 2 * progress * progress
                 : 1 - Math.pow(-2 * progress + 2, 2) / 2;
             const currentMinuteIndex = previousMinute.time + i;
+            const hourIndex = currentMinuteIndex / 60;
+            const activeShortTarget = shortTarget && currentMinuteIndex <= Number(shortTarget.end_minute || 0)
+                ? shortTarget
+                : null;
+            const activeLongTarget = longTarget && hourIndex <= Number(longTarget.end_time || 0)
+                ? longTarget
+                : null;
+            const activePattern = activeShortTarget?.pattern || activeLongTarget?.pattern || pattern;
+            const volatility = this._getPatternMinuteVolatility(activePattern, assetDef);
             let trendPrice = startClose + (targetClose - startClose) * easedProgress;
-            if (shortTarget && currentMinuteIndex <= Number(shortTarget.end_minute || 0)) {
-                const shortProgress = this._getTargetProgress(shortTarget, 'short', currentMinuteIndex);
-                const shortTargetPrice = Number(shortTarget.target_price);
+            if (activeShortTarget) {
+                const shortProgress = this._getTargetProgress(activeShortTarget, 'short', currentMinuteIndex);
+                const shortTargetPrice = Number(activeShortTarget.target_price);
                 if (Number.isFinite(shortTargetPrice) && shortTargetPrice > 0) {
                     const shortPathPrice = startClose + (shortTargetPrice - startClose) * shortProgress;
                     const blend = this._clamp(0.25 + shortProgress * 0.45, 0.25, 0.7);
                     trendPrice = trendPrice * (1 - blend) + shortPathPrice * blend;
                 }
-            } else if (longTarget) {
-                const hourIndex = currentMinuteIndex / 60;
-                const longProgress = this._getTargetProgress(longTarget, 'long', hourIndex);
-                const longTargetPrice = Number(longTarget.target_price);
+            } else if (activeLongTarget) {
+                const longProgress = this._getTargetProgress(activeLongTarget, 'long', hourIndex);
+                const longTargetPrice = Number(activeLongTarget.target_price);
                 if (Number.isFinite(longTargetPrice) && longTargetPrice > 0) {
                     const longPathPrice = startClose + (longTargetPrice - startClose) * longProgress;
                     const blend = this._clamp(0.08 + longProgress * 0.18, 0.08, 0.26);
@@ -248,7 +255,7 @@ export class MarketSimulator {
             const close = hasTargetRange
                 ? this._clamp(rawClose, rangeLow, rangeHigh)
                 : rawClose;
-            const candle = this._createMinuteCandle(last, close, volatility, shortTarget?.pattern || longTarget?.pattern || pattern, 1 + Math.abs(this._normalRandom()) * 0.35);
+            const candle = this._createMinuteCandle(last, close, volatility, activePattern, 1 + Math.abs(this._normalRandom()) * 0.35);
             if (hasTargetRange) {
                 candle.high = Math.max(candle.open, candle.close, Math.min(candle.high, rangeHigh));
                 candle.low = Math.min(candle.open, candle.close, Math.max(candle.low, rangeLow));
@@ -315,11 +322,16 @@ export class MarketSimulator {
         const direction = targetPrice >= currentPrice ? 1 : -1;
         const progress = this._getTargetProgress(target, type, currentIndex);
         const confidence = this._clamp(Number(target.confidence ?? 0.65), 0, 1);
-        const urgency = 0.35 + Math.pow(progress, 1.7) * 0.85;
+        const urgency = 0.65 + Math.pow(progress, 1.5) * 0.45;
         const directDrift = Math.log(targetPrice / currentPrice) / remaining;
         const counterMove = this._getPatternCounterMove(target.pattern, direction, progress) * maxStepAbs * 0.55 * confidence;
+        const adaptiveLimit = Math.max(
+            maxStepAbs,
+            Math.min(Math.abs(directDrift) * 1.25, type === 'long' ? 0.02 : 0.008)
+        );
+        const trackingWeight = 0.55 + confidence * 0.4;
 
-        return this._clamp(directDrift * urgency * (0.35 + confidence), -maxStepAbs, maxStepAbs) + counterMove;
+        return this._clamp(directDrift * urgency * trackingWeight, -adaptiveLimit, adaptiveLimit) + counterMove;
     }
 
     _applyHourlyTargetToClose(assetCode, open, proposedClose, nextHourIndex, volatility) {
@@ -327,11 +339,10 @@ export class MarketSimulator {
         const target = this._getActiveMarketTarget(assetCode, 'long', market);
         if (!target) return proposedClose;
 
-        const drift = this._calculateTargetDrift(open, target, 'long', nextHourIndex - 1, Math.max(0.001, volatility * 1.4));
-        const targetPrice = Number(target.target_price);
-        const remaining = Number(target.end_time) - nextHourIndex;
-        if (remaining <= 0 && Number.isFinite(targetPrice) && targetPrice > 0) return targetPrice;
+        const endTime = Number(target.end_time);
+        if (!Number.isFinite(endTime) || nextHourIndex > endTime) return proposedClose;
 
+        const drift = this._calculateTargetDrift(open, target, 'long', nextHourIndex - 1, Math.max(0.001, volatility * 1.4));
         const adjusted = open * Math.exp(Math.log(proposedClose / open) * 0.55 + drift);
         return Math.max(0.000001, adjusted);
     }
@@ -380,27 +391,33 @@ export class MarketSimulator {
         const personalityState = globalMarket.personality_state || 'CONSOLIDATION';
         const shortTarget = this._getActiveMarketTarget(assetCode, 'short', globalMarket);
         const longTarget = this._getActiveMarketTarget(assetCode, 'long', globalMarket);
-        const minuteVolatility = this._getPatternMinuteVolatility(
-            shortTarget?.pattern || longTarget?.pattern || (personalityState === 'VOLATILE_UNCERTAINTY' ? 'volatile' : 'sideways'),
-            assetDef
-        ) * (macroState.volatility_regime || 1);
+        const fallbackPattern = personalityState === 'VOLATILE_UNCERTAINTY' ? 'volatile' : 'sideways';
         const macroDrift = this._calculateMacroDrift(assetDef, macroState) / 60;
-        const trendDrift = personalityState === 'BULLISH_TREND'
-            ? minuteVolatility * 0.18
-            : (personalityState === 'BEARISH_TREND' ? -minuteVolatility * 0.18 : 0);
 
         const candles = [];
         let last = lastMinute;
         for (let i = 0; i < cappedBars; i++) {
-            const targetDrift = this._calculateTargetDrift(last.close, shortTarget, 'short', last.time, Math.max(0.0004, minuteVolatility * 1.8));
-            const longTargetDrift = this._calculateTargetDrift(last.close, longTarget, 'long', last.time / 60, Math.max(0.00012, minuteVolatility * 0.55));
+            const nextMinuteIndex = last.time + 1;
+            const activeShortTarget = shortTarget && nextMinuteIndex <= Number(shortTarget.end_minute || 0)
+                ? shortTarget
+                : null;
+            const activeLongTarget = longTarget && nextMinuteIndex / 60 <= Number(longTarget.end_time || 0)
+                ? longTarget
+                : null;
+            const activePattern = activeShortTarget?.pattern || activeLongTarget?.pattern || fallbackPattern;
+            const minuteVolatility = this._getPatternMinuteVolatility(activePattern, assetDef) * (macroState.volatility_regime || 1);
+            const trendDrift = personalityState === 'BULLISH_TREND'
+                ? minuteVolatility * 0.18
+                : (personalityState === 'BEARISH_TREND' ? -minuteVolatility * 0.18 : 0);
+            const targetDrift = this._calculateTargetDrift(last.close, activeShortTarget, 'short', last.time, Math.max(0.0004, minuteVolatility * 1.8));
+            const longTargetDrift = this._calculateTargetDrift(last.close, activeLongTarget, 'long', last.time / 60, Math.max(0.00012, minuteVolatility * 0.55));
             const changePercent = this._clamp(
                 this._normalRandom() * minuteVolatility + trendDrift + macroDrift + targetDrift + longTargetDrift,
                 -0.08,
                 0.08
             );
             const close = Math.max(0.000001, last.close * Math.exp(changePercent));
-            const candle = this._createMinuteCandle(last, close, minuteVolatility, `chat_${personalityState.toLowerCase()}${this._getTargetPatternSuffix(shortTarget || longTarget)}`, 0.45);
+            const candle = this._createMinuteCandle(last, close, minuteVolatility, `chat_${personalityState.toLowerCase()}${this._getTargetPatternSuffix(activeShortTarget || activeLongTarget)}`, 0.45);
             candles.push(candle);
             last = candle;
         }
@@ -557,10 +574,14 @@ export class MarketSimulator {
 
             const macroDrift = this._calculateMacroDrift(assetDef, macroState);
             const randomFactor = this._fatTailShock();
-            const longTarget = this._getActiveMarketTarget(assetCode, 'long', globalMarket);
+            const nextHourIndex = lastCandle.time + 1;
+            const targetCandidate = this._getActiveMarketTarget(assetCode, 'long', globalMarket);
+            const longTarget = targetCandidate && nextHourIndex <= Number(targetCandidate.end_time || 0)
+                ? targetCandidate
+                : null;
             const changePercent = this._clamp(randomFactor * volatility + drift + macroDrift, -0.35, 0.35);
             let newClose = open * Math.exp(changePercent);
-            newClose = this._applyHourlyTargetToClose(assetCode, open, newClose, lastCandle.time + 1, volatility);
+            newClose = this._applyHourlyTargetToClose(assetCode, open, newClose, nextHourIndex, volatility);
             
             const wickVolatility = volatility * (0.55 + Math.random() * 0.65);
             const highWick = Math.random() * open * wickVolatility;

@@ -295,6 +295,24 @@ export class SillyViewApp {
         return expiredTargets;
     }
 
+    _getHoursUntilNextLongTargetExpiry(maxHours) {
+        const limit = Math.max(0, Math.floor(Number(maxHours) || 0));
+        if (limit <= 0) return 0;
+
+        const targetState = this.data.getMarketTargets?.() || {};
+        const market = this.data.getState(SillyViewConfig.world_book_keys.global_market) || {};
+        const currentTimeIndex = Number(market.current_time_index || 0);
+        let hoursUntilExpiry = limit;
+
+        for (const assetTargets of Object.values(targetState.targets || {})) {
+            const endTime = Number(assetTargets?.long?.end_time);
+            if (!Number.isFinite(endTime) || endTime <= currentTimeIndex) continue;
+            hoursUntilExpiry = Math.min(hoursUntilExpiry, Math.max(1, Math.ceil(endTime - currentTimeIndex)));
+        }
+
+        return hoursUntilExpiry;
+    }
+
     async _getActiveAssetsForAutoTurn(expiredTargets = []) {
         const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
         const availableAssets = configState.available_assets || Object.keys(SillyViewConfig.asset_definitions);
@@ -804,11 +822,16 @@ export class SillyViewApp {
                 await this.onQuickModeToggled(false); 
             }
         } else if (isQuickMode) {
+            if (await this.triggerLongTargetExpiryTurnIfNeeded()) return;
+
             const activeAssetCode = this.ui.currentAsset;
             const assetDef = SillyViewConfig.asset_definitions[activeAssetCode];
-            const hoursToAdvance = Math.min(assetDef.trading_hours_per_day, market.remaining_candles);
+            const requestedHours = Math.min(assetDef.trading_hours_per_day, market.remaining_candles);
+            const hoursToAdvance = this._getHoursUntilNextLongTargetExpiry(requestedHours);
             
-            if (hoursToAdvance < assetDef.trading_hours_per_day) {
+            if (hoursToAdvance < requestedHours) {
+                this.dependencies.win.toastr.info(`长线目标即将到期，本次快速推进在 ${hoursToAdvance} 小时处结束。`);
+            } else if (hoursToAdvance < assetDef.trading_hours_per_day) {
                 this.dependencies.win.toastr.info(`由于市场进入关键时刻，本次仅推进了 ${hoursToAdvance} 小时。`);
             }
     
@@ -819,12 +842,10 @@ export class SillyViewApp {
             
             for (const assetCode of Object.keys(SillyViewConfig.asset_definitions)) {
                  if (assetCode !== activeAssetCode) {
-                    const bgAssetDef = SillyViewConfig.asset_definitions[assetCode];
-                    const bgHours = bgAssetDef.trading_hours_per_day;
-                    const bgCandles = this.marketSimulator.calculateCandlesForBackgroundAsset(assetCode, bgHours);
+                    const bgCandles = this.marketSimulator.calculateCandlesForBackgroundAsset(assetCode, hoursToAdvance);
                     const bgMinuteCandles = this.marketSimulator.calculateMinuteCandlesForHourlyCandles(assetCode, bgCandles);
                     await this.data.updateAssetCandles(assetCode, bgCandles, bgMinuteCandles);
-                    await this.data.aggregateHourlyToDaily(assetCode, bgHours);
+                    await this.data.aggregateHourlyToDaily(assetCode, hoursToAdvance);
                     await this._checkRiskControlsForHourlyCandles(assetCode, bgCandles);
                  }
             }
