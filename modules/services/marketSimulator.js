@@ -237,29 +237,19 @@ export class MarketSimulator {
                 if (Number.isFinite(shortTargetPrice) && shortTargetPrice > 0) {
                     const shortPathPrice = startClose + (shortTargetPrice - startClose) * shortProgress;
                     const blend = this._clamp(0.25 + shortProgress * 0.45, 0.25, 0.7);
-                    trendPrice = trendPrice * (1 - blend) + shortPathPrice * blend;
-                }
-            } else if (activeLongTarget) {
-                const longProgress = this._getTargetProgress(activeLongTarget, 'long', hourIndex);
-                const longTargetPrice = Number(activeLongTarget.target_price);
-                if (Number.isFinite(longTargetPrice) && longTargetPrice > 0) {
-                    const longPathPrice = startClose + (longTargetPrice - startClose) * longProgress;
-                    const blend = this._clamp(0.08 + longProgress * 0.18, 0.08, 0.26);
-                    trendPrice = trendPrice * (1 - blend) + longPathPrice * blend;
+                    const desiredOffset = (shortPathPrice - trendPrice) * blend;
+                    const maxIntrahourOffset = Math.max(
+                        Math.abs(targetClose - startClose) * 0.75,
+                        startClose * volatility * 4
+                    );
+                    trendPrice += this._clamp(desiredOffset, -maxIntrahourOffset, maxIntrahourOffset);
                 }
             }
             const noise = i === count
                 ? 0
                 : this._normalRandom() * startClose * volatility * Math.sin(Math.PI * progress);
             const rawClose = i === count ? targetClose : Math.max(0.000001, trendPrice + noise);
-            const close = hasTargetRange
-                ? this._clamp(rawClose, rangeLow, rangeHigh)
-                : rawClose;
-            const candle = this._createMinuteCandle(last, close, volatility, activePattern, 1 + Math.abs(this._normalRandom()) * 0.35);
-            if (hasTargetRange) {
-                candle.high = Math.max(candle.open, candle.close, Math.min(candle.high, rangeHigh));
-                candle.low = Math.min(candle.open, candle.close, Math.max(candle.low, rangeLow));
-            }
+            const candle = this._createMinuteCandle(last, rawClose, volatility, activePattern, 1 + Math.abs(this._normalRandom()) * 0.35);
             candles.push(candle);
             last = candle;
         }
@@ -268,8 +258,8 @@ export class MarketSimulator {
             const rising = targetClose >= startClose;
             const lowIndex = Math.min(candles.length - 1, Math.floor(candles.length * (rising ? 0.28 : 0.68)));
             const highIndex = Math.min(candles.length - 1, Math.floor(candles.length * (rising ? 0.68 : 0.28)));
-            candles[lowIndex].low = rangeLow;
-            candles[highIndex].high = rangeHigh;
+            candles[lowIndex].low = Math.min(candles[lowIndex].low, rangeLow);
+            candles[highIndex].high = Math.max(candles[highIndex].high, rangeHigh);
         }
 
         return candles;
@@ -369,6 +359,14 @@ export class MarketSimulator {
             );
             minuteCandles.push(...generated);
             if (generated.length > 0) {
+                hourlyCandle.high = Math.max(
+                    Number(hourlyCandle.high || hourlyCandle.open || hourlyCandle.close || 0),
+                    ...generated.map(candle => Number(candle.high || candle.open || candle.close || 0))
+                );
+                hourlyCandle.low = Math.max(0.000001, Math.min(
+                    Number(hourlyCandle.low || hourlyCandle.open || hourlyCandle.close || Infinity),
+                    ...generated.map(candle => Number(candle.low || candle.open || candle.close || Infinity))
+                ));
                 lastMinute = generated[generated.length - 1];
             }
         }
