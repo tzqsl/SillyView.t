@@ -23,6 +23,7 @@ export class DataManager {
         this._stateCache = new Map();
         this.hasGameBook = false;
         this.contextEntriesEnsuredFor = null;
+        this.activeManagedObservationSession = null;
     }
 
     _ensureAssetDataShape(assetData) {
@@ -1719,6 +1720,7 @@ export class DataManager {
             worldbook_name: this.config.multi_account.control_worldbook_name,
             state_entry_name: stateEntryName,
             portfolio,
+            recent_major_events: [],
             created_at: Date.now(),
             updated_at: Date.now(),
         };
@@ -1862,6 +1864,7 @@ export class DataManager {
                 const state = legacyState || initialState;
                 this._migratePortfolioPositionBuckets(state.portfolio);
                 state.version = 2;
+                if (!Array.isArray(state.recent_major_events)) state.recent_major_events = [];
                 state.worldbook_name = controlName;
                 state.state_entry_name = stateEntryName;
                 this._upsertWorldbookEntry(entries, stateEntryName, JSON.stringify(state, null, 2), false);
@@ -1872,6 +1875,7 @@ export class DataManager {
                 const state = JSON.parse(stateEntry.content);
                 this._migratePortfolioPositionBuckets(state.portfolio);
                 state.version = 2;
+                if (!Array.isArray(state.recent_major_events)) state.recent_major_events = [];
                 state.owner_name = state.owner_name || account.owner_name;
                 state.bank_name = state.bank_name || account.bank_name;
                 state.bank_account_no = state.bank_account_no || account.bank_account_no;
@@ -1932,6 +1936,7 @@ export class DataManager {
                 state.version = 2;
                 state.state_entry_name = stateEntryName;
                 state.worldbook_name = controlName;
+                if (!Array.isArray(state.recent_major_events)) state.recent_major_events = [];
                 this._migratePortfolioPositionBuckets(state.portfolio);
                 states.push(state);
             } catch (error) {
@@ -1950,6 +1955,7 @@ export class DataManager {
         state.updated_at = Date.now();
         state.worldbook_name = controlName;
         state.state_entry_name = stateEntryName;
+        if (!Array.isArray(state.recent_major_events)) state.recent_major_events = [];
         await this._ensureWorldbookExists(controlName, [{
             name: stateEntryName,
             enabled: false,
@@ -1961,11 +1967,24 @@ export class DataManager {
         });
     }
 
-    _buildManagedTradeCommandGuide() {
+    _buildManagedTradeCommandGuide(states = []) {
+        const accountDirectory = states.length > 0
+            ? states.map(state => `- ${state.account_id} | ${state.owner_name || '未知户名'} | ${state.bank_name || '未知开户行'}`)
+            : ['- 暂无可用账户'];
         return [
             '【SillyView 多账户交易指令】',
-            '用途：让角色 AI 操作 SillyView_accounts 中彼此独立的账户。交易前先读取 sv_accounts_query 和 sv_kline_context。',
-            '输出规则：账户编号必须原样使用 sv_accounts_query 中的 account_id；资产代码必须使用 sv_kline_context 中的 code。所有指令放在回复末尾唯一的 <command>...</command> 块中，一行一条；不要把指令写在正文或代码块里。',
+            '用途：让角色 AI 先根据人设和当前剧情判断角色是否会查看手机或账户，再操作彼此独立的账户。默认情况下账户实况和行情均不可见，不得假定角色知道未观察的数据。',
+            '输出规则：所有观察和交易指令放在回复末尾唯一的 <command>...</command> 块中，一行一条；不要把指令写在正文或代码块里。账户编号必须原样使用下方目录中的 account_id。',
+            '',
+            '账户目录（只提供身份，不代表角色已经查看余额、持仓或近期事件）：',
+            ...accountDirectory,
+            '',
+            '观察指令：',
+            '[Observe.Account("account_id")]：该角色决定查看自己的账户；系统将在下一次请求中临时提供该账户实况、持仓及近期重大事件，并附带一份 sv_kline_context。',
+            '[Observe.Market()]：角色只查看市场行情；系统将在下一次请求中临时提供一份 sv_kline_context。',
+            '[Observe.Combined("account_id")]：同时查看指定账户和市场，效果等同于 Account；多个不同角色查看时逐行输出各自的 account_id。',
+            '同一轮可输出任意多个不同账户的观察指令；系统会去重并合并为一次后续请求，sv_kline_context 只发送一份。无人查看时不要输出 Observe 指令。',
+            '首次请求中如果账户和行情实况尚不可见，只能输出观察意图，不能凭空生成交易指令；收到观察数据后的后续请求才可交易。',
             '',
             '通用参数顺序：("account_id", "asset_code", amount, leverage, take_profit, stop_loss)。',
             '- amount：杠杆指令中是本次投入的保证金，现货指令中是买入金额；必须大于 0 且不能超过账户可用现金。',
@@ -1996,7 +2015,7 @@ export class DataManager {
             '[Trade.OpenShort("acct_example_b", "GBPUSD", 800, 5, 1.2300, 1.3100)]',
             '[Trade.SetRisk("acct_example_c", "USDJPY", 152.00, 0)]',
             '</command>',
-            '只输出确实要执行的操作；观望时不要生成交易指令。每个账户独立判断、独立计算资金和持仓，不得混用 account_id。',
+            '只输出确实要执行的操作；观望时不要生成交易指令。每个账户独立判断、独立计算资金和持仓，不得混用 account_id。交易指令只能依据本轮实际观察到的数据。',
         ].join('\n');
     }
 
@@ -2106,16 +2125,16 @@ export class DataManager {
             {
                 name: this.config.multi_account.command_entry_key,
                 enabled: true,
-                content: this._buildManagedTradeCommandGuide(),
+                content: this._buildManagedTradeCommandGuide(states),
             },
             {
                 name: this.config.multi_account.account_query_key,
-                enabled: true,
+                enabled: false,
                 content: this._buildManagedAccountsQuery(states),
             },
             {
                 name: this.config.world_book_keys.kline_context,
-                enabled: true,
+                enabled: false,
                 content: JSON.stringify(klineContext, null, 2),
             },
             {
@@ -2141,10 +2160,10 @@ export class DataManager {
         await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries(states));
         await this._ensureAdditionalWorldbook(controlName);
         await this.th.updateWorldbookWith(controlName, entries => {
-            this._upsertWorldbookEntry(entries, this.config.multi_account.command_entry_key, this._buildManagedTradeCommandGuide(), true);
-            this._upsertWorldbookEntry(entries, this.config.multi_account.account_query_key, this._buildManagedAccountsQuery(states), true);
+            this._upsertWorldbookEntry(entries, this.config.multi_account.command_entry_key, this._buildManagedTradeCommandGuide(states), true);
+            this._upsertWorldbookEntry(entries, this.config.multi_account.account_query_key, this._buildManagedAccountsQuery(states), false);
             const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
-            this._upsertWorldbookEntry(entries, this.config.world_book_keys.kline_context, JSON.stringify(klineContext, null, 2), true);
+            this._upsertWorldbookEntry(entries, this.config.world_book_keys.kline_context, JSON.stringify(klineContext, null, 2), false);
             const eventLogEntry = entries.find(entry => entry.name === this.config.multi_account.auto_event_log_key);
             if (!eventLogEntry) {
                 this._upsertWorldbookEntry(entries, this.config.multi_account.auto_event_log_key, JSON.stringify(this._defaultAutoEventLog(), null, 2), false);
@@ -2162,6 +2181,154 @@ export class DataManager {
             }
             return entries.filter(entry => entry.name !== this.config.multi_account.recent_news_key);
         });
+    }
+
+    _collectManagedObservationScope(commands = []) {
+        const accountIds = new Set();
+        let marketRequested = false;
+        const rejected = [];
+
+        for (const command of commands) {
+            if (command?.module !== 'Observe') continue;
+            if (command.type === 'Market') {
+                marketRequested = true;
+                continue;
+            }
+            if (command.type === 'Account' || command.type === 'Combined') {
+                const accountId = command.args?.[0];
+                if (typeof accountId === 'string' && accountId.trim()) {
+                    accountIds.add(accountId.trim());
+                } else {
+                    rejected.push(`${command.type}: 缺少 account_id`);
+                }
+                continue;
+            }
+            rejected.push(`${command.type || 'Unknown'}: 不支持的观察指令`);
+        }
+
+        return { accountIds: [...accountIds], marketRequested, rejected };
+    }
+
+    async beginManagedObservationSession(commands = []) {
+        if (this.activeManagedObservationSession) {
+            await this.endManagedObservationSession(this.activeManagedObservationSession.id, { markObserved: false });
+        }
+
+        await this.syncManagedAccountsWorldbook();
+        const scope = this._collectManagedObservationScope(commands);
+        const states = await this.getManagedAccountStates();
+        const stateById = new Map(states.map(state => [state.account_id, state]));
+        const validAccountIds = scope.accountIds.filter(accountId => stateById.has(accountId));
+        const unknownAccountIds = scope.accountIds.filter(accountId => !stateById.has(accountId));
+        const marketRequested = scope.marketRequested || validAccountIds.length > 0;
+        const activatedEntryNames = [];
+        const contextEntries = [];
+        const observedEventIds = {};
+        const controlName = this.config.multi_account.control_worldbook_name;
+
+        if (!marketRequested && validAccountIds.length === 0) {
+            return {
+                active: false,
+                reason: '没有有效的 Observe 指令。',
+                requested_account_ids: scope.accountIds,
+                unknown_account_ids: unknownAccountIds,
+                rejected: scope.rejected,
+                activated_entries: [],
+                context: '',
+            };
+        }
+
+        await this.th.updateWorldbookWith(controlName, entries => {
+            const enableEntry = entry => {
+                if (!entry) return;
+                entry.enabled = true;
+                activatedEntryNames.push(entry.name);
+                contextEntries.push(`### ${entry.name}\n${entry.content || ''}`);
+            };
+
+            if (marketRequested) {
+                enableEntry(entries.find(entry => entry.name === this.config.world_book_keys.kline_context));
+            }
+            for (const accountId of validAccountIds) {
+                const entryName = this._getManagedAccountStateEntryName(accountId);
+                const entry = entries.find(item => item.name === entryName);
+                enableEntry(entry);
+                const state = stateById.get(accountId);
+                observedEventIds[accountId] = (state?.recent_major_events || [])
+                    .filter(event => !event.observed)
+                    .map(event => event.id);
+            }
+            return entries;
+        });
+
+        const session = {
+            id: `obs_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            active: true,
+            created_at: Date.now(),
+            requested_account_ids: scope.accountIds,
+            account_ids: validAccountIds,
+            unknown_account_ids: unknownAccountIds,
+            market_requested: marketRequested,
+            rejected: scope.rejected,
+            activated_entries: activatedEntryNames,
+            observed_event_ids: observedEventIds,
+            context: contextEntries.join('\n\n'),
+        };
+        this.activeManagedObservationSession = session;
+        return { ...session };
+    }
+
+    async endManagedObservationSession(sessionId = null, options = {}) {
+        const session = this.activeManagedObservationSession;
+        if (!session || (sessionId && session.id !== sessionId)) return false;
+        const markObserved = options.markObserved !== false;
+        const controlName = this.config.multi_account.control_worldbook_name;
+        const now = Date.now();
+
+        await this.th.updateWorldbookWith(controlName, entries => {
+            const activated = new Set(session.activated_entries || []);
+            for (const entry of entries) {
+                if (activated.has(entry.name)) entry.enabled = false;
+                if (!markObserved || !entry.name?.startsWith(`${this.config.multi_account.account_state_key}_`)) continue;
+                const accountId = entry.name.slice(`${this.config.multi_account.account_state_key}_`.length);
+                const eventIds = new Set(session.observed_event_ids?.[accountId] || []);
+                if (eventIds.size === 0) continue;
+                try {
+                    const state = JSON.parse(entry.content || '{}');
+                    state.recent_major_events = (state.recent_major_events || []).map(event => (
+                        eventIds.has(event.id) ? { ...event, observed: true, observed_at: now } : event
+                    ));
+                    entry.content = JSON.stringify(state, null, 2);
+                } catch (error) {
+                    this.logger.warn(`标记账户重大事件为已观察失败: ${entry.name}`, error);
+                }
+            }
+            return entries;
+        });
+
+        this.activeManagedObservationSession = null;
+        return true;
+    }
+
+    async getManagedObservationDebugState() {
+        const controlName = this.config.multi_account.control_worldbook_name;
+        let entries = [];
+        try {
+            entries = await this.th.getWorldbook(controlName);
+        } catch (error) {
+            return { session: this.activeManagedObservationSession, entries: [], error: error?.message || String(error) };
+        }
+        const relevantNames = new Set([
+            this.config.multi_account.command_entry_key,
+            this.config.multi_account.account_query_key,
+            this.config.world_book_keys.kline_context,
+        ]);
+        return {
+            session: this.activeManagedObservationSession,
+            entries: entries
+                .filter(entry => relevantNames.has(entry.name) || entry.name?.startsWith(`${this.config.multi_account.account_state_key}_`))
+                .map(entry => ({ name: entry.name, enabled: Boolean(entry.enabled), content_length: String(entry.content || '').length })),
+        };
     }
 
     _defaultAutoEventLog() {
@@ -2878,6 +3045,25 @@ export class DataManager {
         if (portfolio.asset_history.length > 365) portfolio.asset_history = portfolio.asset_history.slice(-365);
     }
 
+    _appendManagedAccountMajorEvent(state, event = {}) {
+        if (!state) return;
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+        if (!Array.isArray(state.recent_major_events)) state.recent_major_events = [];
+        state.recent_major_events.push({
+            id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            time_index: Number(market.current_time_index || 0),
+            minute_time_index: Number(market.minute_time_index || 0),
+            datetime: String(market.current_datetime || ''),
+            type: String(event.type || 'account_change'),
+            asset_code: String(event.asset_code || 'GLOBAL'),
+            mode: String(event.mode || ''),
+            content: String(event.content || '').slice(0, 240),
+            observed: false,
+            created_at: Date.now(),
+        });
+        state.recent_major_events = state.recent_major_events.slice(-20);
+    }
+
     async _getManagedAccountStateById(accountId) {
         const states = await this.getManagedAccountStates();
         return states.find(state => state.account_id === accountId) || null;
@@ -2952,6 +3138,12 @@ export class DataManager {
         });
 
         state.portfolio = portfolio;
+        this._appendManagedAccountMajorEvent(state, {
+            type: 'risk_update',
+            asset_code: assetCode,
+            mode,
+            content: `调整止盈止损：止盈 ${normalized.take_profit || '未设置'}，止损 ${normalized.stop_loss || '未设置'}。`,
+        });
         this._recordAccountHistory(portfolio);
         await this._writeManagedAccountState(state);
         await this.syncManagedAccountsWorldbook();
@@ -3071,6 +3263,12 @@ export class DataManager {
         if (!portfolio.actions_this_turn) portfolio.actions_this_turn = [];
         portfolio.actions_this_turn.push({ id: Date.now(), text: actionText, executedAt: price, intent, amount: normalizedAmount, leverage: normalizedLeverage, mode, assetCode });
         state.portfolio = portfolio;
+        this._appendManagedAccountMajorEvent(state, {
+            type: 'trade',
+            asset_code: assetCode,
+            mode,
+            content: `${actionText}，成交价 ${price.toFixed(5)}。`,
+        });
         this._recordAccountHistory(portfolio);
         await this._writeManagedAccountState(state);
         await this.syncManagedAccountsWorldbook();
@@ -3125,6 +3323,12 @@ export class DataManager {
         this._recordAccountTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl);
         this._recordAccountHistory(portfolio);
         state.portfolio = portfolio;
+        this._appendManagedAccountMajorEvent(state, {
+            type: reason,
+            asset_code: assetCode,
+            mode,
+            content: `${label}触发，成交价 ${Number(closePrice).toFixed(5)}，已实现盈亏 ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}。`,
+        });
         await this._writeManagedAccountState(state);
         return {
             triggered: true,

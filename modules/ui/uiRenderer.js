@@ -336,6 +336,11 @@ export class UIRenderer {
                         <button id="sv-save-bg-ai-btn" class="sv-button sv-button-blue" style="width:100%;">保存后台模型设置</button>
                     </div>
                 </div>
+                <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--bg-gray-700); margin-bottom: 1rem;">
+                    <h4 style="font-weight: 600; color: var(--cyan-400); margin-bottom: 0.5rem;">角色观察调试</h4>
+                    <p style="font-size:0.75rem; color:var(--text-gray-400); margin-bottom:0.75rem;">临时测试首轮 Observe 指令、二轮数据激活和结束清理。</p>
+                    <button id="sv-open-observation-debug-btn" class="sv-button" style="width:100%; background-color:var(--bg-gray-700);">打开调试窗口</button>
+                </div>
                 <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--red-500);">
                     <h4 style="font-weight: 600; color: var(--red-400);">危险区域</h4>
                     <p style="font-size: 0.875rem; color: var(--text-gray-400); margin-top: 0.5rem; margin-bottom: 1rem;">

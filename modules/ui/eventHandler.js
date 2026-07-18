@@ -28,6 +28,74 @@ export class EventHandler {
         return settings;
     }
 
+    async openObservationDebugWindow() {
+        const existing = this.parentDoc.querySelector('.sv-observation-debug-overlay');
+        if (existing) existing.remove();
+        const states = await this.data.getManagedAccountStates();
+        const exampleId = states[0]?.account_id || 'acct_example';
+        const modal = this.parentDoc.createElement('div');
+        modal.className = 'sv-modal-overlay sv-observation-debug-overlay';
+        modal.innerHTML = `
+            <div class="sv-modal-content sv-observation-debug-modal">
+                <div class="sv-debug-header">
+                    <div>
+                        <h3>角色观察调试</h3>
+                        <p>模拟角色 AI 的首轮输出；激活后，下方内容就是二次请求应临时注入的数据。</p>
+                    </div>
+                    <button type="button" class="sv-icon-button" id="sv-observation-debug-close" title="关闭" aria-label="关闭">&times;</button>
+                </div>
+                <label class="sv-debug-label" for="sv-observation-debug-input">首轮角色 AI 输出</label>
+                <textarea id="sv-observation-debug-input" class="sv-debug-textarea"><command>\n[Observe.Account("${exampleId}")]\n</command></textarea>
+                <div class="sv-debug-actions">
+                    <button type="button" id="sv-observation-debug-run" class="sv-button sv-button-blue">解析并激活</button>
+                    <button type="button" id="sv-observation-debug-finish" class="sv-button sv-button-green">完成二轮并清理</button>
+                    <button type="button" id="sv-observation-debug-refresh" class="sv-button">刷新状态</button>
+                </div>
+                <div class="sv-debug-grid">
+                    <section>
+                        <h4>世界书状态</h4>
+                        <pre id="sv-observation-debug-state"></pre>
+                    </section>
+                    <section>
+                        <h4>二轮临时上下文</h4>
+                        <pre id="sv-observation-debug-context">尚未激活观察数据。</pre>
+                    </section>
+                </div>
+            </div>`;
+        this.parentDoc.body.appendChild(modal);
+
+        const stateEl = modal.querySelector('#sv-observation-debug-state');
+        const contextEl = modal.querySelector('#sv-observation-debug-context');
+        const refresh = async () => {
+            const state = await this.data.getManagedObservationDebugState();
+            stateEl.textContent = JSON.stringify(state, null, 2);
+            if (state.session?.context) contextEl.textContent = state.session.context;
+        };
+        const cleanupAndClose = async () => {
+            await this.app.finishRoleObservation(null, { markObserved: false });
+            modal.remove();
+        };
+
+        modal.querySelector('#sv-observation-debug-run').addEventListener('click', async () => {
+            const text = modal.querySelector('#sv-observation-debug-input').value;
+            const result = await this.app.prepareRoleObservation(text);
+            contextEl.textContent = result.second_request_context || JSON.stringify(result, null, 2);
+            await refresh();
+        });
+        modal.querySelector('#sv-observation-debug-finish').addEventListener('click', async () => {
+            const sessionId = this.data.activeManagedObservationSession?.id || null;
+            await this.app.finishRoleObservation(sessionId, { markObserved: true });
+            contextEl.textContent = '观察会话已完成；临时条目已关闭，本次看到的重大事件已标记为 observed。';
+            await refresh();
+        });
+        modal.querySelector('#sv-observation-debug-refresh').addEventListener('click', refresh);
+        modal.querySelector('#sv-observation-debug-close').addEventListener('click', cleanupAndClose);
+        modal.addEventListener('click', event => {
+            if (event.target === modal) cleanupAndClose();
+        });
+        await refresh();
+    }
+
     _renderBackgroundModelList(models) {
         const listEl = this.parentDoc.getElementById('sv-bg-ai-model-list');
         if (!listEl) return;
@@ -424,6 +492,7 @@ export class EventHandler {
                 const buyBtn = target.closest('#sillyview-buy-btn');
                 const sellBtn = target.closest('#sillyview-sell-btn');
                 const resetBtn = target.closest('#sv-reset-data-btn');
+                const observationDebugBtn = target.closest('#sv-open-observation-debug-btn');
                 const saveBgAiBtn = target.closest('#sv-save-bg-ai-btn');
                 const fetchBgAiModelsBtn = target.closest('#sv-fetch-bg-ai-models-btn');
                 const bgAiModelOption = target.closest('.sv-bg-ai-model-option');
@@ -433,6 +502,8 @@ export class EventHandler {
 
                 if (tabButton) {
                     this.ui.switchSidebarTab(tabButton.dataset.tab);
+                } else if (observationDebugBtn) {
+                    await this.openObservationDebugWindow();
                 } else if (loanBtn) {
                     this.modals.showLoanModal('loan');
                 } else if (repayBtn) {

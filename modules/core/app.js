@@ -418,6 +418,22 @@ export class SillyViewApp {
         return await this.processGeneratedMarketText(msg);
     }
 
+    async prepareRoleObservation(firstPassText) {
+        const commands = this.commandParser.parse(firstPassText);
+        const session = await this.data.beginManagedObservationSession(commands);
+        return {
+            ...session,
+            first_pass_text: firstPassText,
+            second_request_context: session.active
+                ? `【角色首次判断】\n${firstPassText}\n\n【本次观察数据】\n${session.context}`
+                : '',
+        };
+    }
+
+    async finishRoleObservation(sessionId = null, options = {}) {
+        return await this.data.endManagedObservationSession(sessionId, options);
+    }
+
     async processGeneratedMarketText(msg, options = {}) {
         const requiredAssetCodes = options.requiredAssetCodes || [];
         const silent = options.silent === true;
