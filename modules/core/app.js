@@ -21,6 +21,9 @@ export class SillyViewApp {
         this.lastMinuteAdvanceMessageId = null;
         this.initialBootstrapRunning = false;
         this.longTargetExpiryTurnRunning = false;
+        this.autoAdvanceTimer = null;
+        this.autoAdvanceRunning = false;
+        this.autoAdvanceElapsedMinutes = 0;
 
         // Dependencies are set in init() by the main script.js entry point
         this.data = null;
@@ -66,6 +69,123 @@ export class SillyViewApp {
             this.logger.success("SillyViewApp initialization complete.");
         });
     }
+
+    _getAutoAdvanceSettings() {
+        const config = this.data?.getState(SillyViewConfig.world_book_keys.config) || {};
+        return {
+            enabled: Boolean(config.auto_advance?.enabled),
+            minute_interval_ms: 60000,
+            minutes_per_turn: 60,
+        };
+    }
+
+    syncAutoAdvanceFromConfig() {
+        const settings = this._getAutoAdvanceSettings();
+        if (settings.enabled) this.startAutoAdvanceTimer();
+        else this.stopAutoAdvanceTimer();
+    }
+
+    startAutoAdvanceTimer() {
+        this.stopAutoAdvanceTimer();
+        if (!this.data || !this.ui?.isInitialized) return;
+        this.autoAdvanceElapsedMinutes = 0;
+        this.autoAdvanceTimer = setInterval(() => {
+            this._runAutoAdvanceTick().catch(error => this.logger.warn('自动推进分钟K失败:', error));
+        }, this._getAutoAdvanceSettings().minute_interval_ms);
+        this.logger.log('实时自动推进已开启：每分钟推进一次分K。');
+    }
+
+    stopAutoAdvanceTimer() {
+        if (this.autoAdvanceTimer) clearInterval(this.autoAdvanceTimer);
+        this.autoAdvanceTimer = null;
+        this.autoAdvanceElapsedMinutes = 0;
+    }
+
+    resetAutoAdvanceTimer(reason = 'manual') {
+        this.autoAdvanceElapsedMinutes = 0;
+        if (this._getAutoAdvanceSettings().enabled && reason !== 'auto') {
+            this.startAutoAdvanceTimer();
+        }
+    }
+
+    async setAutoAdvanceEnabled(enabled) {
+        const nextEnabled = Boolean(enabled);
+        await this.data.updateState(SillyViewConfig.world_book_keys.config, config => ({
+            ...(config || {}),
+            auto_advance: { ...(config?.auto_advance || {}), enabled: nextEnabled },
+        }));
+        if (nextEnabled) this.startAutoAdvanceTimer();
+        else this.stopAutoAdvanceTimer();
+        this.dependencies.win.toastr?.info(nextEnabled ? '实时自动推进已开启。' : '实时自动推进已关闭。');
+    }
+
+    async _runAutoAdvanceTick() {
+        if (this.autoAdvanceRunning || !this._getAutoAdvanceSettings().enabled) return;
+        if (this.initialBootstrapRunning || this.longTargetExpiryTurnRunning || this.ui.isAnimating) return;
+
+        this.autoAdvanceRunning = true;
+        try {
+            const result = await this.advanceMarketMinutes(1, { render: true, source: 'auto' });
+            if (result?.autoTurnTriggered) {
+                this.resetAutoAdvanceTimer('auto');
+                return;
+            }
+            if (!result?.advanced) return;
+
+            this.autoAdvanceElapsedMinutes += 1;
+            if (this.autoAdvanceElapsedMinutes >= this._getAutoAdvanceSettings().minutes_per_turn) {
+                this.autoAdvanceElapsedMinutes = 0;
+                await this.runAutoHourlyReview();
+            }
+        } finally {
+            this.autoAdvanceRunning = false;
+        }
+    }
+
+    async _recordImportantEvent(type, assetCode, content, timePoint = null) {
+        const market = this.data.getState(SillyViewConfig.world_book_keys.global_market) || {};
+        await this.data.appendAutoEventLog?.({
+            time_index: timePoint?.time_index ?? market.current_time_index,
+            minute_time_index: timePoint?.minute_time_index ?? market.minute_time_index,
+            datetime: market.current_datetime,
+            type,
+            asset_code: assetCode,
+            content,
+        });
+    }
+
+    async runAutoHourlyReview() {
+        if (this.longTargetExpiryTurnRunning) return;
+        const config = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
+        const assetCodes = config.available_assets || Object.keys(SillyViewConfig.asset_definitions);
+        if (assetCodes.length === 0) return;
+
+        await this._recordImportantEvent('auto_hourly_review', 'GLOBAL', '自动推进满一小时，后台 AI 开始整点结算。');
+        this.dependencies.win.toastr?.info('自动推进满一小时，正在执行后台市场结算。');
+        const activeAssetCode = assetCodes.includes(this.ui.currentAsset) ? this.ui.currentAsset : assetCodes[0];
+        const prompt = await this.aiDirector.buildAdvanceTurnPrompt([], new Set(assetCodes), activeAssetCode, 'HOURLY', {
+            autoReviewOnly: true,
+        });
+        try {
+            const response = await this.backgroundAI.generateMarketResponse(prompt);
+            await this.processGeneratedMarketText(response, {
+                requiredAssetCodes: [],
+                skipLongTargetExpiryAutoTurn: true,
+                allowMarketAdvance: false,
+            });
+            await this.data.accrueFundingFees(1);
+            await this.data.accrueManagedAccountFundingFees(1);
+            await this.data.recordAssetHistory();
+            this.data.clearActionsThisTurn();
+            await this.data.updateAIContext();
+            await this.data.saveAllEntries();
+            if (this.ui.isPanelVisible) this.ui.renderAll();
+        } catch (error) {
+            this.logger.error('自动整点结算失败:', error);
+            this.dependencies.win.toastr?.error(`自动整点结算失败: ${error.message || error}`);
+            await this._recordImportantEvent('auto_hourly_review_failed', 'GLOBAL', `自动整点结算失败：${error.message || error}`);
+        }
+    }
     
     async _checkLiquidations(livePrices = null) {
         const allAssetCodes = Object.keys(SillyViewConfig.asset_definitions);
@@ -90,6 +210,7 @@ export class SillyViewApp {
                     
                     // Liquidate position using the exact price that triggered it
                     await this.data.liquidatePosition(assetCode, currentPrice);
+                    await this._recordImportantEvent('liquidation', assetCode, `强制平仓，触发价 ${Number(currentPrice).toFixed(5)}。`);
                     
                     // Render UI after liquidation
                     this.ui.renderAll();
@@ -102,17 +223,28 @@ export class SillyViewApp {
         return false; // No liquidation occurred
     }
 
-    async _checkRiskControlsForHourlyCandles(assetCode, hourlyCandles) {
+    async _checkRiskControlsForHourlyCandles(assetCode, hourlyCandles, options = {}) {
         if (!Array.isArray(hourlyCandles) || hourlyCandles.length === 0) return false;
 
         let triggered = false;
         for (const candle of hourlyCandles) {
-            const accountTriggered = await this.data.processManagedAccountRiskForCandle(assetCode, candle);
-            if (accountTriggered) triggered = true;
+            const eventTime = options.timeframe === 'MINUTE'
+                ? { time_index: Math.floor(Number(candle.time || 0) / 60), minute_time_index: Number(candle.time || 0) }
+                : { time_index: Number(candle.time || 0), minute_time_index: Number(candle.time || 0) * 60 };
+            const accountResult = await this.data.processManagedAccountRiskForCandle(assetCode, candle);
+            if (accountResult?.triggered) {
+                triggered = true;
+                for (const event of accountResult.events || []) {
+                    const content = `托管账户 ${event.account_id || '未知'} ${event.label}，触发价 ${Number(event.price || 0).toFixed(5)}。`;
+                    this.dependencies.win.toastr.warning(content, '自动风控');
+                    await this._recordImportantEvent(event.type, assetCode, content, eventTime);
+                }
+            }
 
             const result = await this.data.triggerRiskControlsForCandle(assetCode, candle);
             if (result?.triggered) {
                 triggered = true;
+                await this._recordImportantEvent(result.triggerType, assetCode, `${result.triggerType === 'take_profit' ? '止盈' : result.triggerType === 'stop_loss' ? '止损' : '强制平仓'}触发，成交价 ${Number(result.price || 0).toFixed(5)}。`, eventTime);
                 if (result.triggerType === 'liquidation') break;
                 const triggerCandle = result.triggerCandle;
                 const rangeText = triggerCandle
@@ -206,6 +338,7 @@ export class SillyViewApp {
                 || [...activeAssetsForAI][0];
 
             this.logger.log(`长线目标到期，自动发送一次后台AI结束回合请求: ${expiredTargets.map(item => item.assetCode).join(', ')}`);
+            await this._recordImportantEvent('long_target_expired', 'GLOBAL', `长线目标到期：${expiredTargets.map(item => item.assetCode).join(', ')}，自动触发后台 AI 结算。`);
             this.dependencies.win.toastr?.info('长线目标已到期，正在自动请求后台 AI 结算并设定下一段行情。');
 
             const prompt = await this.aiDirector.buildAdvanceTurnPrompt([], activeAssetsForAI, activeAssetCode, 'HOURLY', {
@@ -227,6 +360,7 @@ export class SillyViewApp {
             await this.data.saveAllEntries();
             if (this.ui.isPanelVisible) this.ui.renderAll();
             this.logger.success('长线目标到期自动回合完成。');
+            this.resetAutoAdvanceTimer('auto');
             return true;
         } catch (error) {
             this.logger.error('长线目标到期自动回合失败。', error);
@@ -317,6 +451,7 @@ export class SillyViewApp {
                 }
             }
             else if (command.module === 'Market' && command.type === 'Advance') {
+                if (options.allowMarketAdvance === false) continue;
                 const [assetCode, timeframe, close_price, pattern] = command.args;
                 assetCodeForUpdate = assetCode;
                 if (assetCode && timeframe && typeof close_price === 'number' && pattern) {
@@ -327,6 +462,7 @@ export class SillyViewApp {
                 }
             }
             else if (command.module === 'Market' && command.type === 'AdvanceSeries') {
+                if (options.allowMarketAdvance === false) continue;
                 const [asset_code, timeframe, num_candles, final_close_price, pattern] = command.args;
                 assetCodeForUpdate = asset_code;
                  if (asset_code && timeframe && typeof num_candles === 'number' && typeof final_close_price === 'number' && pattern) {
@@ -361,6 +497,7 @@ export class SillyViewApp {
                 }
             }
             else if (command.module === 'Time' && command.type === 'Set') {
+                if (options.allowTimeAdvance === false) continue;
                 const [time, period, season, weather] = command.args;
                 if (typeof time === 'string' && typeof period === 'string') {
                     await this.data.setWorldTime({ time, period, season, weather });
@@ -492,6 +629,7 @@ export class SillyViewApp {
     }
     
     async onQuickModeToggled(isEnabled) {
+        this.resetAutoAdvanceTimer('manual_quick_mode');
         await this.data.setQuickModeEnabled(isEnabled);
         if (isEnabled) {
             this.quickModeStartState = this.data.createSnapshot();
@@ -601,6 +739,7 @@ export class SillyViewApp {
     }
     
     async advanceQuickModeHour() {
+        this.resetAutoAdvanceTimer('manual_quick_hour');
         if (!this.data.isQuickModeEnabled() || this.ui.isAnimating) return;
 
         const market = this.data.getState(SillyViewConfig.world_book_keys.global_market);
@@ -651,7 +790,8 @@ export class SillyViewApp {
         Logger.log(`快速模式: 推进 1 小时完成。`);
     }
 
-    async commitAndAdvance() {
+    async commitAndAdvance(options = {}) {
+        if (options.source !== 'auto') this.resetAutoAdvanceTimer('manual_end_turn');
         if (this.ui.isAnimating) return;
         
         const isQuickMode = this.data.isQuickModeEnabled();
@@ -771,6 +911,7 @@ export class SillyViewApp {
     }
     
     async syncQuickModeWithAI() {
+        this.resetAutoAdvanceTimer('manual_quick_sync');
         if (!this.quickModeStartState) {
             this.logger.warn("尝试同步，但快速模式未激活或起始状态丢失。");
             return;
@@ -819,6 +960,7 @@ export class SillyViewApp {
     }
 
     async advanceMinutesForUserMessage(msgId) {
+        if (this._getAutoAdvanceSettings().enabled) return;
         if (this.lastMinuteAdvanceMessageId === msgId) return;
 
         const messages = this.th.getChatMessages(msgId);
@@ -828,11 +970,13 @@ export class SillyViewApp {
         const loaded = await this.data.ensureStateLoaded();
         if (!loaded) return;
 
+        this.resetAutoAdvanceTimer('dialogue_minute');
         const barsToAdvance = Math.floor(Math.random() * 2) + 1;
         await this.advanceMarketMinutes(barsToAdvance, { render: true });
     }
 
     async advanceQuickModeMinutes(minutes = 5) {
+        this.resetAutoAdvanceTimer('manual_quick_minutes');
         if (!this.data.isQuickModeEnabled() || this.ui.isAnimating) return;
         const barsToAdvance = Math.max(1, Math.floor(Number(minutes) || 1));
         Logger.log(`快速模式: 推进 ${barsToAdvance} 分钟...`);
@@ -852,7 +996,7 @@ export class SillyViewApp {
             await this.data.appendMinuteCandles(assetCode, minuteCandles);
             await this._syncHourlyFromMinuteBoundary(assetCode, minuteCandles);
             maxMinuteTime = Math.max(maxMinuteTime, minuteCandles[minuteCandles.length - 1].time);
-            await this._checkRiskControlsForHourlyCandles(assetCode, minuteCandles);
+            await this._checkRiskControlsForHourlyCandles(assetCode, minuteCandles, { timeframe: 'MINUTE' });
         }
 
         if (maxMinuteTime > 0) {
@@ -863,14 +1007,18 @@ export class SillyViewApp {
             });
 
             await this._checkLiquidations();
-            if (await this.triggerLongTargetExpiryTurnIfNeeded()) return;
+            if (await this.triggerLongTargetExpiryTurnIfNeeded()) {
+                return { advanced: true, autoTurnTriggered: true };
+            }
             await this.data.updateAIContext();
             await this.data.saveAllEntries();
 
             if (options.render !== false && this.ui.isPanelVisible) {
                 this.ui.renderAll();
             }
+            return { advanced: true, autoTurnTriggered: false };
         }
+        return { advanced: false, autoTurnTriggered: false };
     }
 
     async _syncHourlyFromMinuteBoundary(assetCode, minuteCandles) {
@@ -940,6 +1088,7 @@ export class SillyViewApp {
         });
         eventSource.on(eventTypes.CHAT_CHANGED, () => {
             this.previousStateSnapshot = null;
+            this.stopAutoAdvanceTimer();
             if (this.ui.isPanelVisible) {
                 this.data.loadInitialState();
             }

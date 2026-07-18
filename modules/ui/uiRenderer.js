@@ -107,6 +107,13 @@ export class UIRenderer {
             <div style="margin: auto; text-align: center; padding: 2rem;">
                 <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 1rem;">欢迎来到 SillyView</h2>
                 <p style="margin-bottom: 1.5rem; color: var(--text-gray-400);">当前角色尚未初始化交易世界。是否要为其创建新的世界书条目？</p>
+                <label style="display:flex; align-items:center; justify-content:center; gap:0.75rem; margin-bottom:1.5rem; color:var(--text-gray-300);">
+                    <span>实时自动推进</span>
+                    <span class="sv-toggle-switch">
+                        <input type="checkbox" id="sv-auto-advance-on-create">
+                        <span class="slider round"></span>
+                    </span>
+                </label>
                 <div style="display: flex; justify-content: center; gap: 1rem;">
                     <button id="sv-create-book-yes" class="sv-button sv-button-blue">是的，创建</button>
                     <button id="sv-create-book-no" class="sv-button" style="background-color: var(--bg-gray-600);">不了，谢谢</button>
@@ -273,6 +280,8 @@ export class UIRenderer {
     }
 
     renderSettingsTab(container) {
+        const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
+        const autoAdvanceEnabled = Boolean(configState.auto_advance?.enabled);
         const bgAI = this._getBackgroundAISettings();
         const sourceOptions = ['openai', 'claude', 'openrouter', 'google', 'mistral', 'cohere']
             .map(source => `<option value="${source}" ${bgAI.source === source ? 'selected' : ''}>${source}</option>`)
@@ -281,6 +290,16 @@ export class UIRenderer {
         container.innerHTML = `
             <div>
                 <h3 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">游戏设置</h3>
+                <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--bg-gray-700); margin-bottom: 1rem;">
+                    <h4 style="font-weight: 600; color: var(--cyan-400); margin-bottom: 0.75rem;">市场时钟</h4>
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+                        <span style="font-size:0.875rem; color:var(--text-gray-300);">实时自动推进</span>
+                        <span class="sv-toggle-switch">
+                            <input type="checkbox" id="sv-auto-advance-enabled" ${autoAdvanceEnabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </span>
+                    </label>
+                </div>
                 <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--bg-gray-700); margin-bottom: 1rem;">
                     <h4 style="font-weight: 600; color: var(--cyan-400); margin-bottom: 0.75rem;">后台市场模型</h4>
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.75rem;">

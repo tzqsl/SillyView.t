@@ -107,6 +107,7 @@ export const SillyViewConfig = {
         command_entry_key: 'sv_accounts_trade_commands',
         account_query_key: 'sv_accounts_query',
         scan_report_key: 'sv_accounts_scan_report',
+        auto_event_log_key: 'sv_auto_event_log',
         recent_news_key: 'sv_accounts_recent_news',
     },
     
@@ -137,6 +138,7 @@ export const SillyViewConfig = {
             max_hourly_records: 240,
             max_minute_records: 720,
             initial_bootstrap_done: false,
+            auto_advance: { enabled: false },
             background_ai: { ...DEFAULT_BACKGROUND_AI_SETTINGS },
             // The list of assets to be created at the start of a new game
             available_assets: Object.keys(ASSET_DEFINITIONS)

@@ -294,6 +294,7 @@ export class EventHandler {
 
         if (yesButton) {
             yesButton.addEventListener('click', () => {
+                const autoAdvanceEnabled = Boolean(this.parentDoc.getElementById('sv-auto-advance-on-create')?.checked);
                 this.logger.log("用户同意创建世界书...");
                 yesButton.disabled = true;
                 yesButton.textContent = "正在创建...";
@@ -303,7 +304,7 @@ export class EventHandler {
                     detail: '正在准备初始化流程。',
                     percent: 3,
                 });
-                this.data.createInitialWorldState();
+                this.data.createInitialWorldState({ autoAdvance: { enabled: autoAdvanceEnabled } });
             });
         }
         if (noButton) {
@@ -469,8 +470,14 @@ export class EventHandler {
 
             sidebar.addEventListener('change', (event) => {
                 const leverageToggle = event.target.closest('#sillyview-leverage-mode-toggle');
+                const autoAdvanceToggle = event.target.closest('#sv-auto-advance-enabled');
                 if (leverageToggle) {
                     this.ui.setTradeMode(leverageToggle.checked ? 'leverage' : 'spot');
+                } else if (autoAdvanceToggle) {
+                    this.app.setAutoAdvanceEnabled(autoAdvanceToggle.checked).catch(error => {
+                        this.logger.error('切换实时自动推进失败:', error);
+                        this.dependencies.win.toastr.error(`切换实时自动推进失败: ${error.message || error}`);
+                    });
                 }
             });
 

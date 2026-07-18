@@ -16,7 +16,9 @@ export class AIDirector {
     }
     
     async buildAdvanceTurnPrompt(_actionsThisTurn, activeAssetsForAI, activeAssetCode, currentTimeframe, options = {}) {
-        const actionSummary = '请独立推进市场；不要读取、推断或迎合玩家账户、持仓与盈亏。';
+        const actionSummary = options.autoReviewOnly
+            ? '请独立完成整点市场结算；不要读取、推断或迎合玩家账户、持仓与盈亏。'
+            : '请独立推进市场；不要读取、推断或迎合玩家账户、持仓与盈亏。';
 
 
         let promptPrefix = '';
@@ -80,7 +82,9 @@ export class AIDirector {
         }
 
         const taskLines = [];
-        taskLines.push('【最高优先级：本回合市场推进任务】');
+        taskLines.push(options.autoReviewOnly
+            ? '【最高优先级：本回合市场整点结算任务】'
+            : '【最高优先级：本回合市场推进任务】');
         if (options.autoTriggerReason === 'long_target_expired') {
             taskLines.push('本回合由长线目标到期自动触发。请先评价刚到期目标是否兑现、失败或形成反转，再给相关资产设置下一段长线/短线目标。');
         }
@@ -92,16 +96,26 @@ export class AIDirector {
             const assetName = this.config.asset_definitions[code]?.name || code;
             return `${assetName} (${code})`;
         }).join('、');
-        taskLines.push(`本回合必须同时推进所有可用货币：${requiredAssetList}。当前查看的 ${currentAssetName} 只是叙事重点，不是唯一处理对象。`);
-        taskLines.push('本回合必须为每个可用货币分别检查并设立长线与短线目标：已有未到期目标可保留，缺失任一类目标就必须补设。新闻、价格推进和 pattern 必须与各自目标方向或诱多/诱空路径一致。');
+        taskLines.push(options.autoReviewOnly
+            ? `本回合是整点结算，所有可用货币的这一小时分K已由程序推进完成；本次只处理目标、新闻和时间结算。`
+            : `本回合必须同时推进所有可用货币：${requiredAssetList}。当前查看的 ${currentAssetName} 只是叙事重点，不是唯一处理对象。`);
+        taskLines.push(options.autoReviewOnly
+            ? '本回合必须为每个可用货币分别检查并设立长线与短线目标：已有未到期目标可保留，缺失任一类目标就必须补设。新增新闻和 pattern 必须与各自目标方向或诱多/诱空路径一致。'
+            : '本回合必须为每个可用货币分别检查并设立长线与短线目标：已有未到期目标可保留，缺失任一类目标就必须补设。新闻、价格推进和 pattern 必须与各自目标方向或诱多/诱空路径一致。');
         taskLines.push('目标指令格式: [Market.SetLongTarget(asset_code, target_price, hours, "pattern", "reason", confidence)] 或 [Market.SetShortTarget(asset_code, target_price, minutes, "pattern", "reason", confidence)]；长短线共用目标 pattern，时长建议分别为4-24小时、8-90分钟。');
         taskLines.push('target_price 决定目标涨跌方向，pattern 只描述路径；confidence 为0-1且越大越贴合目标。目标 pattern 含义和方向配对以参考资料为准，已有目标未到期时不得长期反向推进。');
         taskLines.push('取消目标使用 [Market.ClearTarget(asset_code, "long"|"short"|"all")]；目标到期后系统自动删除。');
         taskLines.push('新增新闻必须使用 [Market.AddNews("asset_code或GLOBAL", "新闻正文", duration_hours)]，duration_hours 为 1-168 的有效小时数。新闻可根据当回合因果随机分配给任意可用货币或 GLOBAL，不得固定跟随当前查看货币；但仍须有合理的外汇因果。新闻会在有效期内影响后续市场判断，到期后自动退出后台上下文。');
-        taskLines.push('必须让分K走势服务于已设立的短线/长线目标：短线目标决定分K入场节奏，长线目标决定小时级方向过滤。若分K信号与目标背离，可以用洗盘、回踩、假突破等 pattern 解释，但不要长期反向推进。');
-        taskLines.push(`对于上述每个可用货币，都必须分别使用 [Market.Advance] 或 [Market.AdvanceSeries] 指令决定其${timeUnit}的收盘价和走势，不得只推进当前查看货币。`);
-        taskLines.push(`timeframe 使用 "${currentTimeframe}"。close_price / final_close_price 必须是数字。pattern 从 bull_run、bear_crash、volatile、consolidation、reversal_bull、reversal_bear、sideways、fake_breakout、fake_breakdown、washout、bull_trap、bear_trap 中选择。`);
-        taskLines.push('必须同时使用 [Time.Set("YYYY年MM月DD日-星期X-HH:MM", "时段", "季节", "天气")] 推进世界时间。');
+        if (!options.autoReviewOnly) {
+            taskLines.push('必须让分K走势服务于已设立的短线/长线目标：短线目标决定分K入场节奏，长线目标决定小时级方向过滤。若分K信号与目标背离，可以用洗盘、回踩、假突破等 pattern 解释，但不要长期反向推进。');
+        }
+        if (options.autoReviewOnly) {
+            taskLines.push('本回合是自动整点结算：程序已完成这一小时的分K推进。本次只补设或检查目标、生成必要新闻并使用 [Time.Set] 同步世界时间，不要输出 [Market.Advance] 或 [Market.AdvanceSeries]。');
+        } else {
+            taskLines.push(`对于上述每个可用货币，都必须分别使用 [Market.Advance] 或 [Market.AdvanceSeries] 指令决定其${timeUnit}的收盘价和走势，不得只推进当前查看货币。`);
+            taskLines.push(`timeframe 使用 "${currentTimeframe}"。close_price / final_close_price 必须是数字。pattern 从 bull_run、bear_crash、volatile、consolidation、reversal_bull、reversal_bear、sideways、fake_breakout、fake_breakdown、washout、bull_trap、bear_trap 中选择。`);
+            taskLines.push('必须同时使用 [Time.Set("YYYY年MM月DD日-星期X-HH:MM", "时段", "季节", "天气")] 推进世界时间。');
+        }
         taskLines.push('每回合随机决定添加 0-2 条限时新闻，新闻对象从全部可用货币或 GLOBAL 中随机选择，当前查看货币不享有优先权。只有目标切换、关键转折、异常波动或宏观事件才值得记录，普通噪声可为 0 条。不要使用 <headline> 标签。');
         taskLines.push('最后必须输出一个且只有一个 <command>...</command> 块；所有完整指令都放在这个块内。');
         taskLines.push('除最后的 <command> 块外，不要在正文、解释或示例中输出完整的 [Module.Action(...)] 指令。');

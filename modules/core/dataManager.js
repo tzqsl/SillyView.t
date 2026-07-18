@@ -397,6 +397,7 @@ export class DataManager {
                 percent: 100,
             });
             this.ui.renderMainInterface();
+            this.dependencies.app?.syncAutoAdvanceFromConfig();
         } else {
             await this.autoDiscoverAndSyncManagedAccounts();
             this.logger.log("未找到游戏世界书，渲染创建界面。");
@@ -662,6 +663,10 @@ export class DataManager {
         const initialConfig = {
             ...defaults.config,
             background_ai: this._normalizeBackgroundAISettings(options.backgroundAI || defaults.config.background_ai),
+            auto_advance: {
+                ...defaults.config.auto_advance,
+                ...(options.autoAdvance || {}),
+            },
         };
 
         // Initialize with a random candle count for immediate quick mode use
@@ -740,6 +745,7 @@ export class DataManager {
             percent: 100,
         });
         this.ui.renderMainInterface();
+        this.dependencies.app?.syncAutoAdvanceFromConfig();
     }
 
     async runInitialBootstrapIfNeeded() {
@@ -791,7 +797,14 @@ export class DataManager {
         this.logger.warn("正在重置所有SillyView数据...");
         const configState = this.getState(this.config.world_book_keys.config) || {};
         const preservedBackgroundAI = this._normalizeBackgroundAISettings(configState.background_ai);
-        await this.createInitialWorldState({ backgroundAI: preservedBackgroundAI }); // Re-running the creation process effectively resets everything.
+        const preservedAutoAdvance = {
+            ...this.config.default_game_state.config.auto_advance,
+            ...(configState.auto_advance || {}),
+        };
+        await this.createInitialWorldState({
+            backgroundAI: preservedBackgroundAI,
+            autoAdvance: preservedAutoAdvance,
+        }); // Re-running the creation process effectively resets everything.
         this.dependencies.win.toastr.success("所有数据已重置到初始状态，后台模型设置已保留。");
     }
 
@@ -2054,6 +2067,11 @@ export class DataManager {
                 enabled: true,
                 content: JSON.stringify(klineContext, null, 2),
             },
+            {
+                name: this.config.multi_account.auto_event_log_key,
+                enabled: false,
+                content: JSON.stringify(this._defaultAutoEventLog(), null, 2),
+            },
         );
         if (scanDiagnostics) {
             entries.push({
@@ -2076,6 +2094,12 @@ export class DataManager {
             this._upsertWorldbookEntry(entries, this.config.multi_account.account_query_key, this._buildManagedAccountsQuery(states), true);
             const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
             this._upsertWorldbookEntry(entries, this.config.world_book_keys.kline_context, JSON.stringify(klineContext, null, 2), true);
+            const eventLogEntry = entries.find(entry => entry.name === this.config.multi_account.auto_event_log_key);
+            if (!eventLogEntry) {
+                this._upsertWorldbookEntry(entries, this.config.multi_account.auto_event_log_key, JSON.stringify(this._defaultAutoEventLog(), null, 2), false);
+            } else {
+                eventLogEntry.enabled = false;
+            }
             const accountIndex = entries.find(entry => entry.name === this.config.multi_account.account_index_key);
             if (accountIndex) accountIndex.enabled = false;
             const scanReportEntry = entries.find(entry => entry.name === this.config.multi_account.scan_report_key);
@@ -2086,6 +2110,55 @@ export class DataManager {
                 }
             }
             return entries.filter(entry => entry.name !== this.config.multi_account.recent_news_key);
+        });
+    }
+
+    _defaultAutoEventLog() {
+        return {
+            comment: 'SillyView 自动推进重要事件日志。仅记录时间点、事件类型、资产和简短内容，不记录账户余额或盈亏。',
+            updated_at: 0,
+            events: [],
+        };
+    }
+
+    async appendAutoEventLog(event = {}) {
+        const controlName = this.config.multi_account.control_worldbook_name;
+        const entryName = this.config.multi_account.auto_event_log_key;
+        const normalized = {
+            time_index: Number(event.time_index || 0),
+            minute_time_index: Number(event.minute_time_index || 0),
+            datetime: String(event.datetime || ''),
+            type: String(event.type || 'important_event'),
+            asset_code: String(event.asset_code || 'GLOBAL'),
+            content: String(event.content || '').slice(0, 240),
+        };
+
+        await this._ensureWorldbookExists(controlName, [{
+            name: entryName,
+            enabled: false,
+            content: JSON.stringify(this._defaultAutoEventLog(), null, 2),
+        }]);
+        await this.th.updateWorldbookWith(controlName, entries => {
+            const entry = entries.find(item => item.name === entryName) || this._upsertWorldbookEntry(
+                entries,
+                entryName,
+                JSON.stringify(this._defaultAutoEventLog(), null, 2),
+                false
+            );
+            let state;
+            try {
+                state = JSON.parse(entry.content || '{}');
+            } catch (error) {
+                state = this._defaultAutoEventLog();
+            }
+            const events = Array.isArray(state.events) ? state.events : [];
+            events.push({ id: Date.now(), ...normalized });
+            state.comment = this._defaultAutoEventLog().comment;
+            state.updated_at = normalized.time_index;
+            state.events = events.slice(-100);
+            entry.content = JSON.stringify(state, null, 2);
+            entry.enabled = false;
+            return entries;
         });
     }
 
@@ -2932,13 +3005,20 @@ export class DataManager {
         this._recordAccountHistory(portfolio);
         state.portfolio = portfolio;
         await this._writeManagedAccountState(state);
-        return true;
+        return {
+            triggered: true,
+            type: reason,
+            label,
+            price: closePrice,
+            account_id: state.account_id,
+        };
     }
 
     async processManagedAccountRiskForCandle(assetCode, candle) {
         if (!candle) return false;
         const states = await this.getManagedAccountStates();
         let changed = false;
+        const events = [];
 
         for (const state of states) {
             const portfolio = state.portfolio || {};
@@ -2962,12 +3042,21 @@ export class DataManager {
 
             const firstTrigger = this._selectFirstCandleTrigger(candle, candidates);
             if (firstTrigger) {
-                changed = await this.closeManagedAccountPositionAtPrice(state, assetCode, firstTrigger.price, firstTrigger.type) || changed;
+                const result = await this.closeManagedAccountPositionAtPrice(state, assetCode, firstTrigger.price, firstTrigger.type);
+                if (result?.triggered) {
+                    changed = true;
+                    events.push({
+                        account_id: state.account_id,
+                        type: result.type,
+                        label: result.label,
+                        price: result.price,
+                    });
+                }
             }
         }
 
         if (changed) await this.syncManagedAccountsWorldbook();
-        return changed;
+        return changed ? { triggered: true, events } : null;
     }
 
     async accrueManagedAccountFundingFees(hours = 1) {
