@@ -172,6 +172,7 @@ export class SillyViewApp {
             .filter(assetCode => (portfolio.assets[assetCode]?.trades || []).length > 0);
         const managedAccountAssetCodes = await this.data.getManagedAccountOpenAssetCodes() || [];
         const activeAssets = new Set([
+            ...availableAssets,
             this.ui.currentAsset,
             ...expiredTargets.map(item => item.assetCode),
             ...openPositionCodes,
@@ -724,7 +725,15 @@ export class SillyViewApp {
         const openPositionCodes = Object.keys(portfolio.assets || {})
             .filter(assetCode => (portfolio.assets[assetCode]?.trades || []).length > 0);
         const managedAccountAssetCodes = await this.data.getManagedAccountOpenAssetCodes();
-        const activeAssetsForAI = new Set([this.ui.currentAsset, ...tradedAssetCodes, ...openPositionCodes, ...managedAccountAssetCodes]);
+        const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
+        const availableAssets = configState.available_assets || Object.keys(SillyViewConfig.asset_definitions);
+        const activeAssetsForAI = new Set([
+            ...availableAssets,
+            this.ui.currentAsset,
+            ...tradedAssetCodes,
+            ...openPositionCodes,
+            ...managedAccountAssetCodes,
+        ]);
         
         await this.data.updateAIContext();
         const finalPrompt = await this.aiDirector.buildAdvanceTurnPrompt(actionsThisTurn, activeAssetsForAI, this.ui.currentAsset, currentTimeframe);
