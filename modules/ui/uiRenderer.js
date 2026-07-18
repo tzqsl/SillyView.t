@@ -36,6 +36,7 @@ export class UIRenderer {
         this.currentChartType = 'candlestick';
         this.activeSidebarTab = 'trade'; // Default tab
         this.tradeMode = 'spot';
+        this.selectedLeverage = 1;
         
         this.liveAnimationPrice = null;
         this.animationFrameId = null;
@@ -434,7 +435,8 @@ export class UIRenderer {
         this.liquidationLine = null;
 
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio);
-        const position = this.positionCalculator.calculate(this.currentAsset, portfolio);
+        const positionMode = this.tradeMode === 'leverage' ? 'leveraged' : 'spot';
+        const position = this.positionCalculator.calculate(this.currentAsset, portfolio, positionMode);
         
         if (position.totalAmount > 0) {
             const pnl = position.type === 'long' 
@@ -488,7 +490,7 @@ export class UIRenderer {
     }
 
     _readRiskControls(action, currentPrice) {
-        if (action.startsWith('close')) return null;
+        if (action.startsWith('close') || action === 'spot_sell') return null;
 
         const takeProfitEl = this.parentDoc.getElementById('sillyview-take-profit');
         const stopLossEl = this.parentDoc.getElementById('sillyview-stop-loss');
@@ -508,7 +510,7 @@ export class UIRenderer {
         const stopLoss = readOptionalPrice(stopLossEl, '止损价');
         if (stopLoss === undefined) return undefined;
 
-        const isLong = action.endsWith('long');
+        const isLong = action === 'spot_buy' || action.endsWith('long');
         if (takeProfit !== null) {
             const invalid = isLong ? takeProfit <= currentPrice : takeProfit >= currentPrice;
             if (invalid) {
@@ -529,11 +531,17 @@ export class UIRenderer {
 
     initiateTrade(type) {
         if (this.isAnimating) return;
-        
-        const position = this.positionCalculator.calculate(this.currentAsset, this.data.getState(SillyViewConfig.world_book_keys.player_portfolio));
+        const positionMode = this.tradeMode === 'leverage' ? 'leveraged' : 'spot';
+        const position = this.positionCalculator.calculate(this.currentAsset, this.data.getState(SillyViewConfig.world_book_keys.player_portfolio), positionMode);
         
         let action = '';
-        if (type === 'buy') {
+        if (positionMode === 'spot') {
+            action = type === 'buy' ? 'spot_buy' : 'spot_sell';
+            if (action === 'spot_sell' && !position.type) {
+                this.win.toastr.info('当前没有可卖出的现货。');
+                return;
+            }
+        } else if (type === 'buy') {
             if (position.type === 'short') action = 'close_short';
             else if (position.type === 'long') action = 'add_long';
             else action = 'open_long';
@@ -544,7 +552,7 @@ export class UIRenderer {
         }
 
         let amount;
-        if (action.startsWith('close')) {
+        if (action.startsWith('close') || action === 'spot_sell') {
             amount = position.totalAmount; 
         } else {
             const amountEl = this.parentDoc.getElementById('sillyview-trade-amount');
@@ -553,7 +561,9 @@ export class UIRenderer {
             if (isNaN(amount) || amount <= 0) { this.win.toastr.error("请输入有效的交易金额。"); return; }
         }
         
-        const leverage = this.tradeMode === 'leverage' ? parseInt(this.parentDoc.getElementById('sillyview-leverage-slider')?.value || 1) : 1;
+        const leverage = positionMode === 'leveraged'
+            ? parseInt(this.parentDoc.getElementById('sillyview-leverage-slider')?.value || this.selectedLeverage || 1)
+            : 1;
         
         const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.currentAsset}`);
         const currentKlineData = this._getKlineDataForTimeframe(assetData);
@@ -562,7 +572,7 @@ export class UIRenderer {
         const riskControls = this._readRiskControls(action, currentPrice);
         if (riskControls === undefined) return;
         
-        this.app.executeTrade(action, amount, this.currentAsset, currentPrice, leverage, riskControls);
+        this.app.executeTrade(action, amount, this.currentAsset, currentPrice, leverage, riskControls, positionMode);
     }
 
     updateUIVisibility() {

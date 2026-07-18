@@ -94,18 +94,15 @@ export class Modals {
     // Helper to calculate total asset value for loan calculations.
     _calculateTotalAssetValue(portfolio) {
          return Object.keys(portfolio.assets || {}).reduce((sum, assetCode) => {
-            const position = this.positionCalculator.calculate(assetCode, portfolio);
-            if (position.totalAmount > 0) {
+            return sum + Object.values(this.positionCalculator.calculateAll(assetCode, portfolio)).reduce((assetSum, position) => {
+                if (position.totalAmount <= 0) return assetSum;
                 const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${assetCode}`);
                 const lastPrice = assetData?.current_price ?? 0;
-                if (position.isLeveraged) {
-                    const pnl = (lastPrice - position.avgEntryPrice) * position.totalShares;
-                    return sum + position.totalAmount + pnl;
-                } else {
-                    return sum + (position.totalShares * lastPrice);
-                }
-            }
-            return sum;
+                const pnl = position.type === 'short'
+                    ? (position.avgEntryPrice - lastPrice) * position.totalShares
+                    : (lastPrice - position.avgEntryPrice) * position.totalShares;
+                return assetSum + position.totalAmount + pnl;
+            }, 0);
         }, 0);
     }
 }

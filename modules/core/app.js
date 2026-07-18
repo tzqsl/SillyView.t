@@ -235,7 +235,7 @@ export class SillyViewApp {
             if (accountResult?.triggered) {
                 triggered = true;
                 for (const event of accountResult.events || []) {
-                    const content = `托管账户 ${event.account_id || '未知'} ${event.label}，触发价 ${Number(event.price || 0).toFixed(5)}。`;
+                    const content = `托管账户 ${event.account_id || '未知'} ${event.mode === 'spot' ? '现货' : '杠杆'}${event.label}，触发价 ${Number(event.price || 0).toFixed(5)}。`;
                     this.dependencies.win.toastr.warning(content, '自动风控');
                     await this._recordImportantEvent(event.type, assetCode, content, eventTime);
                 }
@@ -244,7 +244,10 @@ export class SillyViewApp {
             const result = await this.data.triggerRiskControlsForCandle(assetCode, candle);
             if (result?.triggered) {
                 triggered = true;
-                await this._recordImportantEvent(result.triggerType, assetCode, `${result.triggerType === 'take_profit' ? '止盈' : result.triggerType === 'stop_loss' ? '止损' : '强制平仓'}触发，成交价 ${Number(result.price || 0).toFixed(5)}。`, eventTime);
+                for (const event of result.events || [result]) {
+                    const modeLabel = event.mode === 'spot' ? '现货' : '杠杆';
+                    await this._recordImportantEvent(event.triggerType, assetCode, `${modeLabel}${event.triggerType === 'take_profit' ? '止盈' : event.triggerType === 'stop_loss' ? '止损' : '强制平仓'}触发，成交价 ${Number(event.price || 0).toFixed(5)}。`, eventTime);
+                }
                 if (result.triggerType === 'liquidation') break;
                 const triggerCandle = result.triggerCandle;
                 const rangeText = triggerCandle
@@ -313,13 +316,19 @@ export class SillyViewApp {
         return hoursUntilExpiry;
     }
 
+    _portfolioHasAssetPosition(portfolio, assetCode) {
+        const asset = portfolio?.assets?.[assetCode] || {};
+        return ['spot', 'leveraged'].some(mode => (asset[mode]?.trades || []).length > 0)
+            || (asset.trades || []).length > 0;
+    }
+
     async _getActiveAssetsForAutoTurn(expiredTargets = []) {
         const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
         const availableAssets = configState.available_assets || Object.keys(SillyViewConfig.asset_definitions);
         const availableSet = new Set(availableAssets);
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
         const openPositionCodes = Object.keys(portfolio.assets || {})
-            .filter(assetCode => (portfolio.assets[assetCode]?.trades || []).length > 0);
+            .filter(assetCode => this._portfolioHasAssetPosition(portfolio, assetCode));
         const managedAccountAssetCodes = await this.data.getManagedAccountOpenAssetCodes() || [];
         const activeAssets = new Set([
             ...availableAssets,
@@ -852,7 +861,7 @@ export class SillyViewApp {
         const tradedAssetCodes = new Set(actionsThisTurn.map(a => a.assetCode));
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
         const openPositionCodes = Object.keys(portfolio.assets || {})
-            .filter(assetCode => (portfolio.assets[assetCode]?.trades || []).length > 0);
+            .filter(assetCode => this._portfolioHasAssetPosition(portfolio, assetCode));
         const managedAccountAssetCodes = await this.data.getManagedAccountOpenAssetCodes();
         const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
         const availableAssets = configState.available_assets || Object.keys(SillyViewConfig.asset_definitions);
@@ -936,10 +945,10 @@ export class SillyViewApp {
         }
     }
     
-    async executeTrade(action, amount, assetCode, executionPrice, leverage, riskControls = null) {
-        Logger.log(`Executing trade: ${action} ${amount} of ${assetCode} @ ${executionPrice} with ${leverage}x leverage`);
+    async executeTrade(action, amount, assetCode, executionPrice, leverage, riskControls = null, mode = 'leveraged') {
+        Logger.log(`Executing ${mode} trade: ${action} ${amount} of ${assetCode} @ ${executionPrice} with ${leverage}x leverage`);
 
-        const success = await this.data.executeAndRecordTrade(action, amount, assetCode, executionPrice, leverage, riskControls);
+        const success = await this.data.executeAndRecordTrade(action, amount, assetCode, executionPrice, leverage, riskControls, mode);
 
         if (success) {
             await this.data.updateAIContext();

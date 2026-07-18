@@ -17,14 +17,21 @@ export class TradeView {
     render(container) {
         if (!container) return;
         
-        const position = this.positionCalculator.calculate(this.ui.currentAsset, this.data.getState(SillyViewConfig.world_book_keys.player_portfolio));
-        const hasPosition = position.type !== null;
         const maxLeverage = SillyViewConfig.asset_definitions[this.ui.currentAsset]?.max_leverage || 1;
         const isLeverage = this.ui.tradeMode === 'leverage';
+        const positionMode = isLeverage ? 'leveraged' : 'spot';
+        const position = this.positionCalculator.calculate(this.ui.currentAsset, this.data.getState(SillyViewConfig.world_book_keys.player_portfolio), positionMode);
+        const hasPosition = position.type !== null;
+        const selectedLeverage = isLeverage && hasPosition
+            ? Math.max(1, Math.round(position.leverage || 1))
+            : Math.max(1, Number(this.ui.selectedLeverage || 1));
 
         // Determine button actions based on current position
         let buyAction, sellAction;
-        if (position.type === 'long') {
+        if (!isLeverage) {
+            buyAction = 'spot_buy';
+            sellAction = 'spot_sell';
+        } else if (position.type === 'long') {
             buyAction = 'add_long';
             sellAction = 'close_long';
         } else if (position.type === 'short') {
@@ -37,15 +44,17 @@ export class TradeView {
         
         // Dynamic button text
         const buyBtnText = {
+            'spot_buy': hasPosition ? '买入 (加仓现货)' : '买入现货',
             'open_long': '买入 (做多)', 'add_long': '买入 (加仓)', 'close_short': '买入 (平空)'
         }[buyAction];
         
         const sellBtnText = {
+            'spot_sell': '卖出现货',
             'open_short': '卖出 (做空)', 'add_short': '卖出 (加仓)', 'close_long': '卖出 (平多)'
         }[sellAction];
 
-        // BUG FIX: The input should be enabled if EITHER action is not a 'close' action. Changed && to ||.
-        const showAmountInput = !buyAction.startsWith('close') || !sellAction.startsWith('close');
+        const needsAmount = action => !action.startsWith('close') && action !== 'spot_sell';
+        const showAmountInput = needsAmount(buyAction) || needsAmount(sellAction);
         
         const amountInputHtml = `
             <div>
@@ -62,7 +71,7 @@ export class TradeView {
             </div>
         `;
         const riskControls = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio)
-            ?.assets?.[this.ui.currentAsset]?.risk_controls || {};
+            ?.assets?.[this.ui.currentAsset]?.[positionMode]?.risk_controls || {};
         const riskInputHtml = `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
                 <div>
@@ -98,18 +107,18 @@ export class TradeView {
             <div>
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                      <h3 style="font-size: 1.125rem; font-weight: 600;">交易面板</h3>
-                     <div style="display: flex; align-items: center; gap: 0.5rem; ${hasPosition ? 'opacity: 0.5;' : ''}" title="${hasPosition ? '持仓时无法切换模式' : ''}">
+                     <div style="display: flex; align-items: center; gap: 0.5rem;">
                          <span style="font-size: 0.75rem; color: var(--text-gray-400);">现货 / 杠杆</span>
                          <label class="sv-toggle-switch">
-                             <input type="checkbox" id="sillyview-leverage-mode-toggle" ${isLeverage ? 'checked' : ''} ${hasPosition ? 'disabled' : ''}>
+                             <input type="checkbox" id="sillyview-leverage-mode-toggle" ${isLeverage ? 'checked' : ''}>
                              <span class="slider round"></span>
                          </label>
                      </div>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 1rem;">
-                    <div id="sillyview-leverage-controls" style="display: ${isLeverage && !hasPosition ? 'block' : 'none'};">
-                        <label for="sillyview-leverage-slider" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">杠杆倍数: <span id="leverage-value-display">1</span>x</label>
-                        <input type="range" id="sillyview-leverage-slider" min="1" max="${maxLeverage}" value="1" style="width: 100%;">
+                    <div id="sillyview-leverage-controls" style="display: ${isLeverage ? 'block' : 'none'};">
+                        <label for="sillyview-leverage-slider" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">加仓杠杆: <span id="leverage-value-display">${selectedLeverage}</span>x</label>
+                        <input type="range" id="sillyview-leverage-slider" min="1" max="${maxLeverage}" value="${selectedLeverage}" style="width: 100%;">
                         <div id="leverage-info-box" style="font-size: 0.75rem; color:var(--text-gray-400); margin-top:0.5rem; padding:0.5rem; background-color:var(--bg-gray-900); border-radius:0.375rem; display:flex; flex-direction:column; gap:0.25rem;"></div>
                     </div>
 
@@ -127,7 +136,7 @@ export class TradeView {
                  <div id="sillyview-this-turn-actions" style="font-size: 0.75rem; color: var(--text-gray-400); display:flex; flex-direction:column; gap:0.25rem; min-height: 50px;"></div>
             </div>
         `;
-        if (isLeverage) this.updateLeverageInfo(1);
+        if (isLeverage) this.updateLeverageInfo(selectedLeverage);
         this.updateRiskPreview();
         this.updateDataWindowWithLastCandle();
         this.renderThisTurnActions();
@@ -194,7 +203,9 @@ export class TradeView {
 
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio) || {};
         const cash = Number(portfolio.cash || 0);
-        const leverage = parseInt(this.parentDoc.getElementById('sillyview-leverage-slider')?.value || 1, 10);
+        const leverage = this.ui.tradeMode === 'leverage'
+            ? parseInt(this.parentDoc.getElementById('sillyview-leverage-slider')?.value || 1, 10)
+            : 1;
         const tradeConfig = SillyViewConfig.asset_definitions[this.ui.currentAsset]?.trade_config || {};
         const feeRate = Number(tradeConfig.fee_rate ?? 0.001);
         const maxMargin = cash / (1 + feeRate * leverage);

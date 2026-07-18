@@ -85,6 +85,43 @@ export class DataManager {
         };
     }
 
+    _ensurePortfolioAssetBuckets(portfolio, assetCode) {
+        if (!portfolio.assets || typeof portfolio.assets !== 'object') portfolio.assets = {};
+        const asset = portfolio.assets[assetCode] && typeof portfolio.assets[assetCode] === 'object'
+            ? portfolio.assets[assetCode]
+            : {};
+        const legacyTrades = Array.isArray(asset.trades) ? asset.trades : [];
+        const hasLegacyPosition = legacyTrades.length > 0;
+        const legacyIsLeveraged = legacyTrades.some(trade => Number(trade.leverage || 1) > 1 || trade.type === 'short');
+
+        if (!asset.spot || typeof asset.spot !== 'object') asset.spot = { trades: [] };
+        if (!asset.leveraged || typeof asset.leveraged !== 'object') asset.leveraged = { trades: [] };
+        if (!Array.isArray(asset.spot.trades)) asset.spot.trades = [];
+        if (!Array.isArray(asset.leveraged.trades)) asset.leveraged.trades = [];
+
+        if (hasLegacyPosition) {
+            const bucket = legacyIsLeveraged ? asset.leveraged : asset.spot;
+            bucket.trades.push(...legacyTrades);
+            if (asset.risk_controls && !bucket.risk_controls) bucket.risk_controls = asset.risk_controls;
+        }
+        delete asset.trades;
+        delete asset.risk_controls;
+        portfolio.assets[assetCode] = asset;
+        return asset;
+    }
+
+    _migratePortfolioPositionBuckets(portfolio) {
+        if (!portfolio?.assets || typeof portfolio.assets !== 'object') return false;
+        let changed = false;
+        for (const assetCode of Object.keys(portfolio.assets)) {
+            const asset = portfolio.assets[assetCode] || {};
+            if (Array.isArray(asset.trades) || !asset.spot || !asset.leveraged || asset.risk_controls
+                || !Array.isArray(asset.spot?.trades) || !Array.isArray(asset.leveraged?.trades)) changed = true;
+            this._ensurePortfolioAssetBuckets(portfolio, assetCode);
+        }
+        return changed;
+    }
+
     _settleUnsupportedPortfolioAssets(portfolio, supportedAssets, legacyPrices, timeIndex = 0) {
         if (!portfolio?.assets || typeof portfolio.assets !== 'object') return false;
 
@@ -98,14 +135,20 @@ export class DataManager {
         }
         for (const assetCode of unsupportedAssetCodes) {
 
-            const position = this.positionCalculator.calculate(assetCode, portfolio);
-            if (position.type && position.totalAmount > 0) {
-                const marketPrice = Number(legacyPrices.get(assetCode)) || position.avgEntryPrice;
-                const pnl = position.type === 'short'
-                    ? (position.avgEntryPrice - marketPrice) * position.totalShares
-                    : (marketPrice - position.avgEntryPrice) * position.totalShares;
-                const realizedPnl = Math.max(-position.totalAmount, pnl);
-                const returnedCash = position.totalAmount + realizedPnl;
+            const positions = this.positionCalculator.calculateAll(assetCode, portfolio);
+            const openPositions = Object.values(positions).filter(position => position.type && position.totalAmount > 0);
+            if (openPositions.length > 0) {
+                const marketPrice = Number(legacyPrices.get(assetCode)) || openPositions[0].avgEntryPrice;
+                let realizedPnl = 0;
+                let returnedCash = 0;
+                for (const position of openPositions) {
+                    const pnl = position.type === 'short'
+                        ? (position.avgEntryPrice - marketPrice) * position.totalShares
+                        : (marketPrice - position.avgEntryPrice) * position.totalShares;
+                    const boundedPnl = Math.max(-position.totalAmount, pnl);
+                    realizedPnl += boundedPnl;
+                    returnedCash += position.totalAmount + boundedPnl;
+                }
                 portfolio.cash = Number(portfolio.cash || 0) + returnedCash;
                 portfolio.transaction_log.unshift({
                     time: timeIndex,
@@ -179,7 +222,8 @@ export class DataManager {
         delete market.remaining_candles;
         const timeIndex = Number(market.current_time_index || 0);
         const portfolio = this._stateCache.get(keys.player_portfolio) || {};
-        const portfolioChanged = this._settleUnsupportedPortfolioAssets(portfolio, supportedAssets, legacyPrices, timeIndex);
+        const bucketsMigrated = this._migratePortfolioPositionBuckets(portfolio);
+        const portfolioChanged = this._settleUnsupportedPortfolioAssets(portfolio, supportedAssets, legacyPrices, timeIndex) || bucketsMigrated;
         if (portfolioChanged) this._stateCache.set(keys.player_portfolio, portfolio);
 
         const configState = {
@@ -969,15 +1013,15 @@ export class DataManager {
         let positionValue = 0;
         if (portfolio.assets) {
             for (const assetCode of Object.keys(portfolio.assets)) {
-                const position = this.positionCalculator.calculate(assetCode, portfolio);
-                if (!position.type || position.totalAmount <= 0) continue;
-
-                const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
-                const lastPrice = assetData?.current_price ?? position.avgEntryPrice;
-                const pnl = position.type === 'short'
-                    ? (position.avgEntryPrice - lastPrice) * position.totalShares
-                    : (lastPrice - position.avgEntryPrice) * position.totalShares;
-                positionValue += position.totalAmount + pnl;
+                for (const position of Object.values(this.positionCalculator.calculateAll(assetCode, portfolio))) {
+                    if (!position.type || position.totalAmount <= 0) continue;
+                    const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+                    const lastPrice = assetData?.current_price ?? position.avgEntryPrice;
+                    const pnl = position.type === 'short'
+                        ? (position.avgEntryPrice - lastPrice) * position.totalShares
+                        : (lastPrice - position.avgEntryPrice) * position.totalShares;
+                    positionValue += position.totalAmount + pnl;
+                }
             }
         }
 
@@ -1336,26 +1380,25 @@ export class DataManager {
     _buildPositionSummary(portfolio) {
         const lines = [];
         for (const assetCode of Object.keys(portfolio?.assets || {})) {
-            const position = this.positionCalculator.calculate(assetCode, portfolio);
-            if (!position.type || position.totalAmount <= 0) continue;
-
-            const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
-            const lastPrice = assetData?.current_price ?? position.avgEntryPrice;
-            const pnl = position.type === 'short'
-                ? (position.avgEntryPrice - lastPrice) * position.totalShares
-                : (lastPrice - position.avgEntryPrice) * position.totalShares;
-            const pnlPct = position.totalAmount > 0 ? (pnl / position.totalAmount) * 100 : 0;
-            const direction = position.type === 'short' ? '空头' : '多头';
-            const leverage = position.isLeveraged ? ` ${position.leverage}x` : '';
-            const riskControls = portfolio.assets?.[assetCode]?.risk_controls || {};
-            const takeProfit = Number(riskControls.take_profit);
-            const stopLoss = Number(riskControls.stop_loss);
-            const riskText = [
-                Number.isFinite(takeProfit) && takeProfit > 0 ? `止盈 ${takeProfit.toFixed(4)}` : '止盈 未设置',
-                Number.isFinite(stopLoss) && stopLoss > 0 ? `止损 ${stopLoss.toFixed(4)}` : '止损 未设置',
-            ].join('，');
-
-            lines.push(`- ${assetCode}: ${direction}${leverage}，保证金 ${position.totalAmount.toFixed(2)}，入场 ${position.avgEntryPrice.toFixed(4)}，现价 ${lastPrice.toFixed(4)}，${riskText}，未实现盈亏 ${this._formatSigned(pnl)} (${this._formatSigned(pnlPct)}%)`);
+            for (const [mode, position] of Object.entries(this.positionCalculator.calculateAll(assetCode, portfolio))) {
+                if (!position.type || position.totalAmount <= 0) continue;
+                const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+                const lastPrice = assetData?.current_price ?? position.avgEntryPrice;
+                const pnl = position.type === 'short'
+                    ? (position.avgEntryPrice - lastPrice) * position.totalShares
+                    : (lastPrice - position.avgEntryPrice) * position.totalShares;
+                const pnlPct = position.totalAmount > 0 ? (pnl / position.totalAmount) * 100 : 0;
+                const direction = position.type === 'short' ? '空头' : '多头';
+                const modeLabel = mode === 'spot' ? '现货' : `杠杆 ${position.leverage}x`;
+                const riskControls = portfolio.assets?.[assetCode]?.[mode]?.risk_controls || {};
+                const takeProfit = Number(riskControls.take_profit);
+                const stopLoss = Number(riskControls.stop_loss);
+                const riskText = [
+                    Number.isFinite(takeProfit) && takeProfit > 0 ? `止盈 ${takeProfit.toFixed(4)}` : '止盈 未设置',
+                    Number.isFinite(stopLoss) && stopLoss > 0 ? `止损 ${stopLoss.toFixed(4)}` : '止损 未设置',
+                ].join('，');
+                lines.push(`- ${assetCode} ${modeLabel}: ${direction}，本金/保证金 ${position.totalAmount.toFixed(2)}，入场 ${position.avgEntryPrice.toFixed(4)}，现价 ${lastPrice.toFixed(4)}，${riskText}，未实现盈亏 ${this._formatSigned(pnl)} (${this._formatSigned(pnlPct)}%)`);
+            }
         }
 
         return lines.length > 0 ? lines : ['- 当前没有持仓。'];
@@ -1668,7 +1711,7 @@ export class DataManager {
         portfolio.transaction_log = [{ time: 0, description: `开户导入: ${account.bank_name}`, amount: account.initial_cash }];
 
         return {
-            version: 1,
+            version: 2,
             account_id: account.account_id,
             owner_name: account.owner_name,
             bank_name: account.bank_name,
@@ -1817,6 +1860,8 @@ export class DataManager {
             let stateEntry = entries.find(entry => entry.name === stateEntryName);
             if (!stateEntry) {
                 const state = legacyState || initialState;
+                this._migratePortfolioPositionBuckets(state.portfolio);
+                state.version = 2;
                 state.worldbook_name = controlName;
                 state.state_entry_name = stateEntryName;
                 this._upsertWorldbookEntry(entries, stateEntryName, JSON.stringify(state, null, 2), false);
@@ -1825,6 +1870,8 @@ export class DataManager {
 
             try {
                 const state = JSON.parse(stateEntry.content);
+                this._migratePortfolioPositionBuckets(state.portfolio);
+                state.version = 2;
                 state.owner_name = state.owner_name || account.owner_name;
                 state.bank_name = state.bank_name || account.bank_name;
                 state.bank_account_no = state.bank_account_no || account.bank_account_no;
@@ -1882,8 +1929,10 @@ export class DataManager {
                 if (!state) state = await this._readLegacyManagedAccountState(account);
                 if (!state) continue;
                 state.account_id = state.account_id || account.account_id;
+                state.version = 2;
                 state.state_entry_name = stateEntryName;
                 state.worldbook_name = controlName;
+                this._migratePortfolioPositionBuckets(state.portfolio);
                 states.push(state);
             } catch (error) {
                 this.logger.warn(`读取账号状态词条失败: ${account.state_entry_name || account.account_id}`, error);
@@ -1919,7 +1968,7 @@ export class DataManager {
             '输出规则：账户编号必须原样使用 sv_accounts_query 中的 account_id；资产代码必须使用 sv_kline_context 中的 code。所有指令放在回复末尾唯一的 <command>...</command> 块中，一行一条；不要把指令写在正文或代码块里。',
             '',
             '通用参数顺序：("account_id", "asset_code", amount, leverage, take_profit, stop_loss)。',
-            '- amount：本次投入的保证金，不是含杠杆后的名义仓位；必须大于 0 且不能超过账户可用现金。',
+            '- amount：杠杆指令中是本次投入的保证金，现货指令中是买入金额；必须大于 0 且不能超过账户可用现金。',
             '- leverage：整数杠杆，最低 1，超过该资产上限时会自动压到上限；杠杆会放大盈利、亏损和爆仓风险。',
             '- take_profit / stop_loss：触发价格，填 0 表示不设置。多头止盈应高于现价、止损应低于现价；空头相反。',
             '- 手续费会额外从现金扣除。开仓方向与已有反向仓位冲突时，明确的 Open/Add 指令会失败，应先平掉反向仓位。',
@@ -1931,7 +1980,10 @@ export class DataManager {
             '[Trade.OpenShort("account_id", "GBPUSD", 1000, 5, 1.2300, 1.3100)]：无仓位时开空。',
             '[Trade.AddShort("account_id", "GBPUSD", 500, 5, 1.2300, 1.3100)]：给已有空头加仓。',
             '[Trade.CloseShort("account_id", "GBPUSD")]：全额平掉该货币对空头，amount 等参数无需填写。',
-            '[Trade.SetRisk("account_id", "EURUSD", 1.1050, 1.0550)]：只调整已有仓位的止盈、止损；对应值填 0 可清空。',
+            '[Trade.SpotBuy("account_id", "EURUSD", 1000, 0, 1.1000, 1.0600)]：买入或加仓现货，不产生杠杆和强平价。',
+            '[Trade.SpotSell("account_id", "EURUSD")]：全额卖出现货，amount 等参数无需填写。',
+            '[Trade.SetRisk("account_id", "EURUSD", 1.1050, 1.0550)]：只调整已有杠杆仓的止盈、止损；对应值填 0 可清空。',
+            '[Trade.SetSpotRisk("account_id", "EURUSD", 1.1050, 1.0550)]：只调整现货仓位的止盈、止损。',
             '',
             '快捷操作（行为取决于当前仓位）：',
             '[Trade.Buy("account_id", "EURUSD", 1000, 5, 1.1000, 1.0600)]：无仓位则开多，已有多头则加多，已有空头则全额平空。',
@@ -1969,15 +2021,17 @@ export class DataManager {
 
             const positions = [];
             for (const assetCode of Object.keys(portfolio.assets || {})) {
-                const position = this.positionCalculator.calculate(assetCode, portfolio);
-                if (!position.type || position.totalAmount <= 0) continue;
-                const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
-                const lastPrice = Number(assetData?.current_price || position.avgEntryPrice || 0);
-                const pnl = position.type === 'short'
-                    ? (position.avgEntryPrice - lastPrice) * position.totalShares
-                    : (lastPrice - position.avgEntryPrice) * position.totalShares;
-                const controls = portfolio.assets?.[assetCode]?.risk_controls || {};
-                positions.push(`  * ${assetCode} ${position.type === 'short' ? '空头' : '多头'} ${position.leverage}x | 保证金 ${position.totalAmount.toFixed(2)} | 入场 ${position.avgEntryPrice.toFixed(4)} | 现价 ${lastPrice.toFixed(4)} | 浮动盈亏 ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} | 止盈 ${controls.take_profit || '未设'} | 止损 ${controls.stop_loss || '未设'}`);
+                for (const [mode, position] of Object.entries(this.positionCalculator.calculateAll(assetCode, portfolio))) {
+                    if (!position.type || position.totalAmount <= 0) continue;
+                    const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+                    const lastPrice = Number(assetData?.current_price || position.avgEntryPrice || 0);
+                    const pnl = position.type === 'short'
+                        ? (position.avgEntryPrice - lastPrice) * position.totalShares
+                        : (lastPrice - position.avgEntryPrice) * position.totalShares;
+                    const controls = portfolio.assets?.[assetCode]?.[mode]?.risk_controls || {};
+                    const modeLabel = mode === 'spot' ? '现货' : `${position.leverage}x 杠杆`;
+                    positions.push(`  * ${assetCode} ${modeLabel} ${position.type === 'short' ? '空头' : '多头'} | 本金/保证金 ${position.totalAmount.toFixed(2)} | 入场 ${position.avgEntryPrice.toFixed(4)} | 现价 ${lastPrice.toFixed(4)} | 浮动盈亏 ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} | 止盈 ${controls.take_profit || '未设'} | 止损 ${controls.stop_loss || '未设'}`);
+                }
             }
             lines.push(...(positions.length > 0 ? positions : ['  * 无持仓']));
             lines.push('');
@@ -2278,7 +2332,7 @@ export class DataManager {
         const spreadBps = tradeConfig.spread_bps || 0;
         const slippageBps = tradeConfig.slippage_bps || 0;
         const oneSideCost = ((spreadBps / 2) + slippageBps) / 10000;
-        const isBuySide = ['open_long', 'add_long', 'close_short'].includes(intent);
+        const isBuySide = ['spot_buy', 'open_long', 'add_long', 'close_short'].includes(intent);
         const multiplier = isBuySide ? 1 + oneSideCost : 1 - oneSideCost;
         return Math.max(basePrice * multiplier, 0.000001);
     }
@@ -2322,19 +2376,20 @@ export class DataManager {
         return true;
     }
 
-    _applyRiskControls(portfolio, assetCode, riskControls) {
+    _applyRiskControls(portfolio, assetCode, riskControls, mode = 'leveraged') {
         const normalized = this._normalizeRiskControls(riskControls);
         if (!normalized || (normalized.take_profit === null && normalized.stop_loss === null)) return '';
-        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
         const marketPrice = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`)?.current_price;
         if (!this._areRiskControlsValidForPosition(position, normalized, marketPrice)) {
             this.logger.warn(`已忽略方向错误的止盈止损: ${assetCode}`);
             return '';
         }
 
-        if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
-        const current = portfolio.assets[assetCode].risk_controls || {};
-        portfolio.assets[assetCode].risk_controls = {
+        const asset = this._ensurePortfolioAssetBuckets(portfolio, assetCode);
+        const bucket = asset[mode];
+        const current = bucket.risk_controls || {};
+        bucket.risk_controls = {
             take_profit: normalized.take_profit ?? current.take_profit ?? null,
             stop_loss: normalized.stop_loss ?? current.stop_loss ?? null,
         };
@@ -2345,26 +2400,25 @@ export class DataManager {
         return labels.length > 0 ? ` (${labels.join(' / ')})` : '';
     }
 
-    async updatePositionRiskControls(assetCode, riskControls) {
+    async updatePositionRiskControls(assetCode, riskControls, mode = 'leveraged') {
         const portfolioKey = this.config.world_book_keys.player_portfolio;
         const normalized = this._normalizeRiskControls(riskControls) || { take_profit: null, stop_loss: null };
         const currentPortfolio = this.getState(portfolioKey);
-        const currentPosition = this.positionCalculator.calculate(assetCode, currentPortfolio);
+        const currentPosition = this.positionCalculator.calculate(assetCode, currentPortfolio, mode);
         const marketPrice = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`)?.current_price;
         if (!this._areRiskControlsValidForPosition(currentPosition, normalized, marketPrice)) return null;
 
         let updated = false;
         await this.updateState(portfolioKey, portfolio => {
-            const position = this.positionCalculator.calculate(assetCode, portfolio);
+            const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
             if (!position.type || position.totalAmount <= 0) return portfolio;
 
-            if (!portfolio.assets) portfolio.assets = {};
-            if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
+            const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[mode];
 
             if (normalized.take_profit === null && normalized.stop_loss === null) {
-                delete portfolio.assets[assetCode].risk_controls;
+                delete bucket.risk_controls;
             } else {
-                portfolio.assets[assetCode].risk_controls = normalized;
+                bucket.risk_controls = normalized;
             }
 
             const labels = [];
@@ -2376,6 +2430,7 @@ export class DataManager {
                 text: `调整 ${assetCode} ${labels.join(' / ')}`,
                 executedAt: null,
                 intent: 'adjust_risk_controls',
+                mode,
                 assetCode,
                 riskControls: normalized,
             });
@@ -2387,7 +2442,7 @@ export class DataManager {
         return updated ? normalized : null;
     }
 
-    async executeAndRecordTrade(intent, amount, assetCode, executionPrice = null, leverage = 1, riskControls = null) {
+    async executeAndRecordTrade(intent, amount, assetCode, executionPrice = null, leverage = 1, riskControls = null, mode = 'leveraged') {
         const portfolioKey = this.config.world_book_keys.player_portfolio;
         const assetDataKey = `${this.config.world_book_keys.asset_prefix}${assetCode}`;
         let portfolio = this._stateCache.get(portfolioKey);
@@ -2399,21 +2454,49 @@ export class DataManager {
             portfolio.assets = {};
         }
 
-        const isLeveragedTrade = leverage > 1;
+        const normalizedMode = mode === 'spot' ? 'spot' : 'leveraged';
+        const normalizedLeverage = normalizedMode === 'spot' ? 1 : Math.max(1, Number(leverage) || 1);
         this._ensureAssetDataShape(assetData);
         const lastMinuteCandle = assetData.kline_minute.slice(-1)[0];
         const lastCandle = lastMinuteCandle || assetData.kline_hourly.slice(-1)[0];
         const rawPrice = executionPrice !== null ? executionPrice : (assetData.current_price ?? lastCandle.close);
         const price = this._calculateExecutionPrice(assetCode, intent, rawPrice);
-        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[normalizedMode];
+        const position = this.positionCalculator.calculate(assetCode, portfolio, normalizedMode);
         const tradeConfig = this._getTradeConfig(assetCode);
-        const totalPositionValue = intent.startsWith('close') ? position.positionValue : amount * leverage;
+        const totalPositionValue = intent === 'spot_sell'
+            ? position.totalShares * price
+            : intent.startsWith('close')
+                ? position.positionValue
+            : amount * normalizedLeverage;
         const fee = totalPositionValue * (tradeConfig.fee_rate ?? 0.001);
         let actionText = '';
         
         portfolio.cash = portfolio.cash || 0;
 
         switch (intent) {
+            case 'spot_buy':
+                if (portfolio.cash < amount + fee) { this.dependencies.win.toastr.warning("交易失败：现金不足以支付现货金额和手续费。"); return false; }
+                portfolio.cash -= (amount + fee);
+                bucket.trades.push({ time: lastCandle.time, price, amount, type: 'long', leverage: 1 });
+                actionText = position.type ? `加仓现货 ${assetCode}` : `买入现货 ${assetCode}`;
+                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'spot');
+                this._recordTradeTransaction(portfolio, actionText, -amount);
+                this._recordTradeTransaction(portfolio, '交易手续费', -fee);
+                break;
+
+            case 'spot_sell':
+                if (position.type !== 'long') { this.dependencies.win.toastr.warning("交易失败：没有现货可以卖出。"); return false; }
+                const spotPnl = (price - position.avgEntryPrice) * position.totalShares;
+                portfolio.cash += position.totalAmount + spotPnl - fee;
+                this._recordTradeTransaction(portfolio, `卖出现货 ${assetCode}`, position.totalAmount + spotPnl);
+                this._recordTradeTransaction(portfolio, '交易手续费', -fee);
+                this._recordTradeTransaction(portfolio, `已实现盈亏 (${assetCode} 现货)`, spotPnl);
+                bucket.trades = [];
+                delete bucket.risk_controls;
+                actionText = `卖出现货 ${assetCode}`;
+                break;
+
             case 'open_long':
                 if (position.type !== null) { this.dependencies.win.toastr.warning("已有持仓，无法开新仓。请先平仓或加仓。"); return false; }
                 // Fallthrough to add_long logic
@@ -2422,14 +2505,12 @@ export class DataManager {
                 if (portfolio.cash < amount + fee) { this.dependencies.win.toastr.warning("交易失败：现金不足以支付保证金和手续费。"); return false; }
                 
                 portfolio.cash -= (amount + fee);
-                if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
-                
-                portfolio.assets[assetCode].trades.push({ time: lastCandle.time, price, amount, type: 'long', leverage });
-                const longRiskText = this._applyRiskControls(portfolio, assetCode, riskControls);
+                bucket.trades.push({ time: lastCandle.time, price, amount, type: 'long', leverage: normalizedLeverage });
+                const longRiskText = this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged');
                 
                 actionText = (intent === 'open_long') 
-                    ? `开多 ${isLeveragedTrade ? `(${leverage}x)` : ''}${assetCode}`
-                    : `加仓多 ${isLeveragedTrade ? `(${leverage}x)` : ''}${assetCode}`;
+                    ? `开多 (${normalizedLeverage}x) ${assetCode}`
+                    : `加仓多 (${normalizedLeverage}x) ${assetCode}`;
                 actionText += longRiskText;
 
                 this._recordTradeTransaction(portfolio, actionText, -amount);
@@ -2445,14 +2526,12 @@ export class DataManager {
                 if (portfolio.cash < amount + fee) { this.dependencies.win.toastr.warning("交易失败：现金不足以支付保证金和手续费。"); return false; }
                 
                 portfolio.cash -= (amount + fee);
-                if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
-                
-                portfolio.assets[assetCode].trades.push({ time: lastCandle.time, price, amount, type: 'short', leverage });
-                const shortRiskText = this._applyRiskControls(portfolio, assetCode, riskControls);
+                bucket.trades.push({ time: lastCandle.time, price, amount, type: 'short', leverage: normalizedLeverage });
+                const shortRiskText = this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged');
                 
                 actionText = (intent === 'open_short') 
-                    ? `开空 ${isLeveragedTrade ? `(${leverage}x)` : ''}${assetCode}`
-                    : `加仓空 ${isLeveragedTrade ? `(${leverage}x)` : ''}${assetCode}`;
+                    ? `开空 (${normalizedLeverage}x) ${assetCode}`
+                    : `加仓空 (${normalizedLeverage}x) ${assetCode}`;
                 actionText += shortRiskText;
 
                 this._recordTradeTransaction(portfolio, actionText, -amount);
@@ -2466,8 +2545,8 @@ export class DataManager {
                 this._recordTradeTransaction(portfolio, `平多仓 ${assetCode}`, position.totalAmount + pnl_long);
                 this._recordTradeTransaction(portfolio, `交易手续费`, -fee);
                 this._recordTradeTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl_long);
-                portfolio.assets[assetCode].trades = [];
-                delete portfolio.assets[assetCode].risk_controls;
+                bucket.trades = [];
+                delete bucket.risk_controls;
                 actionText = `平多 ${assetCode}`;
                 break;
 
@@ -2478,8 +2557,8 @@ export class DataManager {
                 this._recordTradeTransaction(portfolio, `平空仓 ${assetCode}`, position.totalAmount + pnl_short);
                 this._recordTradeTransaction(portfolio, `交易手续费`, -fee);
                 this._recordTradeTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl_short);
-                portfolio.assets[assetCode].trades = [];
-                delete portfolio.assets[assetCode].risk_controls;
+                bucket.trades = [];
+                delete bucket.risk_controls;
                 actionText = `平空 ${assetCode}`;
                 break;
 
@@ -2495,7 +2574,8 @@ export class DataManager {
             executedAt: price,
             intent: intent,
             amount: amount,
-            leverage: leverage,
+            leverage: normalizedLeverage,
+            mode: normalizedMode,
             assetCode: assetCode,
         });
 
@@ -2545,7 +2625,7 @@ export class DataManager {
         this.dependencies.win.toastr.error(`${assetCode} 仓位已被强制平仓！`, "爆仓！");
         const portfolioKey = this.config.world_book_keys.player_portfolio;
         const portfolio = this.getState(portfolioKey);
-        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        const position = this.positionCalculator.calculate(assetCode, portfolio, 'leveraged');
         if (!position.type || position.totalAmount <= 0) return null;
 
         const tradeConfig = this._getTradeConfig(assetCode);
@@ -2556,10 +2636,9 @@ export class DataManager {
         const remainingEquity = Math.max(0, position.totalAmount + realizedPnl - fee);
         const market = this.getState(this.config.world_book_keys.global_market);
         await this.updateState(portfolioKey, state => {
-            if (!state.assets) state.assets = {};
-            if (!state.assets[assetCode]) state.assets[assetCode] = { trades: [] };
-            state.assets[assetCode].trades = [];
-            delete state.assets[assetCode].risk_controls;
+            const bucket = this._ensurePortfolioAssetBuckets(state, assetCode).leveraged;
+            bucket.trades = [];
+            delete bucket.risk_controls;
             state.cash = Number(state.cash || 0) + remainingEquity;
             if (!Array.isArray(state.transaction_log)) state.transaction_log = [];
             state.transaction_log.unshift({
@@ -2582,17 +2661,18 @@ export class DataManager {
         };
     }
 
-    async closePositionAtPrice(assetCode, closePrice, reason = 'risk_control', triggerCandle = null) {
+    async closePositionAtPrice(assetCode, closePrice, reason = 'risk_control', triggerCandle = null, mode = 'leveraged') {
         const portfolioKey = this.config.world_book_keys.player_portfolio;
         const market = this.getState(this.config.world_book_keys.global_market);
         const portfolio = this.getState(portfolioKey);
         if (!portfolio) return null;
 
-        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
         if (!position.type || position.totalAmount <= 0) return null;
 
         const tradeConfig = this._getTradeConfig(assetCode);
-        const fee = position.positionValue * (tradeConfig.fee_rate ?? 0.001);
+        const feeBase = mode === 'spot' ? position.totalShares * closePrice : position.positionValue;
+        const fee = feeBase * (tradeConfig.fee_rate ?? 0.001);
         const realizedPnl = position.type === 'long'
             ? (closePrice - position.avgEntryPrice) * position.totalShares
             : (position.avgEntryPrice - closePrice) * position.totalShares;
@@ -2600,14 +2680,13 @@ export class DataManager {
         const label = reason === 'take_profit' ? '止盈' : '止损';
 
         await this.updateState(portfolioKey, p => {
-            if (!p.assets) p.assets = {};
-            if (!p.assets[assetCode]) p.assets[assetCode] = { trades: [] };
+            const bucket = this._ensurePortfolioAssetBuckets(p, assetCode)[mode];
             p.cash = (p.cash || 0) + closeAmount;
-            p.assets[assetCode].trades = [];
-            delete p.assets[assetCode].risk_controls;
+            bucket.trades = [];
+            delete bucket.risk_controls;
             if (!p.transaction_log) p.transaction_log = [];
             const time = market ? market.current_time_index : 0;
-            p.transaction_log.unshift({ time, description: `${label}平仓 ${assetCode}`, amount: closeAmount });
+            p.transaction_log.unshift({ time, description: `${label}平仓 ${assetCode} ${mode === 'spot' ? '现货' : '杠杆'}`, amount: closeAmount });
             p.transaction_log.unshift({ time, description: `交易手续费`, amount: -fee });
             p.transaction_log.unshift({ time, description: `已实现盈亏 (${assetCode})`, amount: realizedPnl });
             if (p.transaction_log.length > 100) p.transaction_log.length = 100;
@@ -2618,6 +2697,7 @@ export class DataManager {
         return {
             triggered: true,
             triggerType: reason,
+            mode,
             price: closePrice,
             pnl: realizedPnl,
             fee,
@@ -2635,29 +2715,33 @@ export class DataManager {
         if (!candle) return null;
 
         const portfolio = this.getState(this.config.world_book_keys.player_portfolio);
-        const position = this.positionCalculator.calculate(assetCode, portfolio);
-        if (!position.type || position.totalAmount <= 0) return null;
+        const events = [];
+        for (const mode of ['leveraged', 'spot']) {
+            const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
+            if (!position.type || position.totalAmount <= 0) continue;
 
-        const riskControls = portfolio?.assets?.[assetCode]?.risk_controls || {};
-        const takeProfit = Number(riskControls.take_profit);
-        const stopLoss = Number(riskControls.stop_loss);
-        const candidates = [];
-        if (position.type === 'long') {
-            if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'above' });
-            if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'below' });
-            if (position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'below' });
-        } else if (position.type === 'short') {
-            if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'below' });
-            if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'above' });
-            if (position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'above' });
-        }
+            const riskControls = portfolio?.assets?.[assetCode]?.[mode]?.risk_controls || {};
+            const takeProfit = Number(riskControls.take_profit);
+            const stopLoss = Number(riskControls.stop_loss);
+            const candidates = [];
+            if (position.type === 'long') {
+                if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'above' });
+                if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'below' });
+                if (mode === 'leveraged' && position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'below' });
+            } else if (position.type === 'short') {
+                if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'below' });
+                if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'above' });
+                if (mode === 'leveraged' && position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'above' });
+            }
 
-        const firstTrigger = this._selectFirstCandleTrigger(candle, candidates);
-        if (!firstTrigger) return null;
-        if (firstTrigger.type === 'liquidation') {
-            return await this.liquidatePosition(assetCode, firstTrigger.price, candle);
+            const firstTrigger = this._selectFirstCandleTrigger(candle, candidates);
+            if (!firstTrigger) continue;
+            const result = firstTrigger.type === 'liquidation'
+                ? await this.liquidatePosition(assetCode, firstTrigger.price, candle)
+                : await this.closePositionAtPrice(assetCode, firstTrigger.price, firstTrigger.type, candle, mode);
+            if (result?.triggered) events.push({ ...result, mode });
         }
-        return await this.closePositionAtPrice(assetCode, firstTrigger.price, firstTrigger.type, candle);
+        return events.length > 0 ? { ...events[0], events } : null;
     }
     
     async takeLoan(amount) {
@@ -2805,7 +2889,8 @@ export class DataManager {
         for (const state of states) {
             const assets = state.portfolio?.assets || {};
             for (const assetCode of Object.keys(assets)) {
-                if ((assets[assetCode]?.trades || []).length > 0) assetCodes.add(assetCode);
+                const asset = assets[assetCode] || {};
+                if ((asset.leveraged?.trades || asset.trades || []).length > 0 || (asset.spot?.trades || []).length > 0) assetCodes.add(assetCode);
             }
         }
         return [...assetCodes];
@@ -2820,6 +2905,8 @@ export class DataManager {
             openshort: 'open_short',
             addshort: 'add_short',
             closeshort: 'close_short',
+            spotbuy: 'spot_buy',
+            spotsell: 'spot_sell',
         }[type];
         if (explicit) return explicit;
 
@@ -2836,22 +2923,21 @@ export class DataManager {
         return null;
     }
 
-    async updateManagedAccountRiskControls(accountId, assetCode, riskControls) {
+    async updateManagedAccountRiskControls(accountId, assetCode, riskControls, mode = 'leveraged') {
         const state = await this._getManagedAccountStateById(accountId);
         if (!state) return false;
         const portfolio = state.portfolio || {};
-        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
         if (!position.type || position.totalAmount <= 0) return false;
 
         const normalized = this._normalizeRiskControls(riskControls) || { take_profit: null, stop_loss: null };
         const marketPrice = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`)?.current_price;
         if (!this._areRiskControlsValidForPosition(position, normalized, marketPrice)) return false;
-        if (!portfolio.assets) portfolio.assets = {};
-        if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
+        const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[mode];
         if (normalized.take_profit === null && normalized.stop_loss === null) {
-            delete portfolio.assets[assetCode].risk_controls;
+            delete bucket.risk_controls;
         } else {
-            portfolio.assets[assetCode].risk_controls = normalized;
+            bucket.risk_controls = normalized;
         }
 
         if (!portfolio.actions_this_turn) portfolio.actions_this_turn = [];
@@ -2860,6 +2946,7 @@ export class DataManager {
             text: `AI调整 ${assetCode} 止盈 ${normalized.take_profit || '未设置'} / 止损 ${normalized.stop_loss || '未设置'}`,
             executedAt: null,
             intent: 'adjust_risk_controls',
+            mode,
             assetCode,
             riskControls: normalized,
         });
@@ -2877,6 +2964,8 @@ export class DataManager {
 
         const portfolio = state.portfolio || {};
         if (!portfolio.assets) portfolio.assets = {};
+        const mode = String(commandType || '').toLowerCase().startsWith('spot') ? 'spot' : 'leveraged';
+        const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[mode];
         portfolio.cash = Number(portfolio.cash || 0);
 
         const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
@@ -2884,29 +2973,55 @@ export class DataManager {
         const rawPrice = Number(assetData?.current_price || lastCandle?.close || 0);
         if (!rawPrice) return false;
 
-        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
         const intent = this._getAccountIntentFromTradeCommand(commandType, position);
         if (!intent) return false;
 
         const maxLeverage = this.config.asset_definitions[assetCode]?.max_leverage || 1;
-        const normalizedLeverage = Math.min(Math.max(1, Math.floor(Number(leverage) || 1)), maxLeverage);
+        const normalizedLeverage = mode === 'spot' ? 1 : Math.min(Math.max(1, Math.floor(Number(leverage) || 1)), maxLeverage);
         const normalizedAmount = Math.max(0, Number(amount) || 0);
         const tradeConfig = this._getTradeConfig(assetCode);
         const price = this._calculateExecutionPrice(assetCode, intent, rawPrice);
-        const totalPositionValue = intent.startsWith('close') ? position.positionValue : normalizedAmount * normalizedLeverage;
+        const totalPositionValue = intent === 'spot_sell'
+            ? position.totalShares * price
+            : intent.startsWith('close')
+                ? position.positionValue
+                : normalizedAmount * normalizedLeverage;
         const fee = totalPositionValue * (tradeConfig.fee_rate ?? 0.001);
         let actionText = '';
 
         switch (intent) {
+            case 'spot_buy':
+                if (normalizedAmount <= 0 || portfolio.cash < normalizedAmount + fee) return false;
+                portfolio.cash -= normalizedAmount + fee;
+                bucket.trades.push({ time: lastCandle?.time || 0, price, amount: normalizedAmount, type: 'long', leverage: 1 });
+                actionText = `${state.owner_name} ${position.type ? '加仓' : '买入'}现货 ${assetCode}`;
+                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'spot');
+                this._recordAccountTransaction(portfolio, actionText, -normalizedAmount);
+                this._recordAccountTransaction(portfolio, '交易手续费', -fee);
+                break;
+
+            case 'spot_sell': {
+                if (position.type !== 'long') return false;
+                const pnl = (price - position.avgEntryPrice) * position.totalShares;
+                portfolio.cash += position.totalAmount + pnl - fee;
+                this._recordAccountTransaction(portfolio, `卖出现货 ${assetCode}`, position.totalAmount + pnl);
+                this._recordAccountTransaction(portfolio, '交易手续费', -fee);
+                this._recordAccountTransaction(portfolio, `已实现盈亏 (${assetCode} 现货)`, pnl);
+                bucket.trades = [];
+                delete bucket.risk_controls;
+                actionText = `${state.owner_name} 卖出现货 ${assetCode}`;
+                break;
+            }
+
             case 'open_long':
                 if (position.type) return false;
             case 'add_long':
                 if (position.type === 'short' || normalizedAmount <= 0 || portfolio.cash < normalizedAmount + fee) return false;
                 portfolio.cash -= normalizedAmount + fee;
-                if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
-                portfolio.assets[assetCode].trades.push({ time: lastCandle?.time || 0, price, amount: normalizedAmount, type: 'long', leverage: normalizedLeverage });
+                bucket.trades.push({ time: lastCandle?.time || 0, price, amount: normalizedAmount, type: 'long', leverage: normalizedLeverage });
                 actionText = `${state.owner_name} ${intent === 'open_long' ? '开多' : '加仓多'} ${assetCode} ${normalizedLeverage}x`;
-                actionText += this._applyRiskControls(portfolio, assetCode, riskControls);
+                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged');
                 this._recordAccountTransaction(portfolio, actionText, -normalizedAmount);
                 this._recordAccountTransaction(portfolio, '交易手续费', -fee);
                 break;
@@ -2916,10 +3031,9 @@ export class DataManager {
             case 'add_short':
                 if (position.type === 'long' || normalizedAmount <= 0 || portfolio.cash < normalizedAmount + fee) return false;
                 portfolio.cash -= normalizedAmount + fee;
-                if (!portfolio.assets[assetCode]) portfolio.assets[assetCode] = { trades: [] };
-                portfolio.assets[assetCode].trades.push({ time: lastCandle?.time || 0, price, amount: normalizedAmount, type: 'short', leverage: normalizedLeverage });
+                bucket.trades.push({ time: lastCandle?.time || 0, price, amount: normalizedAmount, type: 'short', leverage: normalizedLeverage });
                 actionText = `${state.owner_name} ${intent === 'open_short' ? '开空' : '加仓空'} ${assetCode} ${normalizedLeverage}x`;
-                actionText += this._applyRiskControls(portfolio, assetCode, riskControls);
+                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged');
                 this._recordAccountTransaction(portfolio, actionText, -normalizedAmount);
                 this._recordAccountTransaction(portfolio, '交易手续费', -fee);
                 break;
@@ -2931,8 +3045,8 @@ export class DataManager {
                 this._recordAccountTransaction(portfolio, `平多仓 ${assetCode}`, position.totalAmount + pnl);
                 this._recordAccountTransaction(portfolio, '交易手续费', -fee);
                 this._recordAccountTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl);
-                portfolio.assets[assetCode].trades = [];
-                delete portfolio.assets[assetCode].risk_controls;
+                bucket.trades = [];
+                delete bucket.risk_controls;
                 actionText = `${state.owner_name} 平多 ${assetCode}`;
                 break;
             }
@@ -2944,8 +3058,8 @@ export class DataManager {
                 this._recordAccountTransaction(portfolio, `平空仓 ${assetCode}`, position.totalAmount + pnl);
                 this._recordAccountTransaction(portfolio, '交易手续费', -fee);
                 this._recordAccountTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl);
-                portfolio.assets[assetCode].trades = [];
-                delete portfolio.assets[assetCode].risk_controls;
+                bucket.trades = [];
+                delete bucket.risk_controls;
                 actionText = `${state.owner_name} 平空 ${assetCode}`;
                 break;
             }
@@ -2955,7 +3069,7 @@ export class DataManager {
         }
 
         if (!portfolio.actions_this_turn) portfolio.actions_this_turn = [];
-        portfolio.actions_this_turn.push({ id: Date.now(), text: actionText, executedAt: price, intent, amount: normalizedAmount, leverage: normalizedLeverage, assetCode });
+        portfolio.actions_this_turn.push({ id: Date.now(), text: actionText, executedAt: price, intent, amount: normalizedAmount, leverage: normalizedLeverage, mode, assetCode });
         state.portfolio = portfolio;
         this._recordAccountHistory(portfolio);
         await this._writeManagedAccountState(state);
@@ -2973,7 +3087,15 @@ export class DataManager {
             return await this.updateManagedAccountRiskControls(accountId, assetCode, {
                 take_profit: Number(takeProfit) || null,
                 stop_loss: Number(stopLoss) || null,
-            });
+            }, 'leveraged');
+        }
+
+        if (command.type === 'SetSpotRisk') {
+            const [, , takeProfit = 0, stopLoss = 0] = command.args;
+            return await this.updateManagedAccountRiskControls(accountId, assetCode, {
+                take_profit: Number(takeProfit) || null,
+                stop_loss: Number(stopLoss) || null,
+            }, 'spot');
         }
 
         const [, , amount = 0, leverage = 1, takeProfit = 0, stopLoss = 0] = command.args;
@@ -2983,18 +3105,20 @@ export class DataManager {
         });
     }
 
-    async closeManagedAccountPositionAtPrice(state, assetCode, closePrice, reason = 'risk_control') {
+    async closeManagedAccountPositionAtPrice(state, assetCode, closePrice, reason = 'risk_control', mode = 'leveraged') {
         const portfolio = state.portfolio || {};
-        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
         if (!position.type || position.totalAmount <= 0 || !portfolio.assets?.[assetCode]) return false;
 
-        const fee = position.positionValue * (this._getTradeConfig(assetCode).fee_rate ?? 0.001);
+        const feeBase = mode === 'spot' ? position.totalShares * closePrice : position.positionValue;
+        const fee = feeBase * (this._getTradeConfig(assetCode).fee_rate ?? 0.001);
         const pnl = position.type === 'long'
             ? (closePrice - position.avgEntryPrice) * position.totalShares
             : (position.avgEntryPrice - closePrice) * position.totalShares;
         portfolio.cash = (portfolio.cash || 0) + position.totalAmount + pnl - fee;
-        portfolio.assets[assetCode].trades = [];
-        delete portfolio.assets[assetCode].risk_controls;
+        const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[mode];
+        bucket.trades = [];
+        delete bucket.risk_controls;
         const label = reason === 'take_profit' ? '止盈' : (reason === 'liquidation' ? '爆仓强平' : '止损');
         this._recordAccountTransaction(portfolio, `${label}平仓 ${assetCode}`, position.totalAmount + pnl);
         this._recordAccountTransaction(portfolio, '交易手续费', -fee);
@@ -3008,6 +3132,7 @@ export class DataManager {
             label,
             price: closePrice,
             account_id: state.account_id,
+            mode,
         };
     }
 
@@ -3019,27 +3144,25 @@ export class DataManager {
 
         for (const state of states) {
             const portfolio = state.portfolio || {};
-            const position = this.positionCalculator.calculate(assetCode, portfolio);
-            if (!position.type || position.totalAmount <= 0) continue;
-
-            const controls = portfolio.assets?.[assetCode]?.risk_controls || {};
-            const takeProfit = Number(controls.take_profit);
-            const stopLoss = Number(controls.stop_loss);
-            const candidates = [];
-
-            if (position.type === 'long') {
-                if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'above' });
-                if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'below' });
-                if (position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'below' });
-            } else {
-                if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'below' });
-                if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'above' });
-                if (position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'above' });
-            }
-
-            const firstTrigger = this._selectFirstCandleTrigger(candle, candidates);
-            if (firstTrigger) {
-                const result = await this.closeManagedAccountPositionAtPrice(state, assetCode, firstTrigger.price, firstTrigger.type);
+            for (const mode of ['leveraged', 'spot']) {
+                const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
+                if (!position.type || position.totalAmount <= 0) continue;
+                const controls = portfolio.assets?.[assetCode]?.[mode]?.risk_controls || {};
+                const takeProfit = Number(controls.take_profit);
+                const stopLoss = Number(controls.stop_loss);
+                const candidates = [];
+                if (position.type === 'long') {
+                    if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'above' });
+                    if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'below' });
+                    if (mode === 'leveraged' && position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'below' });
+                } else {
+                    if (Number.isFinite(takeProfit) && takeProfit > 0) candidates.push({ type: 'take_profit', price: takeProfit, condition: 'below' });
+                    if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'above' });
+                    if (mode === 'leveraged' && position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'above' });
+                }
+                const firstTrigger = this._selectFirstCandleTrigger(candle, candidates);
+                if (!firstTrigger) continue;
+                const result = await this.closeManagedAccountPositionAtPrice(state, assetCode, firstTrigger.price, firstTrigger.type, mode);
                 if (result?.triggered) {
                     changed = true;
                     events.push({
@@ -3047,6 +3170,7 @@ export class DataManager {
                         type: result.type,
                         label: result.label,
                         price: result.price,
+                        mode: result.mode,
                     });
                 }
             }
@@ -3167,8 +3291,8 @@ export class DataManager {
         let totalAssetValue = 0;
         if (portfolio.assets) {
             for (const assetCode in portfolio.assets) {
-                const position = this.positionCalculator.calculate(assetCode, portfolio);
-                if (position.totalAmount > 0) {
+                for (const position of Object.values(this.positionCalculator.calculateAll(assetCode, portfolio))) {
+                    if (position.totalAmount <= 0) continue;
                     const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
                     const lastPrice = assetData?.current_price ?? 0;
                     if (position.type === 'short') {

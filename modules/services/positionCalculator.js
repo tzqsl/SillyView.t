@@ -16,10 +16,16 @@ export class PositionCalculator {
      * @param {object} portfolio - The player's portfolio object.
      * @returns {object} A detailed position object.
      */
-    calculate(assetCode, portfolio) {
-        const trades = portfolio?.assets?.[assetCode]?.trades || [];
+    calculate(assetCode, portfolio, mode = 'leveraged') {
+        const asset = portfolio?.assets?.[assetCode] || {};
+        let trades = [];
+        if (mode === 'spot') {
+            trades = asset.spot?.trades || [];
+        } else {
+            trades = asset.leveraged?.trades || asset.trades || [];
+        }
         if (trades.length === 0) {
-            return { type: null, totalAmount: 0, avgEntryPrice: 0, totalShares: 0, isLeveraged: false, leverage: 1, positionValue: 0, liquidationPrice: 0 };
+            return { mode, type: null, totalAmount: 0, avgEntryPrice: 0, totalShares: 0, isLeveraged: false, leverage: 1, positionValue: 0, liquidationPrice: 0 };
         }
 
         const tradeType = trades[0].type; // 'long' or 'short'
@@ -37,7 +43,7 @@ export class PositionCalculator {
         }
 
         const leverage = Number((totalPositionValue / margin).toFixed(4));
-        const isLeveraged = leverage > 1.000001;
+        const isLeveraged = mode === 'leveraged';
         const avgEntryPrice = trades.reduce((sum, t) => sum + t.price * (t.amount * (t.leverage || 1)), 0) / totalPositionValue;
         const totalShares = totalPositionValue / avgEntryPrice;
         const maintenanceMarginRate = this.config?.asset_definitions?.[assetCode]?.trade_config?.maintenance_margin_rate ?? 0.01;
@@ -53,6 +59,7 @@ export class PositionCalculator {
         }
         
         return {
+            mode,
             type: tradeType,
             totalAmount: margin,
             avgEntryPrice,
@@ -62,6 +69,13 @@ export class PositionCalculator {
             positionValue: totalPositionValue,
             liquidationPrice,
             maintenanceMarginRate,
+        };
+    }
+
+    calculateAll(assetCode, portfolio) {
+        return {
+            spot: this.calculate(assetCode, portfolio, 'spot'),
+            leveraged: this.calculate(assetCode, portfolio, 'leveraged'),
         };
     }
 }

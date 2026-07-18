@@ -331,8 +331,9 @@ export class EventHandler {
     }
 
     async adjustPositionRiskControls(assetCode, itemEl) {
+        const mode = itemEl?.dataset.positionMode === 'spot' ? 'spot' : 'leveraged';
         const portfolio = this.data.getState(this.dependencies.config.world_book_keys.player_portfolio);
-        const position = this.positionCalculator.calculate(assetCode, portfolio);
+        const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
         if (!position.type || position.totalAmount <= 0) {
             this.dependencies.win.toastr.warning('当前仓位不存在，无法调整止盈止损。');
             this.ui.renderAll();
@@ -365,7 +366,7 @@ export class EventHandler {
         const updated = await this.data.updatePositionRiskControls(assetCode, {
             take_profit: takeProfit,
             stop_loss: stopLoss,
-        });
+        }, mode);
         if (!updated) {
             this.dependencies.win.toastr.warning('当前仓位不存在，无法调整止盈止损。');
             this.ui.renderAll();
@@ -484,7 +485,8 @@ export class EventHandler {
              sidebar.addEventListener('input', (event) => {
                 const leverageSlider = event.target.closest('#sillyview-leverage-slider');
                 if (leverageSlider) {
-                     this.ui.tradeView.updateLeverageInfo(parseInt(leverageSlider.value, 10));
+                     this.ui.selectedLeverage = parseInt(leverageSlider.value, 10);
+                     this.ui.tradeView.updateLeverageInfo(this.ui.selectedLeverage);
                 }
                 const amountInput = event.target.closest('#sillyview-trade-amount');
                 if (amountInput) {

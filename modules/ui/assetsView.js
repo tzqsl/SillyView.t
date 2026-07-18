@@ -64,11 +64,13 @@ export class AssetsView {
 
     renderQuestBoard(portfolio) {
         const logs = portfolio.transaction_log || [];
-        const hasOpenedTrade = logs.some(log => /开多|开空|加仓/.test(String(log.description || '')));
-        const hasClosedTrade = logs.some(log => /平多|平空|止盈平仓|止损平仓/.test(String(log.description || '')));
+        const hasOpenedTrade = logs.some(log => /开多|开空|加仓|买入现货/.test(String(log.description || '')));
+        const hasClosedTrade = logs.some(log => /平多|平空|卖出现货|止盈平仓|止损平仓/.test(String(log.description || '')));
         const hasRiskControls = Object.values(portfolio.assets || {}).some(asset => {
-            const controls = asset?.risk_controls || {};
-            return Number(controls.take_profit) > 0 || Number(controls.stop_loss) > 0;
+            return ['spot', 'leveraged'].some(mode => {
+                const controls = asset?.[mode]?.risk_controls || {};
+                return Number(controls.take_profit) > 0 || Number(controls.stop_loss) > 0;
+            });
         });
         const hasAdvancedMarket = (portfolio.asset_history || []).length >= 2;
         const stats = this.data.calculatePerformanceStats(portfolio);
@@ -139,8 +141,8 @@ export class AssetsView {
         let hasPositions = false;
 
         Object.keys(portfolio.assets || {}).forEach(assetCode => {
-            const position = this.positionCalculator.calculate(assetCode, portfolio);
-            if (position.totalAmount > 0) {
+            for (const [mode, position] of Object.entries(this.positionCalculator.calculateAll(assetCode, portfolio))) {
+                if (position.totalAmount <= 0) continue;
                 hasPositions = true;
                 const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${assetCode}`);
                 const lastPrice = assetData?.current_price ?? 0;
@@ -154,10 +156,11 @@ export class AssetsView {
                 const pnlColor = pnl >= 0 ? 'var(--green-400)' : 'var(--red-400)';
                 const sign = pnl >= 0 ? '+' : '';
 
-                const typeLabel = position.type === 'long' 
+                const typeLabel = position.type === 'long'
                     ? `<span style="color:var(--green-400); font-weight:bold;">多头</span>` 
                     : `<span style="color:var(--red-400); font-weight:bold;">空头</span>`;
-                const riskControls = portfolio.assets?.[assetCode]?.risk_controls || {};
+                const modeLabel = mode === 'spot' ? '现货' : `杠杆 ${position.leverage}x`;
+                const riskControls = portfolio.assets?.[assetCode]?.[mode]?.risk_controls || {};
                 const takeProfit = Number(riskControls.take_profit);
                 const stopLoss = Number(riskControls.stop_loss);
                 const takeProfitValue = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit.toFixed(4) : '';
@@ -166,13 +169,13 @@ export class AssetsView {
                 const stopLossText = stopLossValue || '未设置';
 
                 assetsHtml += `
-                    <div class="sv-asset-item" data-asset-code="${assetCode}">
+                    <div class="sv-asset-item" data-asset-code="${assetCode}" data-position-mode="${mode}">
                         <div class="sv-asset-item-header">
-                            <span class="sv-asset-item-code">${assetCode} ${typeLabel} ${position.isLeveraged ? `(${position.leverage}x)` : ''}</span>
+                            <span class="sv-asset-item-code">${assetCode} ${modeLabel} ${typeLabel}</span>
                             <span class="sv-asset-item-pnl" style="color:${pnlColor};">${sign}${pnl.toFixed(2)} (${sign}${pnlPercent.toFixed(2)}%)</span>
                         </div>
                         <div class="sv-asset-item-details">
-                            <span>保证金:</span><span>${position.totalAmount.toFixed(2)}</span>
+                            <span>${mode === 'spot' ? '成本' : '保证金'}:</span><span>${position.totalAmount.toFixed(2)}</span>
                             <span>当前价值:</span><span>${currentValue.toFixed(2)}</span>
                             <span>平均成本价:</span><span>${position.avgEntryPrice.toFixed(4)}</span>
                             <span>当前市价:</span><span>${lastPrice.toFixed(4)}</span>
@@ -188,7 +191,7 @@ export class AssetsView {
                                 <span>止损</span>
                                 <input type="number" step="any" min="0" placeholder="未设置" value="${stopLossValue}" class="sv-input" data-risk-field="stop_loss">
                             </label>
-                            <button type="button" class="sv-button sv-button-blue sv-position-risk-save" data-asset-code="${assetCode}">保存调整</button>
+                            <button type="button" class="sv-button sv-button-blue sv-position-risk-save" data-asset-code="${assetCode}" data-position-mode="${mode}">保存调整</button>
                         </div>
                     </div>
                 `;
@@ -202,16 +205,15 @@ export class AssetsView {
     
     calculateTotalAssetValue(portfolio) {
         return Object.keys(portfolio.assets || {}).reduce((sum, assetCode) => {
-            const position = this.positionCalculator.calculate(assetCode, portfolio);
-            if (position.totalAmount > 0) {
+            return sum + Object.values(this.positionCalculator.calculateAll(assetCode, portfolio)).reduce((assetSum, position) => {
+                if (position.totalAmount <= 0) return assetSum;
                 const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${assetCode}`);
                 const lastPrice = assetData?.current_price ?? 0;
-                 const pnl = position.type === 'long' 
+                const pnl = position.type === 'long'
                     ? (lastPrice - position.avgEntryPrice) * position.totalShares
                     : (position.avgEntryPrice - lastPrice) * position.totalShares;
-                return sum + position.totalAmount + pnl;
-            }
-            return sum;
+                return assetSum + position.totalAmount + pnl;
+            }, 0);
         }, 0);
     }
 }
