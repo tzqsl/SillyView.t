@@ -1657,6 +1657,81 @@ export class DataManager {
         return accounts;
     }
 
+    _extractRoleProfilesFromEntry(entry, worldbookName) {
+        const content = String(entry?.content || '');
+        const marker = this.config.multi_account.role_profile_import_marker;
+        if (!marker || !content.includes(marker)) return [];
+
+        const profiles = [];
+        const tagPattern = /<([^\s<>/"'=]+)>([\s\S]*?)<\/\1\s*>/g;
+        let match;
+        while ((match = tagPattern.exec(content)) !== null) {
+            const roleName = String(match[1] || '').trim();
+            const profileContent = String(match[2] || '').trim();
+            if (!roleName || !profileContent) continue;
+            profiles.push({
+                role_name: roleName,
+                content: `<${roleName}>\n${profileContent}\n</${roleName}>`,
+                source_worldbook: worldbookName,
+                source_entry: entry?.name || 'unknown',
+            });
+        }
+        return profiles;
+    }
+
+    async scanBoundRoleProfiles() {
+        const scanInfo = await this._getBankAccountScanTargets();
+        const profilesByName = new Map();
+        for (const worldbookName of scanInfo.targets) {
+            let entries = [];
+            try {
+                entries = await this.th.getWorldbook(worldbookName);
+            } catch (error) {
+                this.logger.warn(`扫描角色人设世界书失败: ${worldbookName}`, error);
+                continue;
+            }
+            for (const entry of entries || []) {
+                for (const profile of this._extractRoleProfilesFromEntry(entry, worldbookName)) {
+                    if (!profilesByName.has(profile.role_name)) profilesByName.set(profile.role_name, profile);
+                }
+            }
+        }
+        return [...profilesByName.values()];
+    }
+
+    async syncBoundRoleProfiles() {
+        const profiles = await this.scanBoundRoleProfiles();
+        const controlName = this.config.multi_account.control_worldbook_name;
+        const prefix = `${this.config.multi_account.role_profile_prefix}_`;
+        await this._ensureWorldbookExists(controlName, []);
+        await this.th.updateWorldbookWith(controlName, entries => {
+            const retained = entries.filter(entry => !String(entry.name || '').startsWith(prefix));
+            for (const profile of profiles) {
+                retained.push({
+                    name: `${prefix}${this._sanitizeName(profile.role_name)}_${this._hashString(profile.role_name)}`,
+                    enabled: false,
+                    content: profile.content,
+                });
+            }
+            return retained;
+        });
+        return profiles;
+    }
+
+    async getManagedRoleProfiles() {
+        const controlName = this.config.multi_account.control_worldbook_name;
+        const prefix = `${this.config.multi_account.role_profile_prefix}_`;
+        try {
+            const entries = await this.th.getWorldbook(controlName);
+            return (entries || [])
+                .filter(entry => String(entry.name || '').startsWith(prefix) && String(entry.content || '').trim())
+                .map(entry => ({ entry_name: entry.name, content: String(entry.content).trim() }));
+        } catch (error) {
+            this.logger.warn('读取角色人设条目失败。', error);
+            return [];
+        }
+    }
+
     async _ensureWorldbookExists(worldbookName, initialEntries = []) {
         if (String(worldbookName || '').startsWith(LEGACY_MANAGED_ACCOUNT_WORLDBOOK_PREFIX)) {
             this.logger.warn(`已阻止创建旧版多账户个人世界书: ${worldbookName}`);
@@ -2070,6 +2145,9 @@ export class DataManager {
                 if (entry.name?.startsWith(`${this.config.multi_account.account_state_key}_`)) {
                     entry.enabled = false;
                 }
+                if (entry.name?.startsWith(`${this.config.multi_account.role_profile_prefix}_`)) {
+                    entry.enabled = false;
+                }
             }
             return entries.filter(entry =>
                 entry.name !== this.config.multi_account.recent_news_key &&
@@ -2245,7 +2323,11 @@ export class DataManager {
         return {
             session: this.activeManagedObservationSession,
             entries: entries
-                .filter(entry => relevantNames.has(entry.name) || entry.name?.startsWith(`${this.config.multi_account.account_state_key}_`))
+                .filter(entry =>
+                    relevantNames.has(entry.name) ||
+                    entry.name?.startsWith(`${this.config.multi_account.account_state_key}_`) ||
+                    entry.name?.startsWith(`${this.config.multi_account.role_profile_prefix}_`)
+                )
                 .map(entry => ({ name: entry.name, enabled: Boolean(entry.enabled), content_length: String(entry.content || '').length })),
         };
     }
@@ -2320,9 +2402,11 @@ export class DataManager {
             return entries.filter(entry => !DEPRECATED_MANAGED_ACCOUNT_ENTRIES.has(entry.name));
         });
         await this.syncManagedAccountsWorldbook();
+        const roleProfiles = await this.syncBoundRoleProfiles();
         await this.cleanupRedundantKlineContextEntries();
         await this.cleanupLegacyManagedAccountWorldbooks();
         this.logger.success(`已同步 ${accountEntries.length} 个开户行账户到 ${controlName}。`);
+        this.logger.success(`已同步 ${roleProfiles.length} 个角色人设到 ${controlName}。`);
         return accountEntries;
     }
 

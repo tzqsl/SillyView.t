@@ -95,6 +95,8 @@
 SillyView_accounts 会被绑定到角色卡附加世界书，包含多账户观察/交易指令、内部账户索引、按账户保存的状态，以及唯一一份按需启用的 sv_kline_context。
 SillyView_fx 仍只作为市场背景世界书使用；其中旧版重复的 sv_kline_context 会被清理，最新摘要只保存在 SillyView_accounts。
 
+角色人设导入格式：在人设世界书条目中加入 `[SillyView.ImportRoleProfiles()]`，再以 `<角色名>人设内容</角色名>` 成对标签分隔多个角色。初始化后，每个角色会成为 SillyView_accounts 中一个关闭的 `sv_role_profile_*` 条目，并在每轮角色决策请求中全部发送。
+
 推荐格式：
 
 开户行: 星海商业银行

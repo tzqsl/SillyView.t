@@ -76,6 +76,10 @@ export class RoleDecisionService {
         return this.data._buildManagedTradeCommandGuide(states);
     }
 
+    async _loadRoleProfiles() {
+        return await this.data.getManagedRoleProfiles();
+    }
+
     async _generate(orderedPrompts, suffix) {
         if (!this.th?.generateRaw) throw new Error('TavernHelper.generateRaw 不可用。');
         const generationId = `sillyview-role-${Date.now()}-${suffix}`;
@@ -101,13 +105,19 @@ export class RoleDecisionService {
         }
     }
 
-    _buildRoleSystemPrompt(commandGuide) {
+    _buildRoleSystemPrompt(commandGuide, roleProfiles) {
+        const profileText = roleProfiles.length > 0
+            ? roleProfiles.map(profile => profile.content).join('\n\n')
+            : '未导入角色人设。';
         return [
             '你是 SillyView 的幕后角色决策 AI，不是与用户直接对话的前台 AI。',
             '本次只根据上一条角色正文和用户本轮信息，判断角色此刻的心理活动、自然行为，以及是否会主动查看手机、市场或自己的账户。',
             '不要续写面向用户的完整剧情对白，不要假定角色知道尚未观察的账户和行情。',
             '请输出 <role_decision>，其中包含简洁的 <psychology> 和 <behavior>。确有必要时，在末尾唯一的 <command>...</command> 中输出观察或交易指令。',
             '如果当前上下文不足以支持具体交易，先观察或保持不行动，禁止编造余额、持仓、价格和新闻。',
+            '',
+            '【本次可用的全部角色人设】',
+            profileText,
             '',
             commandGuide,
         ].join('\n');
@@ -159,8 +169,11 @@ export class RoleDecisionService {
         const startedAt = Date.now();
         let activeSessionId = null;
         try {
-            const commandGuide = await this._buildCommandGuide();
-            const systemPrompt = this._buildRoleSystemPrompt(commandGuide);
+            const [commandGuide, roleProfiles] = await Promise.all([
+                this._buildCommandGuide(),
+                this._loadRoleProfiles(),
+            ]);
+            const systemPrompt = this._buildRoleSystemPrompt(commandGuide, roleProfiles);
             let output = await this._generate([
                 { role: 'system', content: systemPrompt },
                 { role: 'assistant', content: `【上一条角色正文】\n${context.previous_content || '无。'}` },
@@ -220,6 +233,7 @@ export class RoleDecisionService {
                 started_at: startedAt,
                 completed_at: Date.now(),
                 context,
+                role_profile_entries: roleProfiles.map(profile => profile.entry_name),
                 observation_rounds: observationRounds,
                 raw_output: output,
                 trade_results: tradeResults,
