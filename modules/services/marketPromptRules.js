@@ -20,7 +20,7 @@ function splitPromptBlocks(text) {
     let current = [];
 
     for (const line of lines) {
-        const startsBlock = /^\s*(title:\s*"|#\s*SillyView\s*-)/.test(line);
+        const startsBlock = /^(title:\s*"|#\s*SillyView\s*-)/.test(line);
         if (startsBlock && current.some(item => item.trim())) {
             blocks.push(current.join('\n').trim());
             current = [];

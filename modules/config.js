@@ -119,6 +119,7 @@ export const SillyViewConfig = {
         ai_context: 'sv_ai_context',
         dialogue_context: 'sv_dialogue_context',
         kline_context: 'sv_kline_context',
+        market_overview: 'sv_market_overview',
         market_targets: 'sv_market_targets',
         news_archive: 'sv_news_archive',
         active_market_news: 'sv_market_news_active',
@@ -180,6 +181,12 @@ export const SillyViewConfig = {
             comment: "Compact K-line context for market judgment. columns=[t,o,h,l,c].",
             updated_at: 0,
             updated_minute_at: 0,
+            assets: []
+        },
+        market_overview: {
+            comment: "Compact 24-hour summaries for the background market AI. No minute candles or account data.",
+            updated_at: 0,
+            window_hours: 24,
             assets: []
         },
         market_targets: {

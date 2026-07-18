@@ -506,7 +506,8 @@ export class DataManager {
     _getPreferredAfterKey(key) {
         const keys = this.config.world_book_keys;
         if (key === keys.kline_context) return keys.dialogue_context;
-        if (key === keys.market_targets) return keys.kline_context;
+        if (key === keys.market_overview) return keys.kline_context;
+        if (key === keys.market_targets) return keys.market_overview;
         return null;
     }
 
@@ -518,6 +519,7 @@ export class DataManager {
             keys.player_portfolio,
             keys.ai_context,
             keys.kline_context,
+            keys.market_overview,
             keys.market_targets,
             keys.news_archive,
             keys.active_market_news,
@@ -544,6 +546,7 @@ export class DataManager {
             this.contextEntriesEnsuredFor !== lorebookName ||
             !this._stateCache.has(keys.dialogue_context) ||
             !this._stateCache.has(keys.kline_context) ||
+            !this._stateCache.has(keys.market_overview) ||
             !this._stateCache.has(keys.market_targets) ||
             !this._stateCache.has(keys.news_archive) ||
             !this._stateCache.has(keys.active_market_news);
@@ -568,9 +571,15 @@ export class DataManager {
         );
         await this.ensureContextEntry(
             lorebookName,
+            this.config.world_book_keys.market_overview,
+            this.config.default_game_state.market_overview,
+            { enabled: false, afterKey: this.config.world_book_keys.kline_context }
+        );
+        await this.ensureContextEntry(
+            lorebookName,
             this.config.world_book_keys.market_targets,
             this.config.default_game_state.market_targets,
-            { afterKey: this.config.world_book_keys.kline_context }
+            { afterKey: this.config.world_book_keys.market_overview }
         );
         await this.ensureContextEntry(
             lorebookName,
@@ -668,6 +677,7 @@ export class DataManager {
             { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: false },
             { name: keys.dialogue_context, content: JSON.stringify(defaults.dialogue_context, null, 2), enabled: true },
             { name: keys.kline_context, content: JSON.stringify(defaults.kline_context, null, 2), enabled: false },
+            { name: keys.market_overview, content: JSON.stringify(defaults.market_overview, null, 2), enabled: false },
             { name: keys.market_targets, content: JSON.stringify(defaults.market_targets, null, 2), enabled: false },
             { name: keys.news_archive, content: JSON.stringify(defaults.news_archive, null, 2), enabled: false },
             { name: keys.active_market_news, content: JSON.stringify(defaults.active_market_news, null, 2), enabled: false },
@@ -1070,6 +1080,7 @@ export class DataManager {
                 macro_state: market.macro_state || {},
             };
         });
+        await this.updateMarketOverview(availableAssets, market);
         await this.updateDialogueContext(marketSummary);
     }
 
@@ -1086,6 +1097,76 @@ export class DataManager {
             Number(Number(candle.low || 0).toFixed(4)),
             Number(Number(candle.close || 0).toFixed(4)),
         ];
+    }
+
+    _classifyOverviewPhase(summary) {
+        if (summary.breakout === 'up') return 'breakout_up';
+        if (summary.breakout === 'down') return 'breakout_down';
+        if (summary.direction === 'up') return summary.momentum > 0 ? 'accelerating_up' : 'rising';
+        if (summary.direction === 'down') return summary.momentum > 0 ? 'accelerating_down' : 'falling';
+        return 'consolidation';
+    }
+
+    _buildMarketOverviewAssets(assetCodes) {
+        return assetCodes.map(assetCode => {
+            const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
+            const candles = (assetData?.kline_hourly || []).filter(Boolean).slice(-24);
+            const first = candles[0] || {};
+            const last = candles[candles.length - 1] || {};
+            const open = Number(first.open || first.close || assetData?.current_price || 0);
+            const close = Number(last.close || assetData?.current_price || open);
+            const high = candles.length > 0
+                ? Math.max(...candles.map(candle => Number(candle.high || candle.close || 0)))
+                : close;
+            const low = candles.length > 0
+                ? Math.min(...candles.map(candle => Number(candle.low || candle.close || close)))
+                : close;
+            const summary = this._summarizeCandleWindow(candles);
+            const compact = value => Number(Number(value || 0).toFixed(4));
+
+            return {
+                code: assetCode,
+                hours: candles.length,
+                o: compact(open),
+                h: compact(high),
+                l: compact(low),
+                c: compact(close),
+                change_pct: Number((open > 0 ? ((close / open) - 1) * 100 : 0).toFixed(3)),
+                range_pct: Number((open > 0 ? ((high - low) / open) * 100 : 0).toFixed(3)),
+                trend: summary.direction,
+                phase: this._classifyOverviewPhase(summary),
+                consecutive_up: summary.consecutive_up,
+                consecutive_down: summary.consecutive_down,
+                recent_closes: candles.slice(-4).map(candle => compact(candle.close)),
+            };
+        });
+    }
+
+    async updateMarketOverview(availableAssets = null, market = null) {
+        const keys = this.config.world_book_keys;
+        const configState = this.getState(keys.config);
+        const resolvedAssets = availableAssets || configState?.available_assets || Object.keys(this.config.asset_definitions);
+        const selectedAssets = this._selectKlineContextAssets(resolvedAssets);
+        const resolvedMarket = market || this.getState(keys.global_market) || {};
+
+        await this.updateState(keys.market_overview, () => ({
+            comment: "Compact 24-hour summaries for the background market AI. No minute candles or account data.",
+            updated_at: resolvedMarket.current_time_index || 0,
+            window_hours: 24,
+            selected_assets: selectedAssets,
+            assets: this._buildMarketOverviewAssets(selectedAssets),
+        }));
+    }
+
+    getMarketOverview(assetCodes = null) {
+        const keys = this.config.world_book_keys;
+        const overview = this.getState(keys.market_overview) || this.config.default_game_state.market_overview;
+        const selected = Array.isArray(assetCodes) ? new Set(assetCodes) : null;
+
+        return {
+            window_hours: 24,
+            assets: (overview.assets || []).filter(asset => !selected || selected.has(asset.code)),
+        };
     }
 
     _buildRecentKlineSnapshot(assetCode, assetData) {
@@ -2057,6 +2138,7 @@ export class DataManager {
                 this.config.world_book_keys.player_portfolio,
                 this.config.world_book_keys.ai_context,
                 this.config.world_book_keys.kline_context,
+                this.config.world_book_keys.market_overview,
                 this.config.world_book_keys.market_targets,
                 this.config.world_book_keys.news_archive,
                 this.config.world_book_keys.active_market_news,

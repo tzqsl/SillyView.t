@@ -30,6 +30,7 @@ export class AIDirector {
         let contextLines = [];
         const globalMarket = this.data.getState(this.config.world_book_keys.global_market) || {};
         await this.data.pruneExpiredMarketTargets();
+        await this.data.updateMarketOverview(null, globalMarket);
         contextLines.push(`当前时间: ${globalMarket.current_datetime || '未知'}，${globalMarket.current_period || '未知'}，${globalMarket.current_season || '未知'}，天气: ${globalMarket.current_weather || '未知'}。`);
         if (globalMarket.macro_state) {
             const macro = globalMarket.macro_state;
@@ -60,6 +61,10 @@ export class AIDirector {
                 contextLines.push(`- ${assetDef.name} (${code}): ${assetData.current_price.toFixed(4)}`);
             }
         }
+
+        const marketOverview = this.data.getMarketOverview([...activeAssetsForAI]);
+        contextLines.push('最近24小时总观摘要（不含分钟K）:');
+        contextLines.push(JSON.stringify(marketOverview));
 
         contextLines.push('分K/时K联合短线信号:');
         for (const code of activeAssetsForAI) {
