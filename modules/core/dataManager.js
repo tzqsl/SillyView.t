@@ -686,6 +686,15 @@ export class DataManager {
         return normalized;
     }
 
+    _normalizeRoleAISettings(settings = {}) {
+        const normalized = {
+            ...this.config.role_ai_defaults,
+            ...(settings || {}),
+        };
+        delete normalized.proxy_preset;
+        return normalized;
+    }
+
     async createInitialWorldState(options = {}) {
         const lorebookName = await this._getLorebookName();
         if (!lorebookName) {
@@ -705,6 +714,7 @@ export class DataManager {
         const initialConfig = {
             ...defaults.config,
             background_ai: this._normalizeBackgroundAISettings(options.backgroundAI || defaults.config.background_ai),
+            role_ai: this._normalizeRoleAISettings(options.roleAI || defaults.config.role_ai),
             auto_advance: {
                 ...defaults.config.auto_advance,
                 ...(options.autoAdvance || {}),
@@ -834,15 +844,17 @@ export class DataManager {
         this.logger.warn("正在重置所有SillyView数据...");
         const configState = this.getState(this.config.world_book_keys.config) || {};
         const preservedBackgroundAI = this._normalizeBackgroundAISettings(configState.background_ai);
+        const preservedRoleAI = this._normalizeRoleAISettings(configState.role_ai);
         const preservedAutoAdvance = {
             ...this.config.default_game_state.config.auto_advance,
             ...(configState.auto_advance || {}),
         };
         await this.createInitialWorldState({
             backgroundAI: preservedBackgroundAI,
+            roleAI: preservedRoleAI,
             autoAdvance: preservedAutoAdvance,
         }); // Re-running the creation process effectively resets everything.
-        this.dependencies.win.toastr.success("所有数据已重置到初始状态，后台模型设置已保留。");
+        this.dependencies.win.toastr.success("所有数据已重置到初始状态，后台市场与角色模型设置已保留。");
     }
 
     createSnapshot() {
@@ -2089,6 +2101,64 @@ export class DataManager {
         ].join('\n');
     }
 
+    _buildRoleOutputRules() {
+        return [
+            '【SillyView 角色 AI 输出规范】',
+            '你是幕后角色决策 AI，不是前台正文写作者。你的任务只有：根据人设与本轮上下文分别模拟相关角色的内心活动；在确有必要时代替对应角色使用 SillyView 观察或交易指令；最后为前台对话 AI 提供各角色接下来可能发生的简短剧情大纲。',
+            '禁止续写正文、对白、旁白、场景描写、寒暄、解释或总结。不要向用户说话，不要复述本规范。',
+            '',
+            '严格输出结构：',
+            '<role_thoughts>',
+            '  <role_thought role="角色名">该角色此刻未说出口的判断、情绪与动机</role_thought>',
+            '  <role_thought role="另一角色名">另一角色独立的内心活动</role_thought>',
+            '</role_thoughts>',
+            '<plot_outlines>',
+            '  <role_outline role="角色名">该角色接下来可能采取的行动及剧情走向</role_outline>',
+            '  <role_outline role="另一角色名">另一角色接下来可能采取的行动及剧情走向</role_outline>',
+            '</plot_outlines>',
+            '<command>',
+            '[Module.Action(...)]',
+            '</command>',
+            '',
+            '标签与角色规则：',
+            '- 本轮实际出场、明确被提及或会直接受影响的每个角色，都必须分别拥有一个 role_thought 和一个同名 role_outline；不得把多人内容合并在同一标签中。',
+            '- role 属性必须使用人设中的准确角色名。角色之间的认知、动机、账户和指令必须相互独立。',
+            '- 不要为纯背景人物生成标签；单轮最多输出 6 个角色，超过时只保留与本轮剧情最相关者。',
+            '- 标签外不得输出任何文字，也不要使用 Markdown 代码块。',
+            '',
+            '指令规则：',
+            '- 所有完整指令只能逐行放在回复末尾唯一的 <command>...</command> 中，command 之后不得再有任何内容。',
+            '- 每条指令中的 account_id 必须属于作出该决定的角色；不得混用角色身份、账户或观察结果。',
+            '- 没有必要执行指令时仍保留空的 <command></command>，不得编造操作。',
+            '- role_thought、role_outline 或其他位置不得出现完整或示例形式的 [Module.Action(...)] 指令。',
+            '',
+            '字数限制：',
+            '- 每个 role_thought 为 30-80 个汉字，聚焦内心判断、情绪和动机，不重复人设或上下文。',
+            '- 每个 role_outline 为 20-60 个汉字，只写 1-2 个最可能的下一步剧情节点，不扩写正文。',
+            '- 除 command 内的指令外，全部输出合计不得超过 900 个汉字；冲突时优先缩短措辞，不能省略必要标签。',
+        ].join('\n');
+    }
+
+    async getManagedRolePromptGuides() {
+        const controlName = this.config.multi_account.control_worldbook_name;
+        const states = await this.getManagedAccountStates();
+        const fallback = {
+            command_guide: this._buildManagedTradeCommandGuide(states),
+            output_rules: this._buildRoleOutputRules(),
+        };
+        try {
+            const entries = await this.th.getWorldbook(controlName);
+            const readEntry = key => String(entries.find(entry => entry.name === key)?.content || '').trim();
+            return {
+                command_guide: readEntry(this.config.multi_account.command_entry_key) || fallback.command_guide,
+                output_rules: readEntry(this.config.multi_account.role_output_rules_key) || fallback.output_rules,
+            };
+        } catch (error) {
+            this.logger.warn('读取 SillyView_accounts 角色提示词条目失败，使用内置规范。', error);
+            return fallback;
+        }
+    }
+
     _buildManagedControlEntries(states, accountEntries = null) {
         const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
         const entries = [];
@@ -2108,6 +2178,11 @@ export class DataManager {
                 name: this.config.multi_account.command_entry_key,
                 enabled: true,
                 content: this._buildManagedTradeCommandGuide(states),
+            },
+            {
+                name: this.config.multi_account.role_output_rules_key,
+                enabled: true,
+                content: this._buildRoleOutputRules(),
             },
             {
                 name: this.config.world_book_keys.kline_context,
@@ -2131,6 +2206,7 @@ export class DataManager {
         await this._ensureAdditionalWorldbook(controlName);
         await this.th.updateWorldbookWith(controlName, entries => {
             this._upsertWorldbookEntry(entries, this.config.multi_account.command_entry_key, this._buildManagedTradeCommandGuide(states), true);
+            this._upsertWorldbookEntry(entries, this.config.multi_account.role_output_rules_key, this._buildRoleOutputRules(), true);
             const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
             this._upsertWorldbookEntry(entries, this.config.world_book_keys.kline_context, JSON.stringify(klineContext, null, 2), false);
             const eventLogEntry = entries.find(entry => entry.name === this.config.multi_account.auto_event_log_key);
@@ -2318,6 +2394,7 @@ export class DataManager {
         }
         const relevantNames = new Set([
             this.config.multi_account.command_entry_key,
+            this.config.multi_account.role_output_rules_key,
             this.config.world_book_keys.kline_context,
         ]);
         return {

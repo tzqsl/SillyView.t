@@ -71,9 +71,8 @@ export class RoleDecisionService {
         return context;
     }
 
-    async _buildCommandGuide() {
-        const states = await this.data.getManagedAccountStates();
-        return this.data._buildManagedTradeCommandGuide(states);
+    async _loadPromptGuides() {
+        return await this.data.getManagedRolePromptGuides();
     }
 
     async _loadRoleProfiles() {
@@ -82,15 +81,18 @@ export class RoleDecisionService {
 
     async _generate(orderedPrompts, suffix) {
         if (!this.th?.generateRaw) throw new Error('TavernHelper.generateRaw 不可用。');
+        const settings = this._getSettings();
+        const customApi = this._buildCustomApi(settings);
         const generationId = `sillyview-role-${Date.now()}-${suffix}`;
         const generationPromise = this.th.generateRaw({
             generation_id: generationId,
             should_stream: false,
             should_silence: true,
             max_chat_history: 0,
+            custom_api: customApi,
             ordered_prompts: orderedPrompts,
         });
-        const timeoutMs = Math.max(1000, Number(this._getSettings().timeout_ms) || 60000);
+        const timeoutMs = Math.max(1000, Number(settings.timeout_ms) || 60000);
         let timeoutHandle;
         const timeoutPromise = new Promise((_, reject) => {
             timeoutHandle = setTimeout(() => {
@@ -105,19 +107,32 @@ export class RoleDecisionService {
         }
     }
 
-    _buildRoleSystemPrompt(commandGuide, roleProfiles) {
+    _buildCustomApi(settings) {
+        if (!settings.custom_api_enabled) return undefined;
+        const customApi = {};
+        if (settings.apiurl?.trim()) customApi.apiurl = settings.apiurl.trim();
+        if (settings.key?.trim()) customApi.key = settings.key.trim();
+        if (settings.model?.trim()) customApi.model = settings.model.trim();
+        if (settings.source?.trim()) customApi.source = settings.source.trim();
+        if (Number.isFinite(settings.temperature)) customApi.temperature = settings.temperature;
+        if (Number.isFinite(settings.max_tokens) && settings.max_tokens > 0) customApi.max_tokens = settings.max_tokens;
+        return Object.keys(customApi).length > 0 ? customApi : undefined;
+    }
+
+    _buildRoleSystemPrompt(commandGuide, outputRules, roleProfiles) {
         const profileText = roleProfiles.length > 0
             ? roleProfiles.map(profile => profile.content).join('\n\n')
             : '未导入角色人设。';
         return [
             '你是 SillyView 的幕后角色决策 AI，不是与用户直接对话的前台 AI。',
-            '本次只根据上一条角色正文和用户本轮信息，判断角色此刻的心理活动、自然行为，以及是否会主动查看手机、市场或自己的账户。',
-            '不要续写面向用户的完整剧情对白，不要假定角色知道尚未观察的账户和行情。',
-            '请输出 <role_decision>，其中包含简洁的 <psychology> 和 <behavior>。确有必要时，在末尾唯一的 <command>...</command> 中输出观察或交易指令。',
+            '本次只根据上一条角色正文和用户本轮信息，分别判断相关角色的内心活动、下一步剧情倾向，以及是否会主动查看手机、市场或自己的账户。',
+            '不要续写面向用户的正文、对白或旁白，不要假定角色知道尚未观察的账户和行情。',
             '如果当前上下文不足以支持具体交易，先观察或保持不行动，禁止编造余额、持仓、价格和新闻。',
             '',
             '【本次可用的全部角色人设】',
             profileText,
+            '',
+            outputRules,
             '',
             commandGuide,
         ].join('\n');
@@ -155,7 +170,7 @@ export class RoleDecisionService {
             : '- 本轮没有角色交易动作。';
         return [
             '【SillyView 幕后角色决策，仅供本次前台生成使用】',
-            '以下内容不是用户发言，不要逐字复述、展示标签或解释系统流程。请把角色心理和行为倾向自然落实到接下来的正文，并保持与上一条正文及用户本轮信息连贯。',
+            '以下内容不是用户发言，不要逐字复述、展示标签或解释系统流程。请把角色心理和剧情倾向自然落实到接下来的正文，并保持与上一条正文及用户本轮信息连贯。',
             '',
             `幕后角色决策：\n${this._stripCommandBlocks(roleDecision) || '未提供额外决策。'}`,
             '',
@@ -169,11 +184,15 @@ export class RoleDecisionService {
         const startedAt = Date.now();
         let activeSessionId = null;
         try {
-            const [commandGuide, roleProfiles] = await Promise.all([
-                this._buildCommandGuide(),
+            const [promptGuides, roleProfiles] = await Promise.all([
+                this._loadPromptGuides(),
                 this._loadRoleProfiles(),
             ]);
-            const systemPrompt = this._buildRoleSystemPrompt(commandGuide, roleProfiles);
+            const systemPrompt = this._buildRoleSystemPrompt(
+                promptGuides.command_guide,
+                promptGuides.output_rules,
+                roleProfiles
+            );
             let output = await this._generate([
                 { role: 'system', content: systemPrompt },
                 { role: 'assistant', content: `【上一条角色正文】\n${context.previous_content || '无。'}` },
@@ -204,7 +223,7 @@ export class RoleDecisionService {
                                 '【观察结果】',
                                 session.context,
                                 '',
-                                '角色已经完成上述查看。请更新心理与行为判断；可以交易、继续观察或保持不行动。仍按 <role_decision> 与可选 <command> 格式输出。',
+                                '角色已经完成上述查看。请更新各角色的内心活动与剧情大纲；可以交易、继续观察或保持不行动。仍严格按照角色输出规范生成，并在末尾保留唯一的 <command> 块。',
                             ].join('\n'),
                         },
                     ], `observe-${round}`);

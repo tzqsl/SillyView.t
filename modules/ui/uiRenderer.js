@@ -280,14 +280,43 @@ export class UIRenderer {
         };
     }
 
+    _getRoleAISettings() {
+        const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
+        return {
+            ...SillyViewConfig.role_ai_defaults,
+            ...(configState.role_ai || {}),
+        };
+    }
+
+    collectRoleAISettings() {
+        const getValue = id => this.parentDoc.getElementById(id)?.value?.trim() || '';
+        const temperature = parseFloat(getValue('sv-role-ai-temperature'));
+        const maxTokens = parseInt(getValue('sv-role-ai-max-tokens'), 10);
+        return {
+            ...this._getRoleAISettings(),
+            enabled: Boolean(this.parentDoc.getElementById('sv-role-ai-enabled')?.checked),
+            custom_api_enabled: Boolean(this.parentDoc.getElementById('sv-role-ai-custom-enabled')?.checked),
+            source: getValue('sv-role-ai-source') || 'openai',
+            apiurl: getValue('sv-role-ai-apiurl'),
+            key: getValue('sv-role-ai-key'),
+            model: getValue('sv-role-ai-model'),
+            temperature: Number.isFinite(temperature) ? temperature : SillyViewConfig.role_ai_defaults.temperature,
+            max_tokens: Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : SillyViewConfig.role_ai_defaults.max_tokens,
+        };
+    }
+
     renderSettingsTab(container) {
         const configState = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
         const autoAdvanceEnabled = Boolean(configState.auto_advance?.enabled);
         const roleAIEnabled = Boolean(configState.role_ai?.enabled);
         const roleDebugEnabled = Boolean(configState.role_ai?.debug_enabled);
         const bgAI = this._getBackgroundAISettings();
+        const roleAI = this._getRoleAISettings();
         const sourceOptions = ['openai', 'claude', 'openrouter', 'google', 'mistral', 'cohere']
             .map(source => `<option value="${source}" ${bgAI.source === source ? 'selected' : ''}>${source}</option>`)
+            .join('');
+        const roleSourceOptions = ['openai', 'claude', 'openrouter', 'google', 'mistral', 'cohere']
+            .map(source => `<option value="${source}" ${roleAI.source === source ? 'selected' : ''}>${source}</option>`)
             .join('');
 
         container.innerHTML = `
@@ -347,6 +376,38 @@ export class UIRenderer {
                             <span class="slider round"></span>
                         </span>
                     </label>
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-top:0.75rem;">
+                        <span style="font-size:0.875rem; color:var(--text-gray-300);">使用自定义模型</span>
+                        <span class="sv-toggle-switch">
+                            <input type="checkbox" id="sv-role-ai-custom-enabled" ${roleAI.custom_api_enabled ? 'checked' : ''}>
+                            <span class="slider round"></span>
+                        </span>
+                    </label>
+                    <div style="display:grid; gap:0.625rem; margin-top:0.75rem;">
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">API格式
+                            <select id="sv-role-ai-source" class="sv-select" style="width:100%; margin-top:0.25rem;">${roleSourceOptions}</select>
+                        </label>
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">API地址
+                            <input id="sv-role-ai-apiurl" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(roleAI.apiurl)}" placeholder="https://api.openai.com/v1">
+                        </label>
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">API Key
+                            <input id="sv-role-ai-key" type="password" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(roleAI.key)}">
+                        </label>
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">模型
+                            <input id="sv-role-ai-model" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(roleAI.model)}" placeholder="gpt-4o-mini / claude-3-5-sonnet-latest">
+                        </label>
+                        <button id="sv-fetch-role-ai-models-btn" class="sv-button" style="width:100%; background-color: var(--bg-gray-700);">获取模型</button>
+                        <div id="sv-role-ai-model-list" style="display:grid; gap:0.375rem; max-height:10rem; overflow:auto;"></div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.625rem;">
+                            <label style="font-size:0.75rem; color:var(--text-gray-400);">温度
+                                <input id="sv-role-ai-temperature" type="number" min="0" max="2" step="0.1" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(roleAI.temperature)}">
+                            </label>
+                            <label style="font-size:0.75rem; color:var(--text-gray-400);">最大Token
+                                <input id="sv-role-ai-max-tokens" type="number" min="64" step="1" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(roleAI.max_tokens)}">
+                            </label>
+                        </div>
+                        <button id="sv-save-role-ai-btn" class="sv-button sv-button-blue" style="width:100%;">保存角色模型设置</button>
+                    </div>
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-top:0.75rem;">
                         <span style="font-size:0.875rem; color:var(--text-gray-300);">自动记录截取调试</span>
                         <span class="sv-toggle-switch">

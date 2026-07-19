@@ -94,6 +94,13 @@ const DEFAULT_BACKGROUND_AI_SETTINGS = {
 
 const DEFAULT_ROLE_AI_SETTINGS = {
     enabled: false,
+    custom_api_enabled: false,
+    source: 'openai',
+    apiurl: '',
+    key: '',
+    model: '',
+    temperature: 0.7,
+    max_tokens: 2000,
     debug_enabled: false,
     max_observation_rounds: 4,
     timeout_ms: 60000,
@@ -115,6 +122,7 @@ export const SillyViewConfig = {
         role_profile_prefix: 'sv_role_profile',
         role_profile_import_marker: '[SillyView.ImportRoleProfiles()]',
         command_entry_key: 'sv_accounts_trade_commands',
+        role_output_rules_key: 'sv_role_output_rules',
         auto_event_log_key: 'sv_auto_event_log',
         recent_news_key: 'sv_accounts_recent_news',
     },

@@ -29,6 +29,19 @@ export class EventHandler {
         return settings;
     }
 
+    async saveRoleAISettings() {
+        const settings = this.ui.collectRoleAISettings();
+        await this.data.updateState(this.dependencies.config.world_book_keys.config, config => {
+            config.role_ai = {
+                ...this.dependencies.config.role_ai_defaults,
+                ...(config.role_ai || {}),
+                ...settings,
+            };
+            return config;
+        });
+        return settings;
+    }
+
     async setRoleAIEnabled(enabled) {
         await this.data.updateState(this.dependencies.config.world_book_keys.config, config => {
             config.role_ai = {
@@ -160,6 +173,28 @@ export class EventHandler {
             const button = this.parentDoc.createElement('button');
             button.type = 'button';
             button.className = 'sv-button sv-bg-ai-model-option';
+            button.dataset.model = model;
+            button.style.cssText = 'width:100%; text-align:left; justify-content:flex-start; background-color:var(--bg-gray-700);';
+            button.textContent = model;
+            listEl.appendChild(button);
+        });
+    }
+
+    _renderRoleModelList(models) {
+        const listEl = this.parentDoc.getElementById('sv-role-ai-model-list');
+        if (!listEl) return;
+        listEl.innerHTML = '';
+        if (!models || models.length === 0) {
+            const empty = this.parentDoc.createElement('div');
+            empty.style.cssText = 'font-size:0.75rem; color:var(--text-gray-400);';
+            empty.textContent = '未返回模型列表。';
+            listEl.appendChild(empty);
+            return;
+        }
+        models.forEach(model => {
+            const button = this.parentDoc.createElement('button');
+            button.type = 'button';
+            button.className = 'sv-button sv-role-ai-model-option';
             button.dataset.model = model;
             button.style.cssText = 'width:100%; text-align:left; justify-content:flex-start; background-color:var(--bg-gray-700);';
             button.textContent = model;
@@ -358,6 +393,46 @@ export class EventHandler {
         }
     }
 
+    async fetchRoleModels() {
+        const settings = this.ui.collectRoleAISettings();
+        const fetchBtn = this.parentDoc.getElementById('sv-fetch-role-ai-models-btn');
+        if (!settings.apiurl) {
+            this.dependencies.win.toastr.warning('请先填写角色模型 API 地址。');
+            return;
+        }
+        try {
+            if (fetchBtn) {
+                fetchBtn.disabled = true;
+                fetchBtn.textContent = '获取中...';
+            }
+            let models = [];
+            try {
+                models = await this.dependencies.th.getModelList({ apiurl: settings.apiurl, key: settings.key || undefined });
+            } catch (helperError) {
+                this.logger.warn('TavernHelper.getModelList 获取角色模型失败，尝试兼容 API:', helperError);
+            }
+            if (!models || models.length === 0) {
+                try {
+                    models = await this._fetchModelsDirectly(settings);
+                } catch (directError) {
+                    this.logger.warn('角色模型列表直连失败，尝试当前模型连通测试:', directError);
+                    models = await this._probeBackgroundModel(settings);
+                    this.dependencies.win.toastr.info('模型列表接口不可用，但当前填写的角色模型连接测试通过。');
+                }
+            }
+            this._renderRoleModelList(models);
+            this.dependencies.win.toastr.success(`已获取 ${models.length} 个角色模型。`);
+        } catch (error) {
+            this.logger.error('获取角色模型列表失败:', error);
+            this.dependencies.win.toastr.error(`获取角色模型失败: ${error.message || error}`);
+        } finally {
+            if (fetchBtn) {
+                fetchBtn.disabled = false;
+                fetchBtn.textContent = '获取模型';
+            }
+        }
+    }
+
     bindInitialEvents() {
         this.bindEntryButton();
         this.bindResizeHandler();
@@ -543,6 +618,9 @@ export class EventHandler {
                 const saveBgAiBtn = target.closest('#sv-save-bg-ai-btn');
                 const fetchBgAiModelsBtn = target.closest('#sv-fetch-bg-ai-models-btn');
                 const bgAiModelOption = target.closest('.sv-bg-ai-model-option');
+                const saveRoleAiBtn = target.closest('#sv-save-role-ai-btn');
+                const fetchRoleAiModelsBtn = target.closest('#sv-fetch-role-ai-models-btn');
+                const roleAiModelOption = target.closest('.sv-role-ai-model-option');
                 const positionRiskSaveBtn = target.closest('.sv-position-risk-save');
                 const amountPresetBtn = target.closest('.sv-trade-amount-preset');
                 const riskPresetBtn = target.closest('.sv-risk-preset');
@@ -575,13 +653,25 @@ export class EventHandler {
                     await this.saveBackgroundAISettings();
                     this.dependencies.win.toastr.success(`已选择模型: ${bgAiModelOption.dataset.model}`);
                     this.ui.renderAll();
+                } else if (saveRoleAiBtn) {
+                    await this.saveRoleAISettings();
+                    this.dependencies.win.toastr.success('角色模型设置已保存。');
+                    this.ui.renderAll();
+                } else if (fetchRoleAiModelsBtn) {
+                    await this.fetchRoleModels();
+                } else if (roleAiModelOption) {
+                    const modelInput = this.parentDoc.getElementById('sv-role-ai-model');
+                    if (modelInput) modelInput.value = roleAiModelOption.dataset.model || '';
+                    await this.saveRoleAISettings();
+                    this.dependencies.win.toastr.success(`已选择角色模型: ${roleAiModelOption.dataset.model}`);
+                    this.ui.renderAll();
                 } else if (positionRiskSaveBtn) {
                     const itemEl = positionRiskSaveBtn.closest('.sv-asset-item');
                     const assetCode = positionRiskSaveBtn.dataset.assetCode || itemEl?.dataset.assetCode;
                     if (assetCode && itemEl) await this.adjustPositionRiskControls(assetCode, itemEl);
                 } else if (resetBtn) {
                     this.modals.showConfirmation(
-                        `<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: var(--red-400);">确认重置？</h3><p>此操作将永久删除当前角色的所有SillyView市场、资产和账户数据并重新开始，但会保留后台模型设置。此操作无法撤销。</p>`,
+                        `<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: var(--red-400);">确认重置？</h3><p>此操作将永久删除当前角色的所有SillyView市场、资产和账户数据并重新开始，但会保留后台市场与角色模型设置。此操作无法撤销。</p>`,
                         () => this.data.resetAllData()
                     );
                 }
