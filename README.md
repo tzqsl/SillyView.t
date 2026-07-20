@@ -152,7 +152,7 @@ AI 从 `sv_accounts_trade_commands` 内的精简账户目录获取 account_id，
 - `sv_ai_context`、`sv_market_targets`：后台状态，默认关闭，不发送给角色 AI。
 - `sv_news_archive`：永久新闻归档，仅供前端新闻板块读取，默认关闭。
 - `sv_market_news_active`：仍在影响市场的限时新闻，默认关闭，由插件按需发送给后台市场 AI。
-- `SillyView_accounts`：多角色协同交易总控附加世界书。默认启用观察/交易说明和 `sv_role_output_rules` 角色 AI 输出规范；K 线摘要和 `sv_account_state_*` 由观察指令临时启用。`sv_accounts_index` 是账户读取和迁移所需的内部活动索引，始终关闭。
+- `SillyView_accounts`：多角色协同交易总控附加世界书。`sv_accounts_trade_commands` 和 `sv_role_output_rules` 默认关闭，由角色决策请求按需直接读取；K 线摘要和 `sv_account_state_*` 由观察指令临时启用。`sv_accounts_index` 是账户读取和迁移所需的内部活动索引，始终关闭。
 - `sv_auto_event_log`：保存在 `SillyView_accounts` 中的自动推进重要事件日志，记录强平、止盈止损、长线目标到期和整点结算时间；默认关闭，最多保留100条。
 
 ## 当前建议路线

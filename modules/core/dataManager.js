@@ -2176,12 +2176,12 @@ export class DataManager {
         entries.push(
             {
                 name: this.config.multi_account.command_entry_key,
-                enabled: true,
+                enabled: false,
                 content: this._buildManagedTradeCommandGuide(states),
             },
             {
                 name: this.config.multi_account.role_output_rules_key,
-                enabled: true,
+                enabled: false,
                 content: this._buildRoleOutputRules(),
             },
             {
@@ -2205,8 +2205,8 @@ export class DataManager {
         await this._ensureWorldbookExists(controlName, this._buildManagedControlEntries(states));
         await this._ensureAdditionalWorldbook(controlName);
         await this.th.updateWorldbookWith(controlName, entries => {
-            this._upsertWorldbookEntry(entries, this.config.multi_account.command_entry_key, this._buildManagedTradeCommandGuide(states), true);
-            this._upsertWorldbookEntry(entries, this.config.multi_account.role_output_rules_key, this._buildRoleOutputRules(), true);
+            this._upsertWorldbookEntry(entries, this.config.multi_account.command_entry_key, this._buildManagedTradeCommandGuide(states), false);
+            this._upsertWorldbookEntry(entries, this.config.multi_account.role_output_rules_key, this._buildRoleOutputRules(), false);
             const klineContext = this.getState(this.config.world_book_keys.kline_context) || this.config.default_game_state.kline_context;
             this._upsertWorldbookEntry(entries, this.config.world_book_keys.kline_context, JSON.stringify(klineContext, null, 2), false);
             const eventLogEntry = entries.find(entry => entry.name === this.config.multi_account.auto_event_log_key);

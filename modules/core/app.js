@@ -26,6 +26,7 @@ export class SillyViewApp {
         this.autoAdvanceElapsedMinutes = 0;
         this.pendingRoleTurnContext = null;
         this.lastRoleInjectionId = null;
+        this.lastRoleDispatchStatus = null;
 
         // Dependencies are set in init() by the main script.js entry point
         this.data = null;
@@ -442,19 +443,51 @@ export class SillyViewApp {
         if (!this.roleDecision?.isEnabled() && !this.roleDecision?.isDebugEnabled()) return;
         const context = this.roleDecision.captureTurnContext(messageId);
         if (!context) return;
-        if (this.roleDecision.isEnabled()) this.pendingRoleTurnContext = context;
+        if (this.roleDecision.isEnabled()) {
+            this.pendingRoleTurnContext = context;
+            this.lastRoleDispatchStatus = {
+                status: 'queued',
+                user_message_id: context.user_message_id,
+                detail: '已截取，等待生成前事件发送给角色模型。',
+                updated_at: Date.now(),
+            };
+        } else {
+            this.lastRoleDispatchStatus = {
+                status: 'capture_only',
+                user_message_id: context.user_message_id,
+                detail: '角色决策流程未启用；本轮只记录调试输入，不会调用模型。',
+                updated_at: Date.now(),
+            };
+        }
         this.events?.refreshRoleDebugWindow?.();
     }
 
     async prepareFrontendRoleInjection(type, option = {}, dryRun = false) {
         if (dryRun || !this.pendingRoleTurnContext || !this.roleDecision?.isEnabled()) return;
-        if (option?.automatic_trigger || !['normal', 'continue', undefined, null].includes(type)) return;
+        if (option?.automatic_trigger || !['normal', 'continue', undefined, null].includes(type)) {
+            this.lastRoleDispatchStatus = {
+                status: 'skipped',
+                user_message_id: this.pendingRoleTurnContext.user_message_id,
+                detail: option?.automatic_trigger ? '自动触发生成不运行角色决策。' : `生成类型 ${String(type)} 不运行角色决策。`,
+                updated_at: Date.now(),
+            };
+            this.pendingRoleTurnContext = null;
+            this.events?.refreshRoleDebugWindow?.();
+            return;
+        }
         const context = this.pendingRoleTurnContext;
         this.pendingRoleTurnContext = null;
+        this.lastRoleDispatchStatus = {
+            status: 'generating',
+            user_message_id: context.user_message_id,
+            detail: '正在调用后台角色模型。',
+            updated_at: Date.now(),
+        };
+        this.events?.refreshRoleDebugWindow?.();
 
         try {
             const result = await this.roleDecision.run(context);
-            if (!result?.frontend_injection) return;
+            if (!result?.frontend_injection) throw new Error('角色模型未返回可注入内容。');
             if (!this.th?.injectPrompts) throw new Error('TavernHelper.injectPrompts 不可用。');
             const injectionId = `sillyview-role-context-${context.user_message_id}-${Date.now()}`;
             this.th.injectPrompts([{
@@ -466,10 +499,25 @@ export class SillyViewApp {
                 should_scan: false,
             }], { once: true });
             this.lastRoleInjectionId = injectionId;
+            this.lastRoleDispatchStatus = {
+                status: 'injected',
+                user_message_id: context.user_message_id,
+                detail: '角色模型已完成，结果已注入本次前台生成。',
+                injection_id: injectionId,
+                updated_at: Date.now(),
+            };
             this.logger.success(`角色决策已注入本次前台生成: message ${context.user_message_id}`);
         } catch (error) {
+            this.lastRoleDispatchStatus = {
+                status: 'failed',
+                user_message_id: context.user_message_id,
+                detail: error?.message || String(error),
+                updated_at: Date.now(),
+            };
             this.logger.error('角色决策流程失败，前台生成将继续但不注入角色决策。', error);
             this.dependencies.win.toastr?.warning(`角色决策流程失败: ${error.message || error}`);
+        } finally {
+            this.events?.refreshRoleDebugWindow?.();
         }
     }
 
@@ -1148,6 +1196,7 @@ export class SillyViewApp {
         eventSource.on(eventTypes.CHAT_CHANGED, () => {
             this.previousStateSnapshot = null;
             this.pendingRoleTurnContext = null;
+            this.lastRoleDispatchStatus = null;
             this.stopAutoAdvanceTimer();
             if (this.ui.isPanelVisible) {
                 this.data.loadInitialState();

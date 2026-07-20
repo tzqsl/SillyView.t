@@ -73,9 +73,14 @@ export class EventHandler {
                 : '尚未截取用户消息。';
         }
         if (pipelineEl) {
-            pipelineEl.textContent = this.roleDecision?.lastRun
-                ? JSON.stringify(this.roleDecision.lastRun, null, 2)
-                : '尚未运行。';
+            pipelineEl.textContent = JSON.stringify({
+                dispatch: this.app?.lastRoleDispatchStatus || {
+                    status: 'idle',
+                    detail: '尚未截取或发送角色请求。',
+                },
+                running: Boolean(this.roleDecision?.running),
+                last_run: this.roleDecision?.lastRun || null,
+            }, null, 2);
         }
     }
 

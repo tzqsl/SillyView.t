@@ -370,7 +370,7 @@ export class UIRenderer {
                 <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--bg-gray-700); margin-bottom: 1rem;">
                     <h4 style="font-weight: 600; color: var(--cyan-400); margin-bottom: 0.75rem;">角色决策模型</h4>
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
-                        <span style="font-size:0.875rem; color:var(--text-gray-300);">发送前生成心理与行为</span>
+                        <span style="font-size:0.875rem; color:var(--text-gray-300);">启用角色决策（实际发送）</span>
                         <span class="sv-toggle-switch">
                             <input type="checkbox" id="sv-role-ai-enabled" ${roleAIEnabled ? 'checked' : ''}>
                             <span class="slider round"></span>
@@ -409,7 +409,7 @@ export class UIRenderer {
                         <button id="sv-save-role-ai-btn" class="sv-button sv-button-blue" style="width:100%;">保存角色模型设置</button>
                     </div>
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-top:0.75rem;">
-                        <span style="font-size:0.875rem; color:var(--text-gray-300);">自动记录截取调试</span>
+                        <span style="font-size:0.875rem; color:var(--text-gray-300);">仅记录输入调试（不发送）</span>
                         <span class="sv-toggle-switch">
                             <input type="checkbox" id="sv-role-debug-enabled" ${roleDebugEnabled ? 'checked' : ''}>
                             <span class="slider round"></span>
