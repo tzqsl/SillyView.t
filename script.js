@@ -21,6 +21,7 @@ import { TradeView } from './modules/ui/tradeView.js';
 import { AssetsView } from './modules/ui/assetsView.js';
 import { NewsView } from './modules/ui/newsView.js';
 import { LogView } from './modules/ui/logView.js';
+import { createSillyViewPublicAPI } from './modules/services/publicApi.js';
 
 /**
  * Loads an external script dynamically and returns a promise that resolves when it's loaded.
@@ -99,6 +100,16 @@ async function mainInitialize() {
         aiDirector.ui = ui;
 
         const events = new EventHandler({ ...baseDependencies, data, ui, modals, positionCalculator, roleDecision });
+
+        const publicApi = createSillyViewPublicAPI({
+            data,
+            roleDecision,
+            config: SillyViewConfig,
+        });
+        parentWin.SillyViewAPI = publicApi;
+        window.addEventListener('pagehide', () => {
+            if (parentWin.SillyViewAPI === publicApi) delete parentWin.SillyViewAPI;
+        }, { once: true });
         
         app.init({
             ...baseDependencies,

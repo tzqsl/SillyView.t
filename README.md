@@ -155,6 +155,16 @@ AI 从 `sv_accounts_trade_commands` 内的精简账户目录获取 account_id，
 - `SillyView_accounts`：多角色协同交易总控附加世界书。`sv_accounts_trade_commands` 和 `sv_role_output_rules` 默认关闭，由角色决策请求按需直接读取；K 线摘要和 `sv_account_state_*` 由观察指令临时启用。`sv_accounts_index` 是账户读取和迁移所需的内部活动索引，始终关闭。
 - `sv_auto_event_log`：保存在 `SillyView_accounts` 中的自动推进重要事件日志，记录强平、止盈止损、长线目标到期和整点结算时间；默认关闭，最多保留100条。
 
+### TavernHelper 手机界面接口
+
+插件初始化后会在酒馆主窗口暴露只读接口 `window.SillyViewAPI`，供 TavernHelper 前端界面复用：
+
+```js
+const snapshot = await window.parent.SillyViewAPI.getSnapshot();
+```
+
+`getSnapshot()` 返回市场摘要、最近一轮角色心声与剧情大纲、角色决策状态，以及按角色归属整理的账户余额、净值、盈亏、持仓和近期重大事件。接口不提供写入和交易方法，避免界面绕过插件的交易校验。
+
 ## 当前建议路线
 
 下一批最值得做的是挂单系统，包括限价单、条件单、移动止损和 OCO。它会触碰交易执行、K 线触发和 UI 状态，适合单独实现和测试。
