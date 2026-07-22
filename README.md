@@ -178,7 +178,7 @@ AI 从 `sv_accounts_trade_commands` 内的精简账户目录获取 account_id，
 const snapshot = await window.parent.SillyViewAPI.getSnapshot();
 ```
 
-`getSnapshot()` 返回主账户资产和挂单、市场摘要、最近一轮角色心声与剧情大纲、角色决策状态，以及按角色归属整理的账户余额、净值、盈亏、持仓和近期重大事件。`getOrders({ includeHistory: true })` 可单独读取有效挂单与订单历史。接口不提供写入和交易方法，避免界面绕过插件的交易校验。
+`getSnapshot()` 返回主账户资产和挂单、市场摘要、最近一轮角色心声与剧情大纲、角色决策状态，以及按角色归属整理的账户余额、净值、盈亏、持仓和近期重大事件。市场资产的 `change_pct` 根据当前价和24小时前的小时K收盘价实时计算；历史不足24小时时使用最早可用K线。`getOrders({ includeHistory: true })` 可单独读取有效挂单与订单历史。接口不提供写入和交易方法，避免界面绕过插件的交易校验。
 
 ## 当前建议路线
 

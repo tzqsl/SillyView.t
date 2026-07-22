@@ -9,6 +9,23 @@ function finiteNumber(value, fallback = 0) {
     return Number.isFinite(number) ? number : fallback;
 }
 
+function calculateAssetChangePct(asset = {}) {
+    const currentPrice = finiteNumber(asset.current_price);
+    if (currentPrice <= 0) return 0;
+
+    const hourly = (Array.isArray(asset.kline_hourly) ? asset.kline_hourly : [])
+        .filter(candle => finiteNumber(candle?.close) > 0)
+        .sort((a, b) => finiteNumber(a.time) - finiteNumber(b.time));
+    if (hourly.length === 0) return 0;
+
+    const latestTime = finiteNumber(hourly[hourly.length - 1]?.time);
+    const targetTime = latestTime - 24;
+    const baseline = [...hourly].reverse().find(candle => finiteNumber(candle.time) <= targetTime) || hourly[0];
+    const baselinePrice = finiteNumber(baseline?.close || baseline?.open);
+    if (baselinePrice <= 0) return 0;
+    return Number((((currentPrice / baselinePrice) - 1) * 100).toFixed(4));
+}
+
 function parseRoleOutput(rawText = '') {
     const text = String(rawText || '');
     const roleMap = new Map();
@@ -141,7 +158,7 @@ function buildNewsSnapshot(data, config, activeOnly = false) {
 
 export function createSillyViewPublicAPI({ data, roleDecision, config }) {
     const api = {
-        version: '2.1.0',
+        version: '2.1.1',
         readonly: true,
         async getSnapshot() {
             const states = await data.getManagedAccountStates();
@@ -154,7 +171,7 @@ export function createSillyViewPublicAPI({ data, roleDecision, config }) {
                     code: assetCode,
                     name: config.asset_definitions[assetCode]?.name || assetCode,
                     price: finiteNumber(asset.current_price),
-                    change_pct: finiteNumber(asset.change_pct),
+                    change_pct: calculateAssetChangePct(asset),
                 };
             });
             const snapshot = {
