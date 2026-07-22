@@ -36,6 +36,7 @@ export class UIRenderer {
         this.currentChartType = 'candlestick';
         this.activeSidebarTab = 'trade'; // Default tab
         this.tradeMode = 'spot';
+        this.orderMode = 'market';
         this.selectedLeverage = 1;
         
         this.liveAnimationPrice = null;
@@ -579,6 +580,7 @@ export class UIRenderer {
 
         const takeProfitEl = this.parentDoc.getElementById('sillyview-take-profit');
         const stopLossEl = this.parentDoc.getElementById('sillyview-stop-loss');
+        const trailingStopEl = this.parentDoc.getElementById('sillyview-trailing-stop');
         const readOptionalPrice = (el, label) => {
             const raw = el?.value?.trim();
             if (!raw) return null;
@@ -594,6 +596,12 @@ export class UIRenderer {
         if (takeProfit === undefined) return undefined;
         const stopLoss = readOptionalPrice(stopLossEl, '止损价');
         if (stopLoss === undefined) return undefined;
+        const trailingRaw = trailingStopEl?.value?.trim();
+        const trailingStopPct = trailingRaw ? parseFloat(trailingRaw) : null;
+        if (trailingRaw && (!Number.isFinite(trailingStopPct) || trailingStopPct <= 0 || trailingStopPct > 50)) {
+            this.win.toastr.error('移动止损比例必须在 0 到 50% 之间。');
+            return undefined;
+        }
 
         const isLong = action === 'spot_buy' || action.endsWith('long');
         if (takeProfit !== null) {
@@ -611,7 +619,7 @@ export class UIRenderer {
             }
         }
 
-        return { take_profit: takeProfit, stop_loss: stopLoss };
+        return { take_profit: takeProfit, stop_loss: stopLoss, trailing_stop_pct: trailingStopPct };
     }
 
     initiateTrade(type) {
@@ -656,8 +664,41 @@ export class UIRenderer {
         const currentPrice = this.isAnimating && this.liveAnimationPrice !== null ? this.liveAnimationPrice : (assetData.current_price ?? lastCandle.close);
         const riskControls = this._readRiskControls(action, currentPrice);
         if (riskControls === undefined) return;
-        
-        this.app.executeTrade(action, amount, this.currentAsset, currentPrice, leverage, riskControls, positionMode);
+
+        if (this.orderMode === 'market') {
+            this.app.executeTrade(action, amount, this.currentAsset, currentPrice, leverage, riskControls, positionMode);
+            return;
+        }
+
+        const common = {
+            assetCode: this.currentAsset,
+            intent: action,
+            amount,
+            leverage,
+            riskControls,
+            mode: positionMode,
+        };
+        if (this.orderMode === 'oco') {
+            const lowerPrice = parseFloat(this.parentDoc.getElementById('sillyview-oco-lower-price')?.value || '');
+            const upperPrice = parseFloat(this.parentDoc.getElementById('sillyview-oco-upper-price')?.value || '');
+            if (!Number.isFinite(lowerPrice) || !Number.isFinite(upperPrice) || lowerPrice >= currentPrice || upperPrice <= currentPrice) {
+                this.win.toastr.error('OCO 下轨必须低于当前价，上轨必须高于当前价。');
+                return;
+            }
+            const side = type === 'buy' ? 'buy' : 'sell';
+            this.app.placeOcoOrders([
+                { ...common, orderType: side === 'buy' ? 'limit' : 'stop', triggerPrice: lowerPrice },
+                { ...common, orderType: side === 'buy' ? 'stop' : 'limit', triggerPrice: upperPrice },
+            ]);
+            return;
+        }
+
+        const triggerPrice = parseFloat(this.parentDoc.getElementById('sillyview-order-trigger-price')?.value || '');
+        if (!Number.isFinite(triggerPrice) || triggerPrice <= 0) {
+            this.win.toastr.error('请输入有效的挂单触发价。');
+            return;
+        }
+        this.app.placePendingOrder({ ...common, orderType: this.orderMode, triggerPrice });
     }
 
     updateUIVisibility() {
@@ -765,6 +806,13 @@ export class UIRenderer {
 
     setTradeMode(mode) {
         this.tradeMode = mode;
+        this.renderAll();
+    }
+
+    setOrderMode(mode) {
+        const normalized = ['market', 'limit', 'stop', 'oco'].includes(mode) ? mode : 'market';
+        if (this.orderMode === normalized) return;
+        this.orderMode = normalized;
         this.renderAll();
     }
     

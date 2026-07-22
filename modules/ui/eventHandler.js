@@ -541,6 +541,12 @@ export class EventHandler {
         if (takeProfit === undefined) return;
         const stopLoss = this._readPositionRiskValue(itemEl.querySelector('[data-risk-field="stop_loss"]'), '止损价');
         if (stopLoss === undefined) return;
+        const trailingRaw = itemEl.querySelector('[data-risk-field="trailing_stop_pct"]')?.value?.trim() || '';
+        const trailingStopPct = trailingRaw ? Number(trailingRaw) : null;
+        if (trailingRaw && (!Number.isFinite(trailingStopPct) || trailingStopPct <= 0 || trailingStopPct > 50)) {
+            this.dependencies.win.toastr.error('移动止损比例必须在 0 到 50% 之间。');
+            return;
+        }
 
         const isLong = position.type === 'long';
         if (takeProfit !== null) {
@@ -561,6 +567,7 @@ export class EventHandler {
         const updated = await this.data.updatePositionRiskControls(assetCode, {
             take_profit: takeProfit,
             stop_loss: stopLoss,
+            trailing_stop_pct: trailingStopPct,
         }, mode);
         if (!updated) {
             this.dependencies.win.toastr.warning('当前仓位不存在，无法调整止盈止损。');
@@ -629,6 +636,8 @@ export class EventHandler {
                 const positionRiskSaveBtn = target.closest('.sv-position-risk-save');
                 const amountPresetBtn = target.closest('.sv-trade-amount-preset');
                 const riskPresetBtn = target.closest('.sv-risk-preset');
+                const orderModeBtn = target.closest('.sv-order-mode-button');
+                const cancelPendingOrderBtn = target.closest('.sv-cancel-pending-order');
 
                 if (tabButton) {
                     this.ui.switchSidebarTab(tabButton.dataset.tab);
@@ -642,6 +651,10 @@ export class EventHandler {
                     this.ui.initiateTrade('buy');
                 } else if (sellBtn) {
                     this.ui.initiateTrade('sell');
+                } else if (orderModeBtn) {
+                    this.ui.setOrderMode(orderModeBtn.dataset.orderMode);
+                } else if (cancelPendingOrderBtn) {
+                    await this.app.cancelPendingOrder(cancelPendingOrderBtn.dataset.orderId);
                 } else if (amountPresetBtn) {
                     this.ui.tradeView.applyAmountPreset(parseFloat(amountPresetBtn.dataset.percent || '0'));
                 } else if (riskPresetBtn) {

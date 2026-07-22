@@ -316,6 +316,77 @@
 .sv-button-red { background-color: var(--red-600); }
 .sv-button-red:hover:not(:disabled) { background-color: var(--red-700); }
 
+.sv-order-mode-selector {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.25rem;
+    padding: 0.25rem;
+    background: var(--bg-gray-900);
+    border: 1px solid var(--border-gray-700);
+    border-radius: 0.375rem;
+}
+.sv-order-mode-button {
+    border: 0;
+    border-radius: 0.25rem;
+    padding: 0.4rem 0.25rem;
+    background: transparent;
+    color: var(--text-gray-400);
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.sv-order-mode-button:hover { background: var(--bg-gray-700); color: white; }
+.sv-order-mode-button.active { background: var(--blue-600); color: white; }
+.sv-order-price-grid, .sv-trade-risk-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+.sv-trade-risk-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sv-order-price-grid label, .sv-order-trigger-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    color: var(--text-gray-300);
+    font-size: 0.75rem;
+}
+.sv-pending-orders {
+    border-top: 1px solid var(--border-gray-700);
+    padding-top: 0.75rem;
+}
+.sv-pending-orders-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+.sv-pending-orders-header h3 { margin: 0; font-size: 1rem; }
+.sv-pending-orders-header span {
+    min-width: 1.35rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 999px;
+    background: var(--bg-gray-700);
+    color: var(--text-gray-300);
+    text-align: center;
+    font-size: 0.75rem;
+}
+.sv-pending-order-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--border-gray-700);
+    font-size: 0.75rem;
+    color: var(--text-gray-400);
+}
+.sv-pending-order-item strong { display: block; font-size: 0.8125rem; }
+.sv-order-buy { color: var(--green-400); }
+.sv-order-sell { color: var(--red-400); }
+.sv-pending-order-price { display: flex; align-items: center; gap: 0.25rem; font-family: monospace; }
+.sv-pending-order-price .sv-icon-button { width: 1.5rem; height: 1.5rem; font-size: 0.875rem; }
+.sv-empty-state { color: var(--text-gray-500); font-size: 0.75rem; margin: 0; }
+
 /* --- 新：时间切换器 (分段控件) --- */
 #sv-timescale-selector {
     display: flex;
@@ -438,6 +509,7 @@
     padding-top: 0.75rem;
     border-top: 1px solid var(--border-gray-700);
 }
+.sv-position-risk-controls-expanded { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .sv-position-risk-controls label {
     display: flex;
     flex-direction: column;
@@ -469,6 +541,24 @@
 .sv-log-amount { font-family: monospace; font-weight: 600; }
 .sv-log-amount.positive { color: var(--green-400); }
 .sv-log-amount.negative { color: var(--red-400); }
+.sv-log-section-title { margin: 0.25rem 0 0; font-size: 0.875rem; color: white; }
+.sv-order-history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--border-gray-700);
+    font-size: 0.75rem;
+}
+.sv-order-history-item > div { display: flex; flex-direction: column; gap: 0.2rem; }
+.sv-order-history-item > div:last-child { align-items: flex-end; font-family: monospace; }
+.sv-order-history-item strong { color: var(--text-gray-300); }
+.sv-order-history-item span { color: var(--text-gray-500); }
+.sv-order-status { font-family: sans-serif; font-weight: 600; }
+.sv-order-history-item .sv-order-status-filled { color: var(--green-400); }
+.sv-order-history-item .sv-order-status-cancelled { color: var(--text-gray-400); }
+.sv-order-history-item .sv-order-status-rejected { color: var(--red-400); }
 
 
 /* --- 确认对话框样式 --- */
@@ -514,6 +604,8 @@
     font-family: monospace; font-size: 0.75rem;
 }
 @media (max-width: 760px) {
+    .sv-trade-risk-grid, .sv-position-risk-controls-expanded { grid-template-columns: 1fr 1fr; }
+    .sv-position-risk-controls-expanded .sv-position-risk-save { grid-column: 1 / -1; }
     .sv-debug-grid { grid-template-columns: 1fr; }
     .sv-debug-grid pre { height: 14rem; }
 }

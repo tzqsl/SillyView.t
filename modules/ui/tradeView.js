@@ -25,6 +25,9 @@ export class TradeView {
         const selectedLeverage = isLeverage && hasPosition
             ? Math.max(1, Math.round(position.leverage || 1))
             : Math.max(1, Number(this.ui.selectedLeverage || 1));
+        const orderMode = this.ui.orderMode || 'market';
+        const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.ui.currentAsset}`) || {};
+        const currentPrice = Number(assetData.current_price || 0);
 
         // Determine button actions based on current position
         let buyAction, sellAction;
@@ -43,15 +46,19 @@ export class TradeView {
         }
         
         // Dynamic button text
-        const buyBtnText = {
+        let buyBtnText = {
             'spot_buy': hasPosition ? '买入 (加仓现货)' : '买入现货',
             'open_long': '买入 (做多)', 'add_long': '买入 (加仓)', 'close_short': '买入 (平空)'
         }[buyAction];
         
-        const sellBtnText = {
+        let sellBtnText = {
             'spot_sell': '卖出现货',
             'open_short': '卖出 (做空)', 'add_short': '卖出 (加仓)', 'close_long': '卖出 (平多)'
         }[sellAction];
+        if (orderMode !== 'market') {
+            buyBtnText = orderMode === 'oco' ? '创建买入 OCO' : '挂买单';
+            sellBtnText = orderMode === 'oco' ? '创建卖出 OCO' : '挂卖单';
+        }
 
         const needsAmount = action => !action.startsWith('close') && action !== 'spot_sell';
         const showAmountInput = needsAmount(buyAction) || needsAmount(sellAction);
@@ -73,7 +80,7 @@ export class TradeView {
         const riskControls = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio)
             ?.assets?.[this.ui.currentAsset]?.[positionMode]?.risk_controls || {};
         const riskInputHtml = `
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+            <div class="sv-trade-risk-grid">
                 <div>
                     <label for="sillyview-take-profit" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">止盈价</label>
                     <input type="number" id="sillyview-take-profit" placeholder="可选" value="${riskControls.take_profit ?? ''}" class="sv-input" ${showAmountInput ? '' : 'disabled'}>
@@ -82,10 +89,58 @@ export class TradeView {
                     <label for="sillyview-stop-loss" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">止损价</label>
                     <input type="number" id="sillyview-stop-loss" placeholder="可选" value="${riskControls.stop_loss ?? ''}" class="sv-input" ${showAmountInput ? '' : 'disabled'}>
                 </div>
+                <div>
+                    <label for="sillyview-trailing-stop" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">移动止损 %</label>
+                    <input type="number" id="sillyview-trailing-stop" min="0" max="50" step="0.1" placeholder="可选" value="${riskControls.trailing_stop_pct ?? ''}" class="sv-input" ${showAmountInput ? '' : 'disabled'}>
+                </div>
             </div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.5rem;">
                 <button type="button" class="sv-button sv-risk-preset" data-risk-preset="long_safe" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">做多保护</button>
                 <button type="button" class="sv-button sv-risk-preset" data-risk-preset="short_safe" ${showAmountInput ? '' : 'disabled'} style="background-color:var(--bg-gray-700); padding:0.45rem;">做空保护</button>
+            </div>
+        `;
+        const orderTypeHtml = `
+            <div>
+                <label style="display:block; font-size:0.875rem; font-weight:500; color:var(--text-gray-300); margin-bottom:0.375rem;">下单方式</label>
+                <div class="sv-order-mode-selector" role="group" aria-label="下单方式">
+                    ${[
+                        ['market', '市价'],
+                        ['limit', '限价'],
+                        ['stop', '条件'],
+                        ['oco', 'OCO'],
+                    ].map(([value, label]) => `<button type="button" class="sv-order-mode-button ${orderMode === value ? 'active' : ''}" data-order-mode="${value}">${label}</button>`).join('')}
+                </div>
+            </div>
+        `;
+        const suggestedLower = currentPrice > 0 ? (currentPrice * 0.995).toFixed(4) : '';
+        const suggestedUpper = currentPrice > 0 ? (currentPrice * 1.005).toFixed(4) : '';
+        const triggerInputsHtml = orderMode === 'oco' ? `
+            <div class="sv-order-price-grid">
+                <label><span>下轨触发价</span><input type="number" step="any" id="sillyview-oco-lower-price" value="${suggestedLower}" class="sv-input"></label>
+                <label><span>上轨触发价</span><input type="number" step="any" id="sillyview-oco-upper-price" value="${suggestedUpper}" class="sv-input"></label>
+            </div>
+        ` : orderMode !== 'market' ? `
+            <label class="sv-order-trigger-field">
+                <span>${orderMode === 'limit' ? '限价' : '条件触发价'}</span>
+                <input type="number" step="any" id="sillyview-order-trigger-price" placeholder="当前 ${currentPrice ? currentPrice.toFixed(4) : '-'}" class="sv-input">
+            </label>
+        ` : '';
+        const pendingOrders = this.data.getPendingOrders(this.ui.currentAsset);
+        const pendingOrdersHtml = `
+            <div class="sv-pending-orders">
+                <div class="sv-pending-orders-header"><h3>当前挂单</h3><span>${pendingOrders.length}</span></div>
+                ${pendingOrders.length === 0 ? '<p class="sv-empty-state">当前品种没有挂单。</p>' : pendingOrders.map(order => `
+                    <div class="sv-pending-order-item">
+                        <div>
+                            <strong class="${order.side === 'buy' ? 'sv-order-buy' : 'sv-order-sell'}">${order.side === 'buy' ? '买入' : '卖出'} ${order.order_type === 'limit' ? '限价' : '条件'}</strong>
+                            <span>${order.mode === 'spot' ? '现货' : `${Number(order.leverage || 1)}x`} · ${Number(order.amount || 0).toFixed(2)}</span>
+                        </div>
+                        <div class="sv-pending-order-price">
+                            <span>@ ${Number(order.trigger_price).toFixed(4)}${order.oco_group_id ? ' · OCO' : ''}</span>
+                            <button type="button" class="sv-icon-button sv-cancel-pending-order" data-order-id="${order.id}" title="撤销挂单" aria-label="撤销挂单"><i class="fas fa-times"></i></button>
+                        </div>
+                    </div>
+                `).join('')}
             </div>
         `;
 
@@ -116,6 +171,8 @@ export class TradeView {
                      </div>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 1rem;">
+                    ${orderTypeHtml}
+                    ${triggerInputsHtml}
                     <div id="sillyview-leverage-controls" style="display: ${isLeverage ? 'block' : 'none'};">
                         <label for="sillyview-leverage-slider" style="display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-gray-300);">加仓杠杆: <span id="leverage-value-display">${selectedLeverage}</span>x</label>
                         <input type="range" id="sillyview-leverage-slider" min="1" max="${maxLeverage}" value="${selectedLeverage}" style="width: 100%;">
@@ -131,6 +188,7 @@ export class TradeView {
                     </div>
                 </div>
             </div>
+            ${pendingOrdersHtml}
             <div>
                  <h3 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 0.5rem;">本回合操作</h3>
                  <div id="sillyview-this-turn-actions" style="font-size: 0.75rem; color: var(--text-gray-400); display:flex; flex-direction:column; gap:0.25rem; min-height: 50px;"></div>

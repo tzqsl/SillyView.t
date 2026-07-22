@@ -163,10 +163,12 @@ export class AssetsView {
                 const riskControls = portfolio.assets?.[assetCode]?.[mode]?.risk_controls || {};
                 const takeProfit = Number(riskControls.take_profit);
                 const stopLoss = Number(riskControls.stop_loss);
+                const trailingStopPct = Number(riskControls.trailing_stop_pct);
                 const takeProfitValue = Number.isFinite(takeProfit) && takeProfit > 0 ? takeProfit.toFixed(4) : '';
                 const stopLossValue = Number.isFinite(stopLoss) && stopLoss > 0 ? stopLoss.toFixed(4) : '';
                 const takeProfitText = takeProfitValue || '未设置';
                 const stopLossText = stopLossValue || '未设置';
+                const trailingStopText = Number.isFinite(trailingStopPct) && trailingStopPct > 0 ? `${trailingStopPct.toFixed(2)}%` : '未设置';
 
                 assetsHtml += `
                     <div class="sv-asset-item" data-asset-code="${assetCode}" data-position-mode="${mode}">
@@ -181,8 +183,9 @@ export class AssetsView {
                             <span>当前市价:</span><span>${lastPrice.toFixed(4)}</span>
                             <span>止盈价:</span><span>${takeProfitText}</span>
                             <span>止损价:</span><span>${stopLossText}</span>
+                            <span>移动止损:</span><span>${trailingStopText}</span>
                         </div>
-                        <div class="sv-position-risk-controls">
+                        <div class="sv-position-risk-controls sv-position-risk-controls-expanded">
                             <label>
                                 <span>止盈</span>
                                 <input type="number" step="any" min="0" placeholder="未设置" value="${takeProfitValue}" class="sv-input" data-risk-field="take_profit">
@@ -190,6 +193,10 @@ export class AssetsView {
                             <label>
                                 <span>止损</span>
                                 <input type="number" step="any" min="0" placeholder="未设置" value="${stopLossValue}" class="sv-input" data-risk-field="stop_loss">
+                            </label>
+                            <label>
+                                <span>移动止损 %</span>
+                                <input type="number" step="0.1" min="0" max="50" placeholder="未设置" value="${Number.isFinite(trailingStopPct) && trailingStopPct > 0 ? trailingStopPct : ''}" class="sv-input" data-risk-field="trailing_stop_pct">
                             </label>
                             <button type="button" class="sv-button sv-button-blue sv-position-risk-save" data-asset-code="${assetCode}" data-position-mode="${mode}">保存调整</button>
                         </div>

@@ -236,6 +236,18 @@ export class SillyViewApp {
             const eventTime = options.timeframe === 'MINUTE'
                 ? { time_index: Math.floor(Number(candle.time || 0) / 60), minute_time_index: Number(candle.time || 0) }
                 : { time_index: Number(candle.time || 0), minute_time_index: Number(candle.time || 0) * 60 };
+            const pendingEvents = await this.data.triggerPendingOrdersForCandle(assetCode, candle);
+            const filledPendingModes = [...new Set(pendingEvents.filter(event => event.success).map(event => event.order.mode))];
+            if (pendingEvents.length > 0) {
+                triggered = true;
+                for (const event of pendingEvents) {
+                    const content = event.success
+                        ? `${event.order.order_type === 'limit' ? '限价单' : '条件单'}${event.order.side === 'buy' ? '买入' : '卖出'}成交，触发价 ${Number(event.price || 0).toFixed(5)}。`
+                        : `${event.order.order_type === 'limit' ? '限价单' : '条件单'}触发后被交易校验拒绝。`;
+                    await this._recordImportantEvent(event.success ? 'pending_order_filled' : 'pending_order_rejected', assetCode, content, eventTime);
+                }
+            }
+
             const accountResult = await this.data.processManagedAccountRiskForCandle(assetCode, candle);
             if (accountResult?.triggered) {
                 triggered = true;
@@ -246,12 +258,19 @@ export class SillyViewApp {
                 }
             }
 
-            const result = await this.data.triggerRiskControlsForCandle(assetCode, candle);
+            const result = await this.data.triggerRiskControlsForCandle(assetCode, candle, { skipModes: filledPendingModes });
             if (result?.triggered) {
                 triggered = true;
                 for (const event of result.events || [result]) {
                     const modeLabel = event.mode === 'spot' ? '现货' : '杠杆';
-                    await this._recordImportantEvent(event.triggerType, assetCode, `${modeLabel}${event.triggerType === 'take_profit' ? '止盈' : event.triggerType === 'stop_loss' ? '止损' : '强制平仓'}触发，成交价 ${Number(event.price || 0).toFixed(5)}。`, eventTime);
+                    const triggerLabel = event.triggerType === 'take_profit'
+                        ? '止盈'
+                        : event.triggerType === 'trailing_stop'
+                            ? '移动止损'
+                            : event.triggerType === 'stop_loss'
+                                ? '止损'
+                                : '强制平仓';
+                    await this._recordImportantEvent(event.triggerType, assetCode, `${modeLabel}${triggerLabel}触发，成交价 ${Number(event.price || 0).toFixed(5)}。`, eventTime);
                 }
                 if (result.triggerType === 'liquidation') break;
                 const triggerCandle = result.triggerCandle;
@@ -259,7 +278,7 @@ export class SillyViewApp {
                     ? `（K线 H ${triggerCandle.high.toFixed(5)} / L ${triggerCandle.low.toFixed(5)}）`
                     : '';
                 this.dependencies.win.toastr.info(
-                    `${assetCode} ${result.triggerType === 'take_profit' ? '止盈' : '止损'}触发，成交价 ${result.price.toFixed(5)} ${rangeText}。`
+                    `${assetCode} ${result.triggerType === 'take_profit' ? '止盈' : result.triggerType === 'trailing_stop' ? '移动止损' : '止损'}触发，成交价 ${result.price.toFixed(5)} ${rangeText}。`
                 );
                 break;
             }
@@ -1058,6 +1077,42 @@ export class SillyViewApp {
             await this.data.saveAllEntries();
             this.ui.renderAll();
         }
+    }
+
+    async placePendingOrder(spec) {
+        const result = await this.data.placePendingOrder(spec);
+        if (!result.ok) {
+            this.dependencies.win.toastr.error(result.error || '挂单创建失败。');
+            return false;
+        }
+        await this.data.updateAIContext();
+        await this.data.saveAllEntries();
+        this.dependencies.win.toastr.success('挂单已创建。');
+        this.ui.renderAll();
+        return true;
+    }
+
+    async placeOcoOrders(specs) {
+        const result = await this.data.placeOcoOrders(specs);
+        if (!result.ok) {
+            this.dependencies.win.toastr.error(result.error || 'OCO 创建失败。');
+            return false;
+        }
+        await this.data.updateAIContext();
+        await this.data.saveAllEntries();
+        this.dependencies.win.toastr.success('OCO 双向挂单已创建。');
+        this.ui.renderAll();
+        return true;
+    }
+
+    async cancelPendingOrder(orderId) {
+        const cancelled = await this.data.cancelPendingOrder(orderId);
+        if (!cancelled) return false;
+        await this.data.updateAIContext();
+        await this.data.saveAllEntries();
+        this.dependencies.win.toastr.info(`${cancelled.asset_code} 挂单已撤销。`);
+        this.ui.renderAll();
+        return true;
     }
 
     async advanceMinutesForUserMessage(msgId) {

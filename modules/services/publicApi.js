@@ -52,6 +52,24 @@ function buildPositionSnapshot(data, assetCode, mode, position) {
     };
 }
 
+function buildOrderSnapshot(order) {
+    return {
+        id: String(order?.id || ''),
+        asset_code: String(order?.asset_code || ''),
+        order_type: String(order?.order_type || ''),
+        side: String(order?.side || ''),
+        intent: String(order?.intent || ''),
+        mode: String(order?.mode || ''),
+        amount: finiteNumber(order?.amount),
+        leverage: finiteNumber(order?.leverage, 1),
+        trigger_price: finiteNumber(order?.trigger_price),
+        oco_group_id: order?.oco_group_id ? String(order.oco_group_id) : null,
+        status: String(order?.status || 'pending'),
+        created_at: finiteNumber(order?.created_at),
+        completed_at: finiteNumber(order?.completed_at),
+    };
+}
+
 function buildAccountSnapshot(data, state) {
     const portfolio = state.portfolio || {};
     const positions = [];
@@ -93,9 +111,37 @@ function buildAccountSnapshot(data, state) {
     };
 }
 
+function buildPortfolioSnapshot(data, config) {
+    const portfolio = data.getState(config.world_book_keys.player_portfolio) || {};
+    const totalAssets = finiteNumber(data._calculatePortfolioMarkedValue?.(portfolio));
+    const startingCash = finiteNumber(portfolio.starting_cash);
+    return {
+        cash: finiteNumber(portfolio.cash),
+        debt: finiteNumber(portfolio.debt),
+        starting_cash: startingCash,
+        total_assets: totalAssets,
+        total_pnl: totalAssets - startingCash,
+        pending_orders: (portfolio.pending_orders || []).map(buildOrderSnapshot),
+        recent_order_history: (portfolio.order_history || []).slice(0, 20).map(buildOrderSnapshot),
+        updated_at: portfolio.updated_at || 0,
+    };
+}
+
+function buildNewsSnapshot(data, config, activeOnly = false) {
+    const items = activeOnly ? data.getActiveMarketNews() : data.getArchivedNews();
+    return items.map(item => ({
+        id: String(item.id || ''),
+        headline: String(item.headline || ''),
+        asset_code: String(item.asset_code || 'GLOBAL'),
+        created_at: finiteNumber(item.created_at),
+        expires_at: finiteNumber(item.expires_at),
+        duration_hours: finiteNumber(item.duration_hours),
+    }));
+}
+
 export function createSillyViewPublicAPI({ data, roleDecision, config }) {
     const api = {
-        version: '1.0.0',
+        version: '2.1.0',
         readonly: true,
         async getSnapshot() {
             const states = await data.getManagedAccountStates();
@@ -111,9 +157,10 @@ export function createSillyViewPublicAPI({ data, roleDecision, config }) {
                     change_pct: finiteNumber(asset.change_pct),
                 };
             });
-            return {
+            const snapshot = {
                 api_version: api.version,
                 generated_at: Date.now(),
+                portfolio: buildPortfolioSnapshot(data, config),
                 market: {
                     datetime: market.current_datetime || '',
                     period: market.current_period || '',
@@ -130,6 +177,35 @@ export function createSillyViewPublicAPI({ data, roleDecision, config }) {
                     status: roleRun?.status || 'idle',
                 },
                 accounts: states.map(state => buildAccountSnapshot(data, state)),
+                news: buildNewsSnapshot(data, config),
+            };
+            return snapshot;
+        },
+        async getPortfolio() {
+            return buildPortfolioSnapshot(data, config);
+        },
+        async getMarket() {
+            const snapshot = await api.getSnapshot();
+            return snapshot.market;
+        },
+        async getRoles() {
+            const snapshot = await api.getSnapshot();
+            return snapshot.roles;
+        },
+        async getAccounts() {
+            const snapshot = await api.getSnapshot();
+            return snapshot.accounts;
+        },
+        async getNews(options = {}) {
+            return buildNewsSnapshot(data, config, options.activeOnly === true);
+        },
+        async getOrders(options = {}) {
+            const portfolio = data.getState(config.world_book_keys.player_portfolio) || {};
+            const pending = (portfolio.pending_orders || []).map(buildOrderSnapshot);
+            if (options.includeHistory !== true) return { pending };
+            return {
+                pending,
+                history: (portfolio.order_history || []).slice(0, 50).map(buildOrderSnapshot),
             };
         },
     };

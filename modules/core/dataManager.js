@@ -124,6 +124,20 @@ export class DataManager {
         return changed;
     }
 
+    _ensurePendingOrderShape(portfolio) {
+        if (!portfolio || typeof portfolio !== 'object') return false;
+        let changed = false;
+        if (!Array.isArray(portfolio.pending_orders)) {
+            portfolio.pending_orders = [];
+            changed = true;
+        }
+        if (!Array.isArray(portfolio.order_history)) {
+            portfolio.order_history = [];
+            changed = true;
+        }
+        return changed;
+    }
+
     _settleUnsupportedPortfolioAssets(portfolio, supportedAssets, legacyPrices, timeIndex = 0) {
         if (!portfolio?.assets || typeof portfolio.assets !== 'object') return false;
 
@@ -225,7 +239,13 @@ export class DataManager {
         const timeIndex = Number(market.current_time_index || 0);
         const portfolio = this._stateCache.get(keys.player_portfolio) || {};
         const bucketsMigrated = this._migratePortfolioPositionBuckets(portfolio);
-        const portfolioChanged = this._settleUnsupportedPortfolioAssets(portfolio, supportedAssets, legacyPrices, timeIndex) || bucketsMigrated;
+        let ordersMigrated = this._ensurePendingOrderShape(portfolio);
+        const originalPendingCount = portfolio.pending_orders.length;
+        portfolio.pending_orders = portfolio.pending_orders.filter(order => supportedAssets.has(order?.asset_code));
+        if (portfolio.pending_orders.length !== originalPendingCount) ordersMigrated = true;
+        const portfolioChanged = this._settleUnsupportedPortfolioAssets(portfolio, supportedAssets, legacyPrices, timeIndex)
+            || bucketsMigrated
+            || ordersMigrated;
         if (portfolioChanged) this._stateCache.set(keys.player_portfolio, portfolio);
 
         const configState = {
@@ -2602,6 +2622,10 @@ export class DataManager {
         return {
             take_profit: normalizePrice(riskControls.take_profit),
             stop_loss: normalizePrice(riskControls.stop_loss),
+            trailing_stop_pct: (() => {
+                const number = Number(riskControls.trailing_stop_pct);
+                return Number.isFinite(number) && number > 0 && number <= 50 ? number : null;
+            })(),
         };
     }
 
@@ -2611,6 +2635,7 @@ export class DataManager {
         if (!Number.isFinite(referencePrice) || referencePrice <= 0) return false;
         const takeProfit = riskControls.take_profit;
         const stopLoss = riskControls.stop_loss;
+        const trailingStopPct = riskControls.trailing_stop_pct;
 
         if (position.type === 'long') {
             if (takeProfit !== null && takeProfit <= referencePrice) return false;
@@ -2619,14 +2644,16 @@ export class DataManager {
             if (takeProfit !== null && takeProfit >= referencePrice) return false;
             if (stopLoss !== null && stopLoss <= referencePrice) return false;
         }
+        if (trailingStopPct !== null && (!Number.isFinite(trailingStopPct) || trailingStopPct <= 0 || trailingStopPct > 50)) return false;
         return true;
     }
 
-    _applyRiskControls(portfolio, assetCode, riskControls, mode = 'leveraged') {
+    _applyRiskControls(portfolio, assetCode, riskControls, mode = 'leveraged', referencePrice = null) {
         const normalized = this._normalizeRiskControls(riskControls);
-        if (!normalized || (normalized.take_profit === null && normalized.stop_loss === null)) return '';
+        if (!normalized || (normalized.take_profit === null && normalized.stop_loss === null && normalized.trailing_stop_pct === null)) return '';
         const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
-        const marketPrice = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`)?.current_price;
+        const marketPrice = Number(referencePrice)
+            || this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`)?.current_price;
         if (!this._areRiskControlsValidForPosition(position, normalized, marketPrice)) {
             this.logger.warn(`已忽略方向错误的止盈止损: ${assetCode}`);
             return '';
@@ -2635,14 +2662,29 @@ export class DataManager {
         const asset = this._ensurePortfolioAssetBuckets(portfolio, assetCode);
         const bucket = asset[mode];
         const current = bucket.risk_controls || {};
+        const existingAnchor = Number(current.trailing_anchor);
+        let trailingAnchor = current.trailing_anchor ?? null;
+        if (normalized.trailing_stop_pct !== null) {
+            const nextAnchor = Number(marketPrice || position.avgEntryPrice);
+            if (normalized.trailing_stop_pct === current.trailing_stop_pct && Number.isFinite(existingAnchor)) {
+                trailingAnchor = position.type === 'short'
+                    ? Math.min(existingAnchor, nextAnchor)
+                    : Math.max(existingAnchor, nextAnchor);
+            } else {
+                trailingAnchor = nextAnchor;
+            }
+        }
         bucket.risk_controls = {
             take_profit: normalized.take_profit ?? current.take_profit ?? null,
             stop_loss: normalized.stop_loss ?? current.stop_loss ?? null,
+            trailing_stop_pct: normalized.trailing_stop_pct ?? current.trailing_stop_pct ?? null,
+            trailing_anchor: trailingAnchor,
         };
 
         const labels = [];
         if (normalized.take_profit !== null) labels.push(`止盈 ${normalized.take_profit.toFixed(4)}`);
         if (normalized.stop_loss !== null) labels.push(`止损 ${normalized.stop_loss.toFixed(4)}`);
+        if (normalized.trailing_stop_pct !== null) labels.push(`移动止损 ${normalized.trailing_stop_pct.toFixed(2)}%`);
         return labels.length > 0 ? ` (${labels.join(' / ')})` : '';
     }
 
@@ -2661,15 +2703,24 @@ export class DataManager {
 
             const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[mode];
 
-            if (normalized.take_profit === null && normalized.stop_loss === null) {
+            if (normalized.take_profit === null && normalized.stop_loss === null && normalized.trailing_stop_pct === null) {
                 delete bucket.risk_controls;
             } else {
-                bucket.risk_controls = normalized;
+                const current = bucket.risk_controls || {};
+                bucket.risk_controls = {
+                    ...normalized,
+                    trailing_anchor: normalized.trailing_stop_pct === null
+                        ? null
+                        : (normalized.trailing_stop_pct === current.trailing_stop_pct
+                            ? current.trailing_anchor
+                            : Number(marketPrice || position.avgEntryPrice)),
+                };
             }
 
             const labels = [];
             labels.push(normalized.take_profit === null ? '止盈 未设置' : `止盈 ${normalized.take_profit.toFixed(4)}`);
             labels.push(normalized.stop_loss === null ? '止损 未设置' : `止损 ${normalized.stop_loss.toFixed(4)}`);
+            labels.push(normalized.trailing_stop_pct === null ? '移动止损 未设置' : `移动止损 ${normalized.trailing_stop_pct.toFixed(2)}%`);
             if (!portfolio.actions_this_turn) portfolio.actions_this_turn = [];
             portfolio.actions_this_turn.push({
                 id: Date.now(),
@@ -2688,7 +2739,239 @@ export class DataManager {
         return updated ? normalized : null;
     }
 
-    async executeAndRecordTrade(intent, amount, assetCode, executionPrice = null, leverage = 1, riskControls = null, mode = 'leveraged') {
+    _getPendingOrderSide(intent) {
+        if (['spot_buy', 'open_long', 'add_long', 'close_short'].includes(intent)) return 'buy';
+        if (['spot_sell', 'open_short', 'add_short', 'close_long'].includes(intent)) return 'sell';
+        return null;
+    }
+
+    _getPendingOrderCondition(orderType, side) {
+        if (orderType === 'limit') return side === 'buy' ? 'below' : 'above';
+        if (orderType === 'stop') return side === 'buy' ? 'above' : 'below';
+        return null;
+    }
+
+    _createPendingOrderDraft(spec, portfolio) {
+        const assetCode = String(spec?.assetCode || '');
+        const intent = String(spec?.intent || '');
+        const orderType = spec?.orderType === 'stop' ? 'stop' : (spec?.orderType === 'limit' ? 'limit' : '');
+        const mode = spec?.mode === 'spot' ? 'spot' : 'leveraged';
+        const side = this._getPendingOrderSide(intent);
+        const triggerPrice = Number(spec?.triggerPrice);
+        const amount = Number(spec?.amount);
+        const leverage = mode === 'spot' ? 1 : Math.max(1, Number(spec?.leverage) || 1);
+        const currentPrice = Number(this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`)?.current_price || 0);
+        const condition = this._getPendingOrderCondition(orderType, side);
+
+        if (!this.config.asset_definitions[assetCode]) return { error: '不支持该交易品种。' };
+        if (!side || !condition) return { error: '挂单方向或类型无效。' };
+        if (!Number.isFinite(triggerPrice) || triggerPrice <= 0 || !currentPrice) return { error: '请输入有效的触发价。' };
+        if (condition === 'below' ? triggerPrice >= currentPrice : triggerPrice <= currentPrice) {
+            const direction = condition === 'below' ? '低于' : '高于';
+            return { error: `${orderType === 'limit' ? '限价单' : '条件单'}触发价必须${direction}当前价。` };
+        }
+
+        const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
+        const needsAmount = !intent.startsWith('close') && intent !== 'spot_sell';
+        if (needsAmount && (!Number.isFinite(amount) || amount <= 0)) return { error: '请输入有效的交易金额。' };
+        if ((intent === 'close_long' && position.type !== 'long')
+            || (intent === 'close_short' && position.type !== 'short')
+            || (intent === 'spot_sell' && position.type !== 'long')) {
+            return { error: '当前持仓与挂单平仓方向不匹配。' };
+        }
+
+        const riskControls = this._normalizeRiskControls(spec?.riskControls);
+        const targetType = side === 'buy' ? 'long' : 'short';
+        if (riskControls && !this._areRiskControlsValidForPosition({ type: targetType }, riskControls, triggerPrice)) {
+            return { error: '止盈止损方向必须以挂单触发价为基准。' };
+        }
+
+        const market = this.getState(this.config.world_book_keys.global_market) || {};
+        return {
+            order: {
+                id: `ord_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                asset_code: assetCode,
+                order_type: orderType,
+                side,
+                intent,
+                mode,
+                amount: needsAmount ? amount : Number(position.totalAmount || 0),
+                leverage,
+                trigger_price: triggerPrice,
+                risk_controls: riskControls,
+                oco_group_id: spec?.ocoGroupId || null,
+                status: 'pending',
+                created_at: Date.now(),
+                created_time_index: Number(market.current_time_index || 0),
+                created_minute_index: Number(market.minute_time_index || 0),
+            },
+        };
+    }
+
+    getPendingOrders(assetCode = null) {
+        const portfolio = this.getState(this.config.world_book_keys.player_portfolio) || {};
+        const orders = Array.isArray(portfolio.pending_orders) ? portfolio.pending_orders : [];
+        return assetCode ? orders.filter(order => order.asset_code === assetCode) : orders;
+    }
+
+    async placePendingOrder(spec) {
+        const portfolioKey = this.config.world_book_keys.player_portfolio;
+        const portfolio = this.getState(portfolioKey) || {};
+        this._ensurePendingOrderShape(portfolio);
+        if (portfolio.pending_orders.length >= 50) return { ok: false, error: '挂单数量已达到 50 张上限。' };
+        const draft = this._createPendingOrderDraft(spec, portfolio);
+        if (!draft.order) return { ok: false, error: draft.error };
+
+        await this.updateState(portfolioKey, state => {
+            this._ensurePendingOrderShape(state);
+            state.pending_orders.push(draft.order);
+            state.actions_this_turn = state.actions_this_turn || [];
+            state.actions_this_turn.push({
+                id: Date.now(),
+                text: `挂出 ${draft.order.asset_code} ${draft.order.order_type === 'limit' ? '限价' : '条件'}${draft.order.side === 'buy' ? '买单' : '卖单'}`,
+                executedAt: draft.order.trigger_price,
+                intent: 'place_pending_order',
+                assetCode: draft.order.asset_code,
+                orderId: draft.order.id,
+            });
+            return state;
+        });
+        return { ok: true, orders: [draft.order] };
+    }
+
+    async placeOcoOrders(specs) {
+        const portfolioKey = this.config.world_book_keys.player_portfolio;
+        const portfolio = this.getState(portfolioKey) || {};
+        this._ensurePendingOrderShape(portfolio);
+        if (!Array.isArray(specs) || specs.length !== 2) return { ok: false, error: 'OCO 必须包含两张挂单。' };
+        if (portfolio.pending_orders.length > 48) return { ok: false, error: '挂单数量不足以创建 OCO。' };
+        const groupId = `oco_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const drafts = specs.map(spec => this._createPendingOrderDraft({ ...spec, ocoGroupId: groupId }, portfolio));
+        const invalid = drafts.find(draft => !draft.order);
+        if (invalid) return { ok: false, error: invalid.error };
+
+        const orders = drafts.map(draft => draft.order);
+        await this.updateState(portfolioKey, state => {
+            this._ensurePendingOrderShape(state);
+            state.pending_orders.push(...orders);
+            state.actions_this_turn = state.actions_this_turn || [];
+            state.actions_this_turn.push({
+                id: Date.now(),
+                text: `挂出 ${orders[0].asset_code} OCO ${orders[0].side === 'buy' ? '买单' : '卖单'}`,
+                executedAt: null,
+                intent: 'place_oco_order',
+                assetCode: orders[0].asset_code,
+                orderIds: orders.map(order => order.id),
+            });
+            return state;
+        });
+        return { ok: true, orders };
+    }
+
+    _archivePendingOrder(portfolio, order, status, details = {}) {
+        this._ensurePendingOrderShape(portfolio);
+        portfolio.order_history.unshift({
+            ...order,
+            ...details,
+            status,
+            completed_at: Date.now(),
+        });
+        if (portfolio.order_history.length > 50) portfolio.order_history.length = 50;
+    }
+
+    async cancelPendingOrder(orderId, reason = 'user_cancelled') {
+        const portfolioKey = this.config.world_book_keys.player_portfolio;
+        let cancelled = null;
+        await this.updateState(portfolioKey, portfolio => {
+            this._ensurePendingOrderShape(portfolio);
+            const index = portfolio.pending_orders.findIndex(order => order.id === orderId);
+            if (index < 0) return portfolio;
+            cancelled = portfolio.pending_orders.splice(index, 1)[0];
+            this._archivePendingOrder(portfolio, cancelled, 'cancelled', { cancel_reason: reason });
+            return portfolio;
+        });
+        return cancelled;
+    }
+
+    _getPendingOrderExecutionPrice(order, candle) {
+        const open = Number(candle?.open);
+        const trigger = Number(order.trigger_price);
+        const condition = this._getPendingOrderCondition(order.order_type, order.side);
+        if (Number.isFinite(open) && (condition === 'above' ? open >= trigger : open <= trigger)) return open;
+        return trigger;
+    }
+
+    async triggerPendingOrdersForCandle(assetCode, candle) {
+        if (!candle) return [];
+        const events = [];
+        for (let attempt = 0; attempt < 50; attempt++) {
+            const orders = this.getPendingOrders(assetCode);
+            const candidates = orders.map(order => ({
+                ...order,
+                type: 'pending_order',
+                price: Number(order.trigger_price),
+                condition: this._getPendingOrderCondition(order.order_type, order.side),
+            })).filter(candidate => candidate.condition);
+            const triggered = this._selectFirstCandleTrigger(candle, candidates);
+            if (!triggered) break;
+
+            const order = orders.find(item => item.id === triggered.id);
+            if (!order) break;
+            await this.updateState(this.config.world_book_keys.player_portfolio, portfolio => {
+                this._ensurePendingOrderShape(portfolio);
+                portfolio.pending_orders = portfolio.pending_orders.filter(item => item.id !== order.id);
+                return portfolio;
+            });
+
+            const rawExecutionPrice = this._getPendingOrderExecutionPrice(order, candle);
+            const success = await this.executeAndRecordTrade(
+                order.intent,
+                order.amount,
+                order.asset_code,
+                rawExecutionPrice,
+                order.leverage,
+                order.risk_controls,
+                order.mode,
+                order.order_type === 'limit' ? { limitPrice: order.trigger_price } : null,
+            );
+            const executedPortfolio = this.getState(this.config.world_book_keys.player_portfolio) || {};
+            const executedAction = success
+                ? [...(executedPortfolio.actions_this_turn || [])].reverse().find(action =>
+                    action.assetCode === order.asset_code && action.intent === order.intent && Number.isFinite(action.executedAt)
+                )
+                : null;
+            const actualExecutionPrice = Number(executedAction?.executedAt || rawExecutionPrice);
+
+            const cancelledSiblings = [];
+            await this.updateState(this.config.world_book_keys.player_portfolio, portfolio => {
+                this._ensurePendingOrderShape(portfolio);
+                this._archivePendingOrder(portfolio, order, success ? 'filled' : 'rejected', {
+                    filled_at: success ? Date.now() : null,
+                    filled_price: success ? actualExecutionPrice : null,
+                    reject_reason: success ? null : 'execution_failed',
+                });
+                if (success && order.oco_group_id) {
+                    portfolio.pending_orders = portfolio.pending_orders.filter(item => {
+                        if (item.oco_group_id !== order.oco_group_id) return true;
+                        cancelledSiblings.push(item);
+                        this._archivePendingOrder(portfolio, item, 'cancelled', { cancel_reason: 'oco_peer_filled' });
+                        return false;
+                    });
+                }
+                return portfolio;
+            });
+
+            events.push({ order, success, price: actualExecutionPrice, cancelledSiblings });
+            if (success) {
+                this.dependencies.win.toastr.success(`${assetCode} 挂单已触发成交 @ ${actualExecutionPrice.toFixed(5)}。`, '挂单成交');
+            } else {
+                this.dependencies.win.toastr.warning(`${assetCode} 挂单已触发，但交易校验未通过。`, '挂单失败');
+            }
+        }
+        return events;
+    }
+
+    async executeAndRecordTrade(intent, amount, assetCode, executionPrice = null, leverage = 1, riskControls = null, mode = 'leveraged', executionOptions = null) {
         const portfolioKey = this.config.world_book_keys.player_portfolio;
         const assetDataKey = `${this.config.world_book_keys.asset_prefix}${assetCode}`;
         let portfolio = this._stateCache.get(portfolioKey);
@@ -2706,7 +2989,13 @@ export class DataManager {
         const lastMinuteCandle = assetData.kline_minute.slice(-1)[0];
         const lastCandle = lastMinuteCandle || assetData.kline_hourly.slice(-1)[0];
         const rawPrice = executionPrice !== null ? executionPrice : (assetData.current_price ?? lastCandle.close);
-        const price = this._calculateExecutionPrice(assetCode, intent, rawPrice);
+        let price = this._calculateExecutionPrice(assetCode, intent, rawPrice);
+        const limitPrice = Number(executionOptions?.limitPrice);
+        if (Number.isFinite(limitPrice) && limitPrice > 0) {
+            price = this._getPendingOrderSide(intent) === 'buy'
+                ? Math.min(price, limitPrice)
+                : Math.max(price, limitPrice);
+        }
         const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[normalizedMode];
         const position = this.positionCalculator.calculate(assetCode, portfolio, normalizedMode);
         const tradeConfig = this._getTradeConfig(assetCode);
@@ -2726,7 +3015,7 @@ export class DataManager {
                 portfolio.cash -= (amount + fee);
                 bucket.trades.push({ time: lastCandle.time, price, amount, type: 'long', leverage: 1 });
                 actionText = position.type ? `加仓现货 ${assetCode}` : `买入现货 ${assetCode}`;
-                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'spot');
+                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'spot', price);
                 this._recordTradeTransaction(portfolio, actionText, -amount);
                 this._recordTradeTransaction(portfolio, '交易手续费', -fee);
                 break;
@@ -2752,7 +3041,7 @@ export class DataManager {
                 
                 portfolio.cash -= (amount + fee);
                 bucket.trades.push({ time: lastCandle.time, price, amount, type: 'long', leverage: normalizedLeverage });
-                const longRiskText = this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged');
+                const longRiskText = this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged', price);
                 
                 actionText = (intent === 'open_long') 
                     ? `开多 (${normalizedLeverage}x) ${assetCode}`
@@ -2773,7 +3062,7 @@ export class DataManager {
                 
                 portfolio.cash -= (amount + fee);
                 bucket.trades.push({ time: lastCandle.time, price, amount, type: 'short', leverage: normalizedLeverage });
-                const shortRiskText = this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged');
+                const shortRiskText = this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged', price);
                 
                 actionText = (intent === 'open_short') 
                     ? `开空 (${normalizedLeverage}x) ${assetCode}`
@@ -2847,7 +3136,7 @@ export class DataManager {
         );
         if (immediate.length > 0) {
             immediate.sort((a, b) => Math.abs(a.price - open) - Math.abs(b.price - open));
-            return immediate[0];
+            return { ...immediate[0], executionPrice: open, pathPosition: 0 };
         }
 
         const path = close >= open ? [open, low, high, close] : [open, high, low, close];
@@ -2861,10 +3150,62 @@ export class DataManager {
             );
             if (crossed.length > 0) {
                 crossed.sort((a, b) => Math.abs(a.price - from) - Math.abs(b.price - from));
-                return crossed[0];
+                const distance = Math.abs(to - from);
+                const fraction = distance > 0 ? Math.abs(crossed[0].price - from) / distance : 0;
+                return { ...crossed[0], pathPosition: index + fraction };
             }
         }
         return null;
+    }
+
+    _evaluateTrailingStop(candle, position, controls = {}) {
+        const trailingPct = Number(controls.trailing_stop_pct);
+        if (!position?.type || !Number.isFinite(trailingPct) || trailingPct <= 0 || trailingPct > 50) return null;
+        const open = Number(candle?.open ?? candle?.close);
+        const close = Number(candle?.close ?? open);
+        const high = Math.max(Number(candle?.high ?? open), open, close);
+        const low = Math.min(Number(candle?.low ?? open), open, close);
+        if (![open, close, high, low].every(Number.isFinite)) return null;
+
+        const distanceRatio = trailingPct / 100;
+        let anchor = Number(controls.trailing_anchor || position.avgEntryPrice || open);
+        if (!Number.isFinite(anchor) || anchor <= 0) anchor = open;
+        const path = close >= open ? [open, low, high, close] : [open, high, low, close];
+        for (let index = 0; index < path.length - 1; index++) {
+            const from = path[index];
+            const to = path[index + 1];
+            if (position.type === 'long') {
+                anchor = Math.max(anchor, from);
+                const stopPrice = anchor * (1 - distanceRatio);
+                if (from <= stopPrice) return { triggered: true, price: from, anchor, pathPosition: index };
+                if (to >= from) {
+                    anchor = Math.max(anchor, to);
+                } else if (to <= stopPrice) {
+                    const fraction = Math.abs(stopPrice - from) / Math.max(Math.abs(to - from), Number.EPSILON);
+                    return { triggered: true, price: stopPrice, anchor, pathPosition: index + fraction };
+                }
+            } else {
+                anchor = Math.min(anchor, from);
+                const stopPrice = anchor * (1 + distanceRatio);
+                if (from >= stopPrice) return { triggered: true, price: from, anchor, pathPosition: index };
+                if (to <= from) {
+                    anchor = Math.min(anchor, to);
+                } else if (to >= stopPrice) {
+                    const fraction = Math.abs(stopPrice - from) / Math.max(Math.abs(to - from), Number.EPSILON);
+                    return { triggered: true, price: stopPrice, anchor, pathPosition: index + fraction };
+                }
+            }
+        }
+        return { triggered: false, anchor };
+    }
+
+    async _updateTrailingAnchor(assetCode, mode, anchor) {
+        if (!Number.isFinite(anchor) || anchor <= 0) return;
+        await this.updateState(this.config.world_book_keys.player_portfolio, portfolio => {
+            const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[mode];
+            if (bucket.risk_controls?.trailing_stop_pct) bucket.risk_controls.trailing_anchor = anchor;
+            return portfolio;
+        });
     }
 
     async liquidatePosition(assetCode, liquidationPrice, triggerCandle = null) {
@@ -2923,7 +3264,7 @@ export class DataManager {
             ? (closePrice - position.avgEntryPrice) * position.totalShares
             : (position.avgEntryPrice - closePrice) * position.totalShares;
         const closeAmount = position.totalAmount + realizedPnl - fee;
-        const label = reason === 'take_profit' ? '止盈' : '止损';
+        const label = reason === 'take_profit' ? '止盈' : (reason === 'trailing_stop' ? '移动止损' : '止损');
 
         await this.updateState(portfolioKey, p => {
             const bucket = this._ensurePortfolioAssetBuckets(p, assetCode)[mode];
@@ -2957,12 +3298,14 @@ export class DataManager {
         };
     }
 
-    async triggerRiskControlsForCandle(assetCode, candle) {
+    async triggerRiskControlsForCandle(assetCode, candle, options = {}) {
         if (!candle) return null;
 
         const portfolio = this.getState(this.config.world_book_keys.player_portfolio);
         const events = [];
+        const skipModes = new Set(options.skipModes || []);
         for (const mode of ['leveraged', 'spot']) {
+            if (skipModes.has(mode)) continue;
             const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
             if (!position.type || position.totalAmount <= 0) continue;
 
@@ -2980,11 +3323,24 @@ export class DataManager {
                 if (mode === 'leveraged' && position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'above' });
             }
 
-            const firstTrigger = this._selectFirstCandleTrigger(candle, candidates);
+            const fixedTrigger = this._selectFirstCandleTrigger(candle, candidates);
+            const trailingResult = this._evaluateTrailingStop(candle, position, riskControls);
+            const trailingTrigger = trailingResult?.triggered ? {
+                type: 'trailing_stop',
+                price: trailingResult.price,
+                pathPosition: trailingResult.pathPosition,
+            } : null;
+            const firstTrigger = trailingTrigger && (!fixedTrigger || trailingTrigger.pathPosition < fixedTrigger.pathPosition)
+                ? trailingTrigger
+                : fixedTrigger;
+            if (!firstTrigger && trailingResult && trailingResult.anchor !== Number(riskControls.trailing_anchor)) {
+                await this._updateTrailingAnchor(assetCode, mode, trailingResult.anchor);
+            }
             if (!firstTrigger) continue;
+            const triggerPrice = Number(firstTrigger.executionPrice ?? firstTrigger.price);
             const result = firstTrigger.type === 'liquidation'
-                ? await this.liquidatePosition(assetCode, firstTrigger.price, candle)
-                : await this.closePositionAtPrice(assetCode, firstTrigger.price, firstTrigger.type, candle, mode);
+                ? await this.liquidatePosition(assetCode, triggerPrice, candle)
+                : await this.closePositionAtPrice(assetCode, triggerPrice, firstTrigger.type, candle, mode);
             if (result?.triggered) events.push({ ...result, mode });
         }
         return events.length > 0 ? { ...events[0], events } : null;
@@ -3445,7 +3801,13 @@ export class DataManager {
                 }
                 const firstTrigger = this._selectFirstCandleTrigger(candle, candidates);
                 if (!firstTrigger) continue;
-                const result = await this.closeManagedAccountPositionAtPrice(state, assetCode, firstTrigger.price, firstTrigger.type, mode);
+                const result = await this.closeManagedAccountPositionAtPrice(
+                    state,
+                    assetCode,
+                    Number(firstTrigger.executionPrice ?? firstTrigger.price),
+                    firstTrigger.type,
+                    mode,
+                );
                 if (result?.triggered) {
                     changed = true;
                     events.push({

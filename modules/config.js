@@ -107,7 +107,7 @@ const DEFAULT_ROLE_AI_SETTINGS = {
 };
 
 export const SillyViewConfig = {
-    version: '2.6.1',
+    version: '2.7.0',
     extension_name: 'SillyView',
 
     // Expose asset definitions for other modules
@@ -150,7 +150,7 @@ export const SillyViewConfig = {
     // Default state for a new game
     default_game_state: {
         config: {
-            version: '2.6.1',
+            version: '2.7.0',
             max_hourly_records: 240,
             max_minute_records: 720,
             initial_bootstrap_done: false,
@@ -189,6 +189,8 @@ export const SillyViewConfig = {
             isQuickModeEnabled: false,
             asset_history: [],
             transaction_log: [],
+            pending_orders: [],
+            order_history: [],
         },
         ai_context: {
             comment: "这是AI可见的市场摘要。请基于此信息进行决策。",
