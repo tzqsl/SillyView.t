@@ -144,13 +144,17 @@ AI 市场导演应在一个 `<command>...</command>` 块内输出指令，例如
 AI 从 `sv_accounts_trade_commands` 内的精简账户目录获取 account_id，观察对应账户后再使用：
 
 ```text
-[Trade.Buy("account_id", "EURUSD", 1000, 5, 1.1000, 1.0600)]
-[Trade.Sell("account_id", "GBPUSD", 500, 5, 1.2300, 1.3100)]
-[Trade.SetRisk("account_id", "EURUSD", 1.1050, 1.0550)]
+[Trade.Buy("account_id", "EURUSD", 1000, 5, 1.1000, 1.0600, 1.0)]
+[Trade.PlaceLimit("account_id", "EURUSD", "buy", "leveraged", 1000, 5, 1.0700, 1.1100, 1.0500, 1.0)]
+[Trade.PlaceOCO("account_id", "GBPUSD", "sell", "leveraged", 500, 5, 1.2500, 1.2900, 1.2200, 1.3100, 1.0)]
+[Trade.CancelOrder("account_id", "ord_xxx")]
+[Trade.SetRisk("account_id", "EURUSD", 1.1050, 1.0550, 1.0)]
 [Trade.CloseLong("account_id", "EURUSD")]
 ```
 
-`Buy` / `Sell` 与 UI 语义一致：买入会开多/加多/平空，卖出会开空/加空/平多。更明确的指令包括 `OpenLong`、`OpenShort`、`AddLong`、`AddShort`、`CloseLong`、`CloseShort`。
+`Buy` / `Sell` 与 UI 语义一致：买入会开多/加多/平空，卖出会开空/加空/平多。更明确的指令包括 `OpenLong`、`OpenShort`、`AddLong`、`AddShort`、`CloseLong`、`CloseShort`。普通交易和 `SetRisk` / `SetSpotRisk` 的最后一个参数是移动止损百分比，填 `0` 表示不设置。
+
+角色 AI 还可以使用 `PlaceLimit`、`PlaceStop` 和 `PlaceOCO`。其中 `side` 为 `buy` / `sell`，`mode` 为 `leveraged` / `spot`；挂单只在触发时校验余额和持仓。观察账户后，角色能从 `portfolio.pending_orders` 读取真实订单 `id`，再用 `CancelOrder` 撤销，不允许编造编号。OCO 任一订单成交后会自动撤销同组另一单。
 
 ## 数据说明
 
@@ -167,7 +171,7 @@ AI 从 `sv_accounts_trade_commands` 内的精简账户目录获取 account_id，
 - `sv_ai_context`、`sv_market_targets`：后台状态，默认关闭，不发送给角色 AI。
 - `sv_news_archive`：永久新闻归档，仅供前端新闻板块读取，默认关闭。
 - `sv_market_news_active`：仍在影响市场的限时新闻，默认关闭，由插件按需发送给后台市场 AI。
-- `SillyView_accounts`：多角色协同交易总控附加世界书。`sv_accounts_trade_commands` 和 `sv_role_output_rules` 默认关闭，由角色决策请求按需直接读取；K 线摘要和 `sv_account_state_*` 由观察指令临时启用。`sv_accounts_index` 是账户读取和迁移所需的内部活动索引，始终关闭。
+- `SillyView_accounts`：多角色协同交易总控附加世界书。`sv_accounts_trade_commands` 和 `sv_role_output_rules` 默认关闭，由角色决策请求按需直接读取；K 线摘要和 `sv_account_state_*` 由观察指令临时启用。每个角色账户的 `portfolio` 都包含独立的 `pending_orders` 和 `order_history`。`sv_accounts_index` 是账户读取和迁移所需的内部活动索引，始终关闭。
 - `sv_auto_event_log`：保存在 `SillyView_accounts` 中的自动推进重要事件日志，记录强平、止盈止损、长线目标到期和整点结算时间；默认关闭，最多保留100条。
 
 ### TavernHelper 手机界面接口
@@ -178,8 +182,8 @@ AI 从 `sv_accounts_trade_commands` 内的精简账户目录获取 account_id，
 const snapshot = await window.parent.SillyViewAPI.getSnapshot();
 ```
 
-`getSnapshot()` 返回主账户资产和挂单、市场摘要、最近一轮角色心声与剧情大纲、角色决策状态，以及按角色归属整理的账户余额、净值、盈亏、持仓和近期重大事件。市场资产的 `change_pct` 根据当前价和24小时前的小时K收盘价实时计算；历史不足24小时时使用最早可用K线。`getOrders({ includeHistory: true })` 可单独读取有效挂单与订单历史。接口不提供写入和交易方法，避免界面绕过插件的交易校验。
+`getSnapshot()` 返回主账户资产和挂单、市场摘要、最近一轮角色心声与剧情大纲、角色决策状态，以及按角色归属整理的账户余额、净值、盈亏、持仓、挂单和近期重大事件。市场资产的 `change_pct` 根据当前价和24小时前的小时K收盘价实时计算；历史不足24小时时使用最早可用K线。`getOrders({ includeHistory: true })` 可单独读取主账户有效挂单与订单历史。接口不提供写入和交易方法，避免界面绕过插件的交易校验。
 
 ## 当前建议路线
 
-挂单系统已经完成。下一批可以把挂单能力扩展到多角色账户的 AI 指令，并在图表上显示挂单价和移动止损线。
+主账户和多角色账户的挂单系统已经完成。下一批可以在图表上显示挂单价和移动止损线。

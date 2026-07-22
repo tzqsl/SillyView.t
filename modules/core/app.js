@@ -248,7 +248,24 @@ export class SillyViewApp {
                 }
             }
 
-            const accountResult = await this.data.processManagedAccountRiskForCandle(assetCode, candle);
+            const managedPendingResult = await this.data.processManagedAccountPendingOrdersForCandle(assetCode, candle);
+            const managedFilledModes = (managedPendingResult?.events || [])
+                .filter(event => event.success)
+                .map(event => `${event.account_id}:${event.order.mode}`);
+            if (managedPendingResult?.triggered) {
+                triggered = true;
+                for (const event of managedPendingResult.events || []) {
+                    const content = event.success
+                        ? `托管账户 ${event.account_id} ${event.order.order_type === 'limit' ? '限价单' : '条件单'}${event.order.side === 'buy' ? '买入' : '卖出'}成交，成交价 ${Number(event.price || 0).toFixed(5)}。`
+                        : `托管账户 ${event.account_id} 挂单触发后被交易校验拒绝。`;
+                    this.dependencies.win.toastr.info(content, event.success ? '角色挂单成交' : '角色挂单失败');
+                    await this._recordImportantEvent(event.success ? 'managed_pending_order_filled' : 'managed_pending_order_rejected', assetCode, content, eventTime);
+                }
+            }
+
+            const accountResult = await this.data.processManagedAccountRiskForCandle(assetCode, candle, {
+                skipAccountModes: managedFilledModes,
+            });
             if (accountResult?.triggered) {
                 triggered = true;
                 for (const event of accountResult.events || []) {

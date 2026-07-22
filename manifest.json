@@ -1,7 +1,7 @@
 {
   "display_name": "SillyView.t",
   "author": "tzqsl",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "一个AI驱动的虚拟交易市场，将叙事与金融策略相结合。",
   "js": "script.js",
   "css": "style.css",

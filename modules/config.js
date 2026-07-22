@@ -107,7 +107,7 @@ const DEFAULT_ROLE_AI_SETTINGS = {
 };
 
 export const SillyViewConfig = {
-    version: '2.7.0',
+    version: '2.8.0',
     extension_name: 'SillyView',
 
     // Expose asset definitions for other modules
@@ -150,7 +150,7 @@ export const SillyViewConfig = {
     // Default state for a new game
     default_game_state: {
         config: {
-            version: '2.7.0',
+            version: '2.8.0',
             max_hourly_records: 240,
             max_minute_records: 720,
             initial_bootstrap_done: false,

@@ -116,6 +116,8 @@ function buildAccountSnapshot(data, state) {
         unrealized_pnl: unrealizedPnl,
         total_pnl: netWorth - startingNetWorth,
         positions,
+        pending_orders: (portfolio.pending_orders || []).map(buildOrderSnapshot),
+        recent_order_history: (portfolio.order_history || []).slice(0, 20).map(buildOrderSnapshot),
         recent_events: (state.recent_major_events || []).slice(-8).reverse().map(event => ({
             id: event.id,
             datetime: event.datetime,
@@ -158,7 +160,7 @@ function buildNewsSnapshot(data, config, activeOnly = false) {
 
 export function createSillyViewPublicAPI({ data, roleDecision, config }) {
     const api = {
-        version: '2.1.1',
+        version: '2.2.0',
         readonly: true,
         async getSnapshot() {
             const states = await data.getManagedAccountStates();

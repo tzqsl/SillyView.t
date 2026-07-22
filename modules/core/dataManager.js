@@ -1814,7 +1814,7 @@ export class DataManager {
         portfolio.transaction_log = [{ time: 0, description: `开户导入: ${account.bank_name}`, amount: account.initial_cash }];
 
         return {
-            version: 2,
+            version: 3,
             account_id: account.account_id,
             owner_name: account.owner_name,
             bank_name: account.bank_name,
@@ -1965,7 +1965,8 @@ export class DataManager {
             if (!stateEntry) {
                 const state = legacyState || initialState;
                 this._migratePortfolioPositionBuckets(state.portfolio);
-                state.version = 2;
+                this._ensurePendingOrderShape(state.portfolio);
+                state.version = 3;
                 if (!Array.isArray(state.recent_major_events)) state.recent_major_events = [];
                 state.worldbook_name = controlName;
                 state.state_entry_name = stateEntryName;
@@ -1976,7 +1977,8 @@ export class DataManager {
             try {
                 const state = JSON.parse(stateEntry.content);
                 this._migratePortfolioPositionBuckets(state.portfolio);
-                state.version = 2;
+                this._ensurePendingOrderShape(state.portfolio);
+                state.version = 3;
                 if (!Array.isArray(state.recent_major_events)) state.recent_major_events = [];
                 state.owner_name = state.owner_name || account.owner_name;
                 state.bank_name = state.bank_name || account.bank_name;
@@ -2035,11 +2037,12 @@ export class DataManager {
                 if (!state) state = await this._readLegacyManagedAccountState(account);
                 if (!state) continue;
                 state.account_id = state.account_id || account.account_id;
-                state.version = 2;
+                state.version = 3;
                 state.state_entry_name = stateEntryName;
                 state.worldbook_name = controlName;
                 if (!Array.isArray(state.recent_major_events)) state.recent_major_events = [];
                 this._migratePortfolioPositionBuckets(state.portfolio);
+                this._ensurePendingOrderShape(state.portfolio);
                 states.push(state);
             } catch (error) {
                 this.logger.warn(`读取账号状态词条失败: ${account.state_entry_name || account.account_id}`, error);
@@ -2057,6 +2060,7 @@ export class DataManager {
         state.updated_at = Date.now();
         state.worldbook_name = controlName;
         state.state_entry_name = stateEntryName;
+        this._ensurePendingOrderShape(state.portfolio);
         if (!Array.isArray(state.recent_major_events)) state.recent_major_events = [];
         await this._ensureWorldbookExists(controlName, [{
             name: stateEntryName,
@@ -2088,34 +2092,42 @@ export class DataManager {
             '同一轮可输出任意多个不同账户的观察指令；系统会去重并合并为一次后续请求，sv_kline_context 只发送一份。无人查看时不要输出 Observe 指令。',
             '首次请求中如果账户和行情实况尚不可见，只能输出观察意图，不能凭空生成交易指令；收到观察数据后的后续请求才可交易。',
             '',
-            '通用参数顺序：("account_id", "asset_code", amount, leverage, take_profit, stop_loss)。',
+            '普通交易参数顺序：("account_id", "asset_code", amount, leverage, take_profit, stop_loss, trailing_stop_pct)。',
             '- amount：杠杆指令中是本次投入的保证金，现货指令中是买入金额；必须大于 0 且不能超过账户可用现金。',
             '- leverage：整数杠杆，最低 1，超过该资产上限时会自动压到上限；杠杆会放大盈利、亏损和爆仓风险。',
             '- take_profit / stop_loss：触发价格，填 0 表示不设置。多头止盈应高于现价、止损应低于现价；空头相反。',
+            '- trailing_stop_pct：移动止损百分比，范围 0-50；填 0 表示不设置。多头随新高上移，空头随新低下移。',
             '- 手续费会额外从现金扣除。开仓方向与已有反向仓位冲突时，明确的 Open/Add 指令会失败，应先平掉反向仓位。',
             '',
             '明确操作（推荐，语义不会随现有仓位变化）：',
-            '[Trade.OpenLong("account_id", "EURUSD", 1000, 5, 1.1000, 1.0600)]：无仓位时开多。',
-            '[Trade.AddLong("account_id", "EURUSD", 500, 5, 1.1000, 1.0600)]：给已有多头加仓。',
+            '[Trade.OpenLong("account_id", "EURUSD", 1000, 5, 1.1000, 1.0600, 1.0)]：无仓位时开多，并设置1%移动止损。',
+            '[Trade.AddLong("account_id", "EURUSD", 500, 5, 1.1000, 1.0600, 0)]：给已有多头加仓。',
             '[Trade.CloseLong("account_id", "EURUSD")]：全额平掉该货币对多头，amount 等参数无需填写。',
-            '[Trade.OpenShort("account_id", "GBPUSD", 1000, 5, 1.2300, 1.3100)]：无仓位时开空。',
-            '[Trade.AddShort("account_id", "GBPUSD", 500, 5, 1.2300, 1.3100)]：给已有空头加仓。',
+            '[Trade.OpenShort("account_id", "GBPUSD", 1000, 5, 1.2300, 1.3100, 1.0)]：无仓位时开空，并设置1%移动止损。',
+            '[Trade.AddShort("account_id", "GBPUSD", 500, 5, 1.2300, 1.3100, 0)]：给已有空头加仓。',
             '[Trade.CloseShort("account_id", "GBPUSD")]：全额平掉该货币对空头，amount 等参数无需填写。',
-            '[Trade.SpotBuy("account_id", "EURUSD", 1000, 0, 1.1000, 1.0600)]：买入或加仓现货，不产生杠杆和强平价。',
+            '[Trade.SpotBuy("account_id", "EURUSD", 1000, 0, 1.1000, 1.0600, 1.0)]：买入或加仓现货，不产生杠杆和强平价。',
             '[Trade.SpotSell("account_id", "EURUSD")]：全额卖出现货，amount 等参数无需填写。',
-            '[Trade.SetRisk("account_id", "EURUSD", 1.1050, 1.0550)]：只调整已有杠杆仓的止盈、止损；对应值填 0 可清空。',
-            '[Trade.SetSpotRisk("account_id", "EURUSD", 1.1050, 1.0550)]：只调整现货仓位的止盈、止损。',
+            '[Trade.SetRisk("account_id", "EURUSD", 1.1050, 1.0550, 1.0)]：调整已有杠杆仓的止盈、止损和移动止损；对应值填 0 可清空。',
+            '[Trade.SetSpotRisk("account_id", "EURUSD", 1.1050, 1.0550, 1.0)]：调整现货仓位的止盈、止损和移动止损。',
+            '',
+            '挂单操作：side 只能是 "buy" 或 "sell"；mode 只能是 "leveraged" 或 "spot"。挂单不预占现金，触发时重新校验余额和持仓。',
+            '[Trade.PlaceLimit("account_id", "EURUSD", "buy", "leveraged", 1000, 5, 1.0700, 1.1100, 1.0500, 1.0)]：创建限价单；买入限价低于现价，卖出限价高于现价。',
+            '[Trade.PlaceStop("account_id", "EURUSD", "buy", "leveraged", 1000, 5, 1.0900, 1.1200, 1.0600, 1.0)]：创建条件单；买入触发价高于现价，卖出触发价低于现价。',
+            '[Trade.PlaceOCO("account_id", "EURUSD", "buy", "leveraged", 1000, 5, 1.0700, 1.0900, 1.1200, 1.0500, 1.0)]：创建下轨和上轨 OCO，任一成交后自动撤销另一单。',
+            '[Trade.CancelOrder("account_id", "ord_xxx")]：撤销已观察账户 pending_orders 中指定 id 的挂单；不得编造订单编号。',
+            'PlaceLimit/PlaceStop 参数末尾依次为 trigger_price, take_profit, stop_loss, trailing_stop_pct；PlaceOCO 依次为 lower_price, upper_price, take_profit, stop_loss, trailing_stop_pct。',
             '',
             '快捷操作（行为取决于当前仓位）：',
-            '[Trade.Buy("account_id", "EURUSD", 1000, 5, 1.1000, 1.0600)]：无仓位则开多，已有多头则加多，已有空头则全额平空。',
-            '[Trade.Sell("account_id", "GBPUSD", 500, 5, 1.2300, 1.3100)]：无仓位则开空，已有空头则加空，已有多头则全额平多。',
+            '[Trade.Buy("account_id", "EURUSD", 1000, 5, 1.1000, 1.0600, 0)]：无仓位则开多，已有多头则加多，已有空头则全额平空。',
+            '[Trade.Sell("account_id", "GBPUSD", 500, 5, 1.2300, 1.3100, 0)]：无仓位则开空，已有空头则加空，已有多头则全额平多。',
             '使用 Buy/Sell 平仓时，amount、leverage、止盈和止损参数会被忽略；为避免误判，平仓优先使用 CloseLong/CloseShort。',
             '',
             '多账户示例：',
             '<command>',
-            '[Trade.OpenLong("acct_example_a", "EURUSD", 1000, 5, 1.1000, 1.0600)]',
-            '[Trade.OpenShort("acct_example_b", "GBPUSD", 800, 5, 1.2300, 1.3100)]',
-            '[Trade.SetRisk("acct_example_c", "USDJPY", 152.00, 0)]',
+            '[Trade.OpenLong("acct_example_a", "EURUSD", 1000, 5, 1.1000, 1.0600, 1.0)]',
+            '[Trade.PlaceOCO("acct_example_b", "GBPUSD", "sell", "leveraged", 800, 5, 1.2500, 1.2900, 1.2200, 1.3100, 1.0)]',
+            '[Trade.SetRisk("acct_example_c", "USDJPY", 152.00, 0, 0.8)]',
             '</command>',
             '只输出确实要执行的操作；观望时不要生成交易指令。每个账户独立判断、独立计算资金和持仓，不得混用 account_id。交易指令只能依据本轮实际观察到的数据。',
         ].join('\n');
@@ -3508,6 +3520,9 @@ export class DataManager {
         const states = await this.getManagedAccountStates();
         const assetCodes = new Set();
         for (const state of states) {
+            for (const order of state.portfolio?.pending_orders || []) {
+                if (this.config.asset_definitions[order?.asset_code]) assetCodes.add(order.asset_code);
+            }
             const assets = state.portfolio?.assets || {};
             for (const assetCode of Object.keys(assets)) {
                 const asset = assets[assetCode] || {};
@@ -3555,16 +3570,29 @@ export class DataManager {
         const marketPrice = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`)?.current_price;
         if (!this._areRiskControlsValidForPosition(position, normalized, marketPrice)) return false;
         const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[mode];
-        if (normalized.take_profit === null && normalized.stop_loss === null) {
+        if (normalized.take_profit === null && normalized.stop_loss === null && normalized.trailing_stop_pct === null) {
             delete bucket.risk_controls;
         } else {
-            bucket.risk_controls = normalized;
+            const current = bucket.risk_controls || {};
+            const existingAnchor = Number(current.trailing_anchor);
+            let trailingAnchor = null;
+            if (normalized.trailing_stop_pct !== null) {
+                const nextAnchor = Number(marketPrice || position.avgEntryPrice);
+                if (normalized.trailing_stop_pct === current.trailing_stop_pct && Number.isFinite(existingAnchor)) {
+                    trailingAnchor = position.type === 'short'
+                        ? Math.min(existingAnchor, nextAnchor)
+                        : Math.max(existingAnchor, nextAnchor);
+                } else {
+                    trailingAnchor = nextAnchor;
+                }
+            }
+            bucket.risk_controls = { ...normalized, trailing_anchor: trailingAnchor };
         }
 
         if (!portfolio.actions_this_turn) portfolio.actions_this_turn = [];
         portfolio.actions_this_turn.push({
             id: Date.now(),
-            text: `AI调整 ${assetCode} 止盈 ${normalized.take_profit || '未设置'} / 止损 ${normalized.stop_loss || '未设置'}`,
+            text: `AI调整 ${assetCode} 止盈 ${normalized.take_profit || '未设置'} / 止损 ${normalized.stop_loss || '未设置'} / 移动止损 ${normalized.trailing_stop_pct ? `${normalized.trailing_stop_pct}%` : '未设置'}`,
             executedAt: null,
             intent: 'adjust_risk_controls',
             mode,
@@ -3577,7 +3605,7 @@ export class DataManager {
             type: 'risk_update',
             asset_code: assetCode,
             mode,
-            content: `调整止盈止损：止盈 ${normalized.take_profit || '未设置'}，止损 ${normalized.stop_loss || '未设置'}。`,
+            content: `调整风控：止盈 ${normalized.take_profit || '未设置'}，止损 ${normalized.stop_loss || '未设置'}，移动止损 ${normalized.trailing_stop_pct ? `${normalized.trailing_stop_pct}%` : '未设置'}。`,
         });
         this._recordAccountHistory(portfolio);
         await this._writeManagedAccountState(state);
@@ -3585,30 +3613,40 @@ export class DataManager {
         return true;
     }
 
-    async executeManagedAccountTrade(accountId, commandType, assetCode, amount = 0, leverage = 1, riskControls = null) {
+    async executeManagedAccountTrade(accountId, commandType, assetCode, amount = 0, leverage = 1, riskControls = null, executionOptions = null) {
         const state = await this._getManagedAccountStateById(accountId);
         if (!state || !this.config.asset_definitions[assetCode]) return false;
 
         const portfolio = state.portfolio || {};
         if (!portfolio.assets) portfolio.assets = {};
-        const mode = String(commandType || '').toLowerCase().startsWith('spot') ? 'spot' : 'leveraged';
+        const mode = executionOptions?.mode === 'spot'
+            ? 'spot'
+            : (executionOptions?.mode === 'leveraged'
+                ? 'leveraged'
+                : (String(commandType || '').toLowerCase().startsWith('spot') ? 'spot' : 'leveraged'));
         const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[mode];
         portfolio.cash = Number(portfolio.cash || 0);
 
         const assetData = this.getState(`${this.config.world_book_keys.asset_prefix}${assetCode}`);
         const lastCandle = assetData?.kline_minute?.slice(-1)[0] || assetData?.kline_hourly?.slice(-1)[0];
-        const rawPrice = Number(assetData?.current_price || lastCandle?.close || 0);
+        const rawPrice = Number(executionOptions?.executionPrice ?? assetData?.current_price ?? lastCandle?.close ?? 0);
         if (!rawPrice) return false;
 
         const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
-        const intent = this._getAccountIntentFromTradeCommand(commandType, position);
+        const intent = executionOptions?.intent || this._getAccountIntentFromTradeCommand(commandType, position);
         if (!intent) return false;
 
         const maxLeverage = this.config.asset_definitions[assetCode]?.max_leverage || 1;
         const normalizedLeverage = mode === 'spot' ? 1 : Math.min(Math.max(1, Math.floor(Number(leverage) || 1)), maxLeverage);
         const normalizedAmount = Math.max(0, Number(amount) || 0);
         const tradeConfig = this._getTradeConfig(assetCode);
-        const price = this._calculateExecutionPrice(assetCode, intent, rawPrice);
+        let price = this._calculateExecutionPrice(assetCode, intent, rawPrice);
+        const limitPrice = Number(executionOptions?.limitPrice);
+        if (Number.isFinite(limitPrice) && limitPrice > 0) {
+            price = this._getPendingOrderSide(intent) === 'buy'
+                ? Math.min(price, limitPrice)
+                : Math.max(price, limitPrice);
+        }
         const totalPositionValue = intent === 'spot_sell'
             ? position.totalShares * price
             : intent.startsWith('close')
@@ -3623,7 +3661,7 @@ export class DataManager {
                 portfolio.cash -= normalizedAmount + fee;
                 bucket.trades.push({ time: lastCandle?.time || 0, price, amount: normalizedAmount, type: 'long', leverage: 1 });
                 actionText = `${state.owner_name} ${position.type ? '加仓' : '买入'}现货 ${assetCode}`;
-                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'spot');
+                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'spot', price);
                 this._recordAccountTransaction(portfolio, actionText, -normalizedAmount);
                 this._recordAccountTransaction(portfolio, '交易手续费', -fee);
                 break;
@@ -3648,7 +3686,7 @@ export class DataManager {
                 portfolio.cash -= normalizedAmount + fee;
                 bucket.trades.push({ time: lastCandle?.time || 0, price, amount: normalizedAmount, type: 'long', leverage: normalizedLeverage });
                 actionText = `${state.owner_name} ${intent === 'open_long' ? '开多' : '加仓多'} ${assetCode} ${normalizedLeverage}x`;
-                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged');
+                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged', price);
                 this._recordAccountTransaction(portfolio, actionText, -normalizedAmount);
                 this._recordAccountTransaction(portfolio, '交易手续费', -fee);
                 break;
@@ -3660,7 +3698,7 @@ export class DataManager {
                 portfolio.cash -= normalizedAmount + fee;
                 bucket.trades.push({ time: lastCandle?.time || 0, price, amount: normalizedAmount, type: 'short', leverage: normalizedLeverage });
                 actionText = `${state.owner_name} ${intent === 'open_short' ? '开空' : '加仓空'} ${assetCode} ${normalizedLeverage}x`;
-                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged');
+                actionText += this._applyRiskControls(portfolio, assetCode, riskControls, 'leveraged', price);
                 this._recordAccountTransaction(portfolio, actionText, -normalizedAmount);
                 this._recordAccountTransaction(portfolio, '交易手续费', -fee);
                 break;
@@ -3710,31 +3748,267 @@ export class DataManager {
         return true;
     }
 
+    _createManagedPendingOrderDraft(state, spec = {}) {
+        const portfolio = state?.portfolio || {};
+        const assetCode = String(spec.assetCode || '');
+        const side = String(spec.side || '').toLowerCase();
+        const mode = String(spec.mode || '').toLowerCase();
+        if (!['buy', 'sell'].includes(side)) return { error: '挂单方向必须是 buy 或 sell。' };
+        if (!['spot', 'leveraged'].includes(mode)) return { error: '挂单模式必须是 spot 或 leveraged。' };
+
+        const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
+        const commandType = mode === 'spot' ? (side === 'buy' ? 'SpotBuy' : 'SpotSell') : side;
+        const intent = this._getAccountIntentFromTradeCommand(commandType, position);
+        if (!intent) return { error: '无法根据账户持仓确定挂单操作。' };
+        const isClosing = intent.startsWith('close') || intent === 'spot_sell';
+        return this._createPendingOrderDraft({
+            ...spec,
+            assetCode,
+            intent,
+            mode,
+            riskControls: isClosing ? null : spec.riskControls,
+        }, portfolio);
+    }
+
+    async placeManagedAccountPendingOrder(accountId, spec = {}) {
+        const state = await this._getManagedAccountStateById(accountId);
+        if (!state) return false;
+        this._ensurePendingOrderShape(state.portfolio);
+        if (state.portfolio.pending_orders.length >= 50) return false;
+        const draft = this._createManagedPendingOrderDraft(state, spec);
+        if (!draft.order) return false;
+
+        state.portfolio.pending_orders.push(draft.order);
+        state.portfolio.actions_this_turn = state.portfolio.actions_this_turn || [];
+        state.portfolio.actions_this_turn.push({
+            id: Date.now(),
+            text: `AI挂出 ${draft.order.asset_code} ${draft.order.order_type === 'limit' ? '限价' : '条件'}${draft.order.side === 'buy' ? '买单' : '卖单'}`,
+            executedAt: draft.order.trigger_price,
+            intent: 'place_pending_order',
+            assetCode: draft.order.asset_code,
+            orderId: draft.order.id,
+        });
+        this._appendManagedAccountMajorEvent(state, {
+            type: 'pending_order_created',
+            asset_code: draft.order.asset_code,
+            mode: draft.order.mode,
+            content: `创建${draft.order.order_type === 'limit' ? '限价' : '条件'}${draft.order.side === 'buy' ? '买单' : '卖单'} ${draft.order.id}，触发价 ${draft.order.trigger_price.toFixed(5)}。`,
+        });
+        await this._writeManagedAccountState(state);
+        await this.syncManagedAccountsWorldbook();
+        return true;
+    }
+
+    async placeManagedAccountOcoOrders(accountId, specs = []) {
+        const state = await this._getManagedAccountStateById(accountId);
+        if (!state || !Array.isArray(specs) || specs.length !== 2) return false;
+        this._ensurePendingOrderShape(state.portfolio);
+        if (state.portfolio.pending_orders.length > 48) return false;
+        const groupId = `oco_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const drafts = specs.map(spec => this._createManagedPendingOrderDraft(state, { ...spec, ocoGroupId: groupId }));
+        if (drafts.some(draft => !draft.order)) return false;
+
+        const orders = drafts.map(draft => draft.order);
+        state.portfolio.pending_orders.push(...orders);
+        state.portfolio.actions_this_turn = state.portfolio.actions_this_turn || [];
+        state.portfolio.actions_this_turn.push({
+            id: Date.now(),
+            text: `AI挂出 ${orders[0].asset_code} OCO ${orders[0].side === 'buy' ? '买单' : '卖单'}`,
+            executedAt: null,
+            intent: 'place_oco_order',
+            assetCode: orders[0].asset_code,
+            orderIds: orders.map(order => order.id),
+        });
+        this._appendManagedAccountMajorEvent(state, {
+            type: 'oco_order_created',
+            asset_code: orders[0].asset_code,
+            mode: orders[0].mode,
+            content: `创建 OCO ${groupId}，下轨 ${orders[0].trigger_price.toFixed(5)}，上轨 ${orders[1].trigger_price.toFixed(5)}。`,
+        });
+        await this._writeManagedAccountState(state);
+        await this.syncManagedAccountsWorldbook();
+        return true;
+    }
+
+    async cancelManagedAccountPendingOrder(accountId, orderId) {
+        const state = await this._getManagedAccountStateById(accountId);
+        if (!state) return false;
+        this._ensurePendingOrderShape(state.portfolio);
+        const index = state.portfolio.pending_orders.findIndex(order => order.id === orderId);
+        if (index < 0) return false;
+        const [order] = state.portfolio.pending_orders.splice(index, 1);
+        this._archivePendingOrder(state.portfolio, order, 'cancelled', { cancel_reason: 'role_cancelled' });
+        this._appendManagedAccountMajorEvent(state, {
+            type: 'pending_order_cancelled',
+            asset_code: order.asset_code,
+            mode: order.mode,
+            content: `撤销挂单 ${order.id}。`,
+        });
+        await this._writeManagedAccountState(state);
+        await this.syncManagedAccountsWorldbook();
+        return true;
+    }
+
+    async processManagedAccountPendingOrdersForCandle(assetCode, candle) {
+        if (!candle) return null;
+        const initialStates = await this.getManagedAccountStates();
+        const events = [];
+
+        for (const initialState of initialStates) {
+            for (let attempt = 0; attempt < 50; attempt++) {
+                const state = await this._getManagedAccountStateById(initialState.account_id);
+                if (!state) break;
+                this._ensurePendingOrderShape(state.portfolio);
+                const orders = state.portfolio.pending_orders.filter(order => order.asset_code === assetCode);
+                const candidates = orders.map(order => ({
+                    ...order,
+                    price: Number(order.trigger_price),
+                    condition: this._getPendingOrderCondition(order.order_type, order.side),
+                })).filter(candidate => candidate.condition);
+                const triggered = this._selectFirstCandleTrigger(candle, candidates);
+                if (!triggered) break;
+                const order = orders.find(item => item.id === triggered.id);
+                if (!order) break;
+
+                state.portfolio.pending_orders = state.portfolio.pending_orders.filter(item => item.id !== order.id);
+                await this._writeManagedAccountState(state);
+                const rawExecutionPrice = this._getPendingOrderExecutionPrice(order, candle);
+                const success = await this.executeManagedAccountTrade(
+                    state.account_id,
+                    order.intent,
+                    order.asset_code,
+                    order.amount,
+                    order.leverage,
+                    order.risk_controls,
+                    {
+                        intent: order.intent,
+                        mode: order.mode,
+                        executionPrice: rawExecutionPrice,
+                        limitPrice: order.order_type === 'limit' ? order.trigger_price : null,
+                    },
+                );
+
+                const latestState = await this._getManagedAccountStateById(state.account_id);
+                if (!latestState) break;
+                this._ensurePendingOrderShape(latestState.portfolio);
+                const executedAction = success
+                    ? [...(latestState.portfolio.actions_this_turn || [])].reverse().find(action =>
+                        action.assetCode === order.asset_code && action.intent === order.intent && Number.isFinite(action.executedAt)
+                    )
+                    : null;
+                const actualExecutionPrice = Number(executedAction?.executedAt || rawExecutionPrice);
+                this._archivePendingOrder(latestState.portfolio, order, success ? 'filled' : 'rejected', {
+                    filled_at: success ? Date.now() : null,
+                    filled_price: success ? actualExecutionPrice : null,
+                    reject_reason: success ? null : 'execution_failed',
+                });
+                const cancelledSiblings = [];
+                if (success && order.oco_group_id) {
+                    latestState.portfolio.pending_orders = latestState.portfolio.pending_orders.filter(item => {
+                        if (item.oco_group_id !== order.oco_group_id) return true;
+                        cancelledSiblings.push(item);
+                        this._archivePendingOrder(latestState.portfolio, item, 'cancelled', { cancel_reason: 'oco_peer_filled' });
+                        return false;
+                    });
+                }
+                if (!success) {
+                    this._appendManagedAccountMajorEvent(latestState, {
+                        type: 'pending_order_rejected',
+                        asset_code: order.asset_code,
+                        mode: order.mode,
+                        content: `挂单 ${order.id} 已触发，但交易校验未通过。`,
+                    });
+                }
+                await this._writeManagedAccountState(latestState);
+                events.push({
+                    account_id: state.account_id,
+                    order,
+                    success,
+                    price: actualExecutionPrice,
+                    cancelledSiblings,
+                });
+            }
+        }
+
+        if (events.length > 0) await this.syncManagedAccountsWorldbook();
+        return events.length > 0 ? { triggered: true, events } : null;
+    }
+
     async processManagedAccountTradeCommand(command) {
         if (command.module !== 'Trade') return false;
         const [accountId, assetCode] = command.args;
-        if (typeof accountId !== 'string' || typeof assetCode !== 'string') return false;
+        if (typeof accountId !== 'string') return false;
+
+        if (command.type === 'CancelOrder') {
+            return typeof assetCode === 'string'
+                ? await this.cancelManagedAccountPendingOrder(accountId, assetCode)
+                : false;
+        }
+
+        if (typeof assetCode !== 'string') return false;
+
+        if (command.type === 'PlaceLimit' || command.type === 'PlaceStop') {
+            const [, , side, mode, amount = 0, leverage = 1, triggerPrice = 0, takeProfit = 0, stopLoss = 0, trailingStopPct = 0] = command.args;
+            return await this.placeManagedAccountPendingOrder(accountId, {
+                assetCode,
+                side,
+                mode,
+                amount: Number(amount) || 0,
+                leverage: Number(leverage) || 1,
+                triggerPrice: Number(triggerPrice) || 0,
+                orderType: command.type === 'PlaceLimit' ? 'limit' : 'stop',
+                riskControls: {
+                    take_profit: Number(takeProfit) || null,
+                    stop_loss: Number(stopLoss) || null,
+                    trailing_stop_pct: Number(trailingStopPct) || null,
+                },
+            });
+        }
+
+        if (command.type === 'PlaceOCO') {
+            const [, , side, mode, amount = 0, leverage = 1, lowerPrice = 0, upperPrice = 0, takeProfit = 0, stopLoss = 0, trailingStopPct = 0] = command.args;
+            const normalizedSide = String(side || '').toLowerCase();
+            const common = {
+                assetCode,
+                side: normalizedSide,
+                mode,
+                amount: Number(amount) || 0,
+                leverage: Number(leverage) || 1,
+                riskControls: {
+                    take_profit: Number(takeProfit) || null,
+                    stop_loss: Number(stopLoss) || null,
+                    trailing_stop_pct: Number(trailingStopPct) || null,
+                },
+            };
+            return await this.placeManagedAccountOcoOrders(accountId, [
+                { ...common, orderType: normalizedSide === 'buy' ? 'limit' : 'stop', triggerPrice: Number(lowerPrice) || 0 },
+                { ...common, orderType: normalizedSide === 'buy' ? 'stop' : 'limit', triggerPrice: Number(upperPrice) || 0 },
+            ]);
+        }
 
         if (command.type === 'SetRisk') {
-            const [, , takeProfit = 0, stopLoss = 0] = command.args;
+            const [, , takeProfit = 0, stopLoss = 0, trailingStopPct = 0] = command.args;
             return await this.updateManagedAccountRiskControls(accountId, assetCode, {
                 take_profit: Number(takeProfit) || null,
                 stop_loss: Number(stopLoss) || null,
+                trailing_stop_pct: Number(trailingStopPct) || null,
             }, 'leveraged');
         }
 
         if (command.type === 'SetSpotRisk') {
-            const [, , takeProfit = 0, stopLoss = 0] = command.args;
+            const [, , takeProfit = 0, stopLoss = 0, trailingStopPct = 0] = command.args;
             return await this.updateManagedAccountRiskControls(accountId, assetCode, {
                 take_profit: Number(takeProfit) || null,
                 stop_loss: Number(stopLoss) || null,
+                trailing_stop_pct: Number(trailingStopPct) || null,
             }, 'spot');
         }
 
-        const [, , amount = 0, leverage = 1, takeProfit = 0, stopLoss = 0] = command.args;
+        const [, , amount = 0, leverage = 1, takeProfit = 0, stopLoss = 0, trailingStopPct = 0] = command.args;
         return await this.executeManagedAccountTrade(accountId, command.type, assetCode, Number(amount) || 0, Number(leverage) || 1, {
             take_profit: Number(takeProfit) || null,
             stop_loss: Number(stopLoss) || null,
+            trailing_stop_pct: Number(trailingStopPct) || null,
         });
     }
 
@@ -3752,7 +4026,9 @@ export class DataManager {
         const bucket = this._ensurePortfolioAssetBuckets(portfolio, assetCode)[mode];
         bucket.trades = [];
         delete bucket.risk_controls;
-        const label = reason === 'take_profit' ? '止盈' : (reason === 'liquidation' ? '爆仓强平' : '止损');
+        const label = reason === 'take_profit'
+            ? '止盈'
+            : (reason === 'liquidation' ? '爆仓强平' : (reason === 'trailing_stop' ? '移动止损' : '止损'));
         this._recordAccountTransaction(portfolio, `${label}平仓 ${assetCode}`, position.totalAmount + pnl);
         this._recordAccountTransaction(portfolio, '交易手续费', -fee);
         this._recordAccountTransaction(portfolio, `已实现盈亏 (${assetCode})`, pnl);
@@ -3775,15 +4051,18 @@ export class DataManager {
         };
     }
 
-    async processManagedAccountRiskForCandle(assetCode, candle) {
+    async processManagedAccountRiskForCandle(assetCode, candle, options = {}) {
         if (!candle) return false;
         const states = await this.getManagedAccountStates();
         let changed = false;
         const events = [];
+        const skipAccountModes = new Set(options.skipAccountModes || []);
 
         for (const state of states) {
             const portfolio = state.portfolio || {};
+            let stateChanged = false;
             for (const mode of ['leveraged', 'spot']) {
+                if (skipAccountModes.has(`${state.account_id}:${mode}`)) continue;
                 const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
                 if (!position.type || position.totalAmount <= 0) continue;
                 const controls = portfolio.assets?.[assetCode]?.[mode]?.risk_controls || {};
@@ -3799,7 +4078,21 @@ export class DataManager {
                     if (Number.isFinite(stopLoss) && stopLoss > 0) candidates.push({ type: 'stop_loss', price: stopLoss, condition: 'above' });
                     if (mode === 'leveraged' && position.isLeveraged && position.liquidationPrice > 0) candidates.push({ type: 'liquidation', price: position.liquidationPrice, condition: 'above' });
                 }
-                const firstTrigger = this._selectFirstCandleTrigger(candle, candidates);
+                const fixedTrigger = this._selectFirstCandleTrigger(candle, candidates);
+                const trailingResult = this._evaluateTrailingStop(candle, position, controls);
+                const trailingTrigger = trailingResult?.triggered ? {
+                    type: 'trailing_stop',
+                    price: trailingResult.price,
+                    pathPosition: trailingResult.pathPosition,
+                } : null;
+                const firstTrigger = trailingTrigger && (!fixedTrigger || trailingTrigger.pathPosition < fixedTrigger.pathPosition)
+                    ? trailingTrigger
+                    : fixedTrigger;
+                if (!firstTrigger && trailingResult && trailingResult.anchor !== Number(controls.trailing_anchor)) {
+                    portfolio.assets[assetCode][mode].risk_controls.trailing_anchor = trailingResult.anchor;
+                    stateChanged = true;
+                    changed = true;
+                }
                 if (!firstTrigger) continue;
                 const result = await this.closeManagedAccountPositionAtPrice(
                     state,
@@ -3810,6 +4103,7 @@ export class DataManager {
                 );
                 if (result?.triggered) {
                     changed = true;
+                    stateChanged = true;
                     events.push({
                         account_id: state.account_id,
                         type: result.type,
@@ -3818,6 +4112,10 @@ export class DataManager {
                         mode: result.mode,
                     });
                 }
+            }
+            if (stateChanged) {
+                state.portfolio = portfolio;
+                await this._writeManagedAccountState(state);
             }
         }
 

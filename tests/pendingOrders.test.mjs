@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { SillyViewConfig } from '../modules/config.js';
 import { DataManager } from '../modules/core/dataManager.js';
+import { CommandParser } from '../modules/core/commandParser.js';
 import { PositionCalculator } from '../modules/services/positionCalculator.js';
 
 function clone(value) {
@@ -53,6 +54,33 @@ function createManager() {
         kline_daily: [],
     });
     return { manager, positionCalculator, notifications };
+}
+
+function attachManagedAccount(manager, portfolioOverrides = {}) {
+    let state = {
+        version: 3,
+        account_id: 'acct_role',
+        owner_name: '测试角色',
+        bank_name: '测试银行',
+        state_entry_name: 'sv_account_state_acct_role',
+        portfolio: {
+            cash: 10000,
+            starting_cash: 10000,
+            debt: 0,
+            assets: {},
+            actions_this_turn: [],
+            transaction_log: [],
+            pending_orders: [],
+            order_history: [],
+            ...portfolioOverrides,
+        },
+        recent_major_events: [],
+    };
+    manager._getManagedAccountStateById = async accountId => accountId === state.account_id ? clone(state) : null;
+    manager.getManagedAccountStates = async () => [clone(state)];
+    manager._writeManagedAccountState = async nextState => { state = clone(nextState); };
+    manager.syncManagedAccountsWorldbook = async () => {};
+    return () => clone(state);
 }
 
 test('buy limit fills when the candle crosses below its trigger', async () => {
@@ -164,4 +192,133 @@ test('trailing stop trigger closes the position and records realized cash flow',
     assert.equal(positionCalculator.calculate('EURUSD', portfolio, 'leveraged').type, null);
     assert.ok(portfolio.cash > 10000);
     assert.ok(portfolio.transaction_log.some(log => log.description.includes('移动止损平仓')));
+});
+
+test('role commands create and cancel a managed account limit order', async () => {
+    const { manager } = createManager();
+    const getManagedState = attachManagedAccount(manager);
+    const placed = await manager.processManagedAccountTradeCommand({
+        module: 'Trade',
+        type: 'PlaceLimit',
+        args: ['acct_role', 'EURUSD', 'buy', 'leveraged', 1000, 5, 1.05, 1.12, 1.01, 1],
+    });
+    assert.equal(placed, true);
+    const order = getManagedState().portfolio.pending_orders[0];
+    assert.equal(order.order_type, 'limit');
+    assert.equal(order.risk_controls.trailing_stop_pct, 1);
+
+    const cancelled = await manager.processManagedAccountTradeCommand({
+        module: 'Trade',
+        type: 'CancelOrder',
+        args: ['acct_role', order.id],
+    });
+    const portfolio = getManagedState().portfolio;
+    assert.equal(cancelled, true);
+    assert.equal(portfolio.pending_orders.length, 0);
+    assert.equal(portfolio.order_history[0].status, 'cancelled');
+});
+
+test('role command parser preserves side and mode arguments for pending orders', () => {
+    const parser = new CommandParser();
+    const commands = parser.parse('<command>[Trade.PlaceStop("acct_role", "EURUSD", "sell", "spot", 500, 1, 1.05, 1.01, 1.08, 0.5)]</command>');
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0].type, 'PlaceStop');
+    assert.equal(commands[0].args[2], 'sell');
+    assert.equal(commands[0].args[3], 'spot');
+    assert.equal(commands[0].args[9], 0.5);
+});
+
+test('role command guide advertises pending orders and trailing stops', () => {
+    const { manager } = createManager();
+    const guide = manager._buildManagedTradeCommandGuide([{
+        account_id: 'acct_role',
+        owner_name: '测试角色',
+        bank_name: '测试银行',
+    }]);
+    for (const command of ['Trade.PlaceLimit', 'Trade.PlaceStop', 'Trade.PlaceOCO', 'Trade.CancelOrder']) {
+        assert.match(guide, new RegExp(command.replace('.', '\\.')));
+    }
+    assert.match(guide, /trailing_stop_pct/);
+    assert.match(guide, /不得编造订单编号/);
+});
+
+test('triggered managed order is archived when execution validation rejects it', async () => {
+    const { manager } = createManager();
+    const getManagedState = attachManagedAccount(manager, { cash: 100 });
+    const placed = await manager.processManagedAccountTradeCommand({
+        module: 'Trade',
+        type: 'PlaceStop',
+        args: ['acct_role', 'EURUSD', 'buy', 'leveraged', 1000, 5, 1.10, 1.15, 1.05, 0],
+    });
+    assert.equal(placed, true);
+
+    const result = await manager.processManagedAccountPendingOrdersForCandle('EURUSD', {
+        time: 11,
+        open: 1.08,
+        high: 1.11,
+        low: 1.07,
+        close: 1.10,
+    });
+    const state = getManagedState();
+    assert.equal(result.events[0].success, false);
+    assert.equal(state.portfolio.pending_orders.length, 0);
+    assert.equal(state.portfolio.order_history[0].status, 'rejected');
+    assert.equal(state.portfolio.order_history[0].reject_reason, 'execution_failed');
+    assert.equal(state.recent_major_events.at(-1).type, 'pending_order_rejected');
+});
+
+test('role OCO command fills one managed order and cancels its peer', async () => {
+    const { manager, positionCalculator } = createManager();
+    const getManagedState = attachManagedAccount(manager);
+    const placed = await manager.processManagedAccountTradeCommand({
+        module: 'Trade',
+        type: 'PlaceOCO',
+        args: ['acct_role', 'EURUSD', 'buy', 'leveraged', 750, 3, 1.05, 1.10, 1.15, 1.01, 1],
+    });
+    assert.equal(placed, true);
+
+    const result = await manager.processManagedAccountPendingOrdersForCandle('EURUSD', {
+        time: 11,
+        open: 1.08,
+        high: 1.11,
+        low: 1.07,
+        close: 1.10,
+    });
+    const portfolio = getManagedState().portfolio;
+    assert.equal(result.events.length, 1);
+    assert.equal(result.events[0].success, true);
+    assert.equal(portfolio.pending_orders.length, 0);
+    assert.deepEqual(new Set(portfolio.order_history.map(order => order.status)), new Set(['filled', 'cancelled']));
+    assert.equal(positionCalculator.calculate('EURUSD', portfolio, 'leveraged').type, 'long');
+});
+
+test('role SetRisk command applies a managed trailing stop that can close the position', async () => {
+    const { manager, positionCalculator } = createManager();
+    const getManagedState = attachManagedAccount(manager, {
+        cash: 9000,
+        assets: {
+            EURUSD: {
+                spot: { trades: [] },
+                leveraged: { trades: [{ time: 10, price: 1, amount: 1000, type: 'long', leverage: 5 }] },
+            },
+        },
+    });
+    const updated = await manager.processManagedAccountTradeCommand({
+        module: 'Trade',
+        type: 'SetRisk',
+        args: ['acct_role', 'EURUSD', 0, 0, 1],
+    });
+    assert.equal(updated, true);
+    assert.equal(getManagedState().portfolio.assets.EURUSD.leveraged.risk_controls.trailing_stop_pct, 1);
+
+    const result = await manager.processManagedAccountRiskForCandle('EURUSD', {
+        time: 11,
+        open: 1.08,
+        high: 1.10,
+        low: 1.08,
+        close: 1.085,
+    });
+    const portfolio = getManagedState().portfolio;
+    assert.equal(result.events[0].type, 'trailing_stop');
+    assert.equal(positionCalculator.calculate('EURUSD', portfolio, 'leveraged').type, null);
 });
