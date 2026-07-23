@@ -537,6 +537,13 @@ export class SillyViewApp {
         };
         this.events?.refreshRoleDebugWindow?.();
 
+        const toastr = this.dependencies.win.toastr;
+        const waitingToast = toastr?.info?.(
+            '正在等待角色扮演 AI 输出，请稍候……',
+            '角色 AI 处理中',
+            { timeOut: 0, extendedTimeOut: 0, closeButton: false, tapToDismiss: false }
+        );
+
         try {
             const result = await this.roleDecision.run(context);
             if (!result?.frontend_injection) throw new Error('角色模型未返回可注入内容。');
@@ -569,6 +576,8 @@ export class SillyViewApp {
             this.logger.error('角色决策流程失败，前台生成将继续但不注入角色决策。', error);
             this.dependencies.win.toastr?.warning(`角色决策流程失败: ${error.message || error}`);
         } finally {
+            if (toastr?.clear && waitingToast) toastr.clear(waitingToast);
+            else waitingToast?.remove?.();
             this.events?.refreshRoleDebugWindow?.();
         }
     }

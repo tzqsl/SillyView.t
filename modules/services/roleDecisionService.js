@@ -13,6 +13,7 @@ export class RoleDecisionService {
         this.lastRun = null;
         this.lastCapture = null;
         this.running = false;
+        this.retryDelayMs = dependencies.retry_delay_ms ?? 500;
     }
 
     isEnabled() {
@@ -79,32 +80,52 @@ export class RoleDecisionService {
         return await this.data.getManagedRoleProfiles();
     }
 
+    async _withRetries(operation, label) {
+        let lastError;
+        for (let attempt = 0; attempt <= 3; attempt++) {
+            try {
+                return await operation(attempt);
+            } catch (error) {
+                lastError = error;
+                if (attempt >= 3) break;
+                this.logger.warn(`${label}失败，将在第 ${attempt + 1}/3 次重试: ${error?.message || error}`);
+                if (this.retryDelayMs > 0) {
+                    await new Promise(resolve => setTimeout(resolve, this.retryDelayMs));
+                }
+            }
+        }
+        throw lastError;
+    }
+
     async _generate(orderedPrompts, suffix) {
         if (!this.th?.generateRaw) throw new Error('TavernHelper.generateRaw 不可用。');
         const settings = this._getSettings();
         const customApi = this._buildCustomApi(settings);
-        const generationId = `sillyview-role-${Date.now()}-${suffix}`;
-        const generationPromise = this.th.generateRaw({
-            generation_id: generationId,
-            should_stream: false,
-            should_silence: true,
-            max_chat_history: 0,
-            custom_api: customApi,
-            ordered_prompts: orderedPrompts,
-        });
         const timeoutMs = Math.max(1000, Number(settings.timeout_ms) || 60000);
-        let timeoutHandle;
-        const timeoutPromise = new Promise((_, reject) => {
-            timeoutHandle = setTimeout(() => {
-                this.th.stopGenerationById?.(generationId);
-                reject(new Error(`角色决策请求超时（${timeoutMs}ms）。`));
-            }, timeoutMs);
-        });
-        try {
-            return await Promise.race([generationPromise, timeoutPromise]);
-        } finally {
-            if (timeoutHandle) clearTimeout(timeoutHandle);
-        }
+
+        return await this._withRetries(async attempt => {
+            const generationId = `sillyview-role-${Date.now()}-${suffix}-${attempt}`;
+            const generationPromise = this.th.generateRaw({
+                generation_id: generationId,
+                should_stream: false,
+                should_silence: true,
+                max_chat_history: 0,
+                custom_api: customApi,
+                ordered_prompts: orderedPrompts,
+            });
+            let timeoutHandle;
+            const timeoutPromise = new Promise((_, reject) => {
+                timeoutHandle = setTimeout(() => {
+                    this.th.stopGenerationById?.(generationId);
+                    reject(new Error(`角色决策请求超时（${timeoutMs}ms）。`));
+                }, timeoutMs);
+            });
+            try {
+                return await Promise.race([generationPromise, timeoutPromise]);
+            } finally {
+                if (timeoutHandle) clearTimeout(timeoutHandle);
+            }
+        }, '角色扮演 AI 请求');
     }
 
     _buildCustomApi(settings) {

@@ -12,6 +12,7 @@ export class BackgroundAIService {
         this.logger = dependencies.logger;
         this.config = dependencies.config;
         this.data = dependencies.data;
+        this.retryDelayMs = dependencies.retry_delay_ms ?? 500;
     }
 
     _getSettings() {
@@ -76,6 +77,23 @@ export class BackgroundAIService {
         }
     }
 
+    async _withRetries(operation, label) {
+        let lastError;
+        for (let attempt = 0; attempt <= 3; attempt++) {
+            try {
+                return await operation(attempt);
+            } catch (error) {
+                lastError = error;
+                if (attempt >= 3) break;
+                this.logger.warn(`${label}失败，将在第 ${attempt + 1}/3 次重试: ${error?.message || error}`);
+                if (this.retryDelayMs > 0) {
+                    await new Promise(resolve => setTimeout(resolve, this.retryDelayMs));
+                }
+            }
+        }
+        throw lastError;
+    }
+
     async generateMarketResponse(marketPrompt) {
         if (!this.th?.generateRaw) {
             throw new Error('TavernHelper.generateRaw 不可用，无法进行后台静默生成。');
@@ -83,7 +101,6 @@ export class BackgroundAIService {
 
         const settings = this._getSettings();
         const customApi = this._buildCustomApi(settings);
-        const generationId = `sillyview-market-${Date.now()}`;
         const marketDirectorRules = await loadMarketDirectorRules();
         this._assertMarketPromptIsolation(marketPrompt);
         const timeoutMs = Number.isFinite(settings.timeout_ms) && settings.timeout_ms > 0
@@ -92,37 +109,40 @@ export class BackgroundAIService {
 
         this.logger.log(`SillyView background market generation started (${settings.enabled ? 'custom model' : 'current tavern model'}).`);
 
-        const generationPromise = this.th.generateRaw({
-            generation_id: generationId,
-            should_stream: false,
-            should_silence: true,
-            custom_api: customApi,
-            ordered_prompts: [
-                {
-                    role: 'system',
-                    content: [
-                        '你是 SillyView 的后台市场导演。',
-                        '你只负责根据上下文生成市场新闻、时间推进和结构化指令。',
-                        '不要扮演聊天角色，不要延续普通聊天，不要向用户寒暄。',
-                        '优先级：最后一条用户任务 > 本系统消息 > 参考资料与世界书。',
-                        '如果参考资料或世界书与最后一条用户任务冲突，必须优先完成最后一条用户任务。',
-                        '必须特别关注用户任务末尾的 <task> 块。',
-                    ].join('\n'),
-                },
-                {
-                    role: 'system',
-                    content: [
-                        '以下是 SillyView 市场导演参考资料。它用于补充世界观、规则和可用指令，但优先级低于最后一条用户任务。',
-                        marketDirectorRules,
-                    ].join('\n'),
-                },
-                {
-                    role: 'user',
-                    content: marketPrompt,
-                },
-            ],
-        });
+        return await this._withRetries(async attempt => {
+            const generationId = `sillyview-market-${Date.now()}-${attempt}`;
+            const generationPromise = this.th.generateRaw({
+                generation_id: generationId,
+                should_stream: false,
+                should_silence: true,
+                custom_api: customApi,
+                ordered_prompts: [
+                    {
+                        role: 'system',
+                        content: [
+                            '你是 SillyView 的后台市场导演。',
+                            '你只负责根据上下文生成市场新闻、时间推进和结构化指令。',
+                            '不要扮演聊天角色，不要延续普通聊天，不要向用户寒暄。',
+                            '优先级：最后一条用户任务 > 本系统消息 > 参考资料与世界书。',
+                            '如果参考资料或世界书与最后一条用户任务冲突，必须优先完成最后一条用户任务。',
+                            '必须特别关注用户任务末尾的 <task> 块。',
+                        ].join('\n'),
+                    },
+                    {
+                        role: 'system',
+                        content: [
+                            '以下是 SillyView 市场导演参考资料。它用于补充世界观、规则和可用指令，但优先级低于最后一条用户任务。',
+                            marketDirectorRules,
+                        ].join('\n'),
+                    },
+                    {
+                        role: 'user',
+                        content: marketPrompt,
+                    },
+                ],
+            });
 
-        return await this._withTimeout(generationPromise, generationId, timeoutMs);
+            return await this._withTimeout(generationPromise, generationId, timeoutMs);
+        }, '后台市场 AI 请求');
     }
 }
