@@ -44,19 +44,31 @@ async function loadScript(url, doc) {
 }
 
 // 1. Wait for SillyTavern's APIs to be ready
-const apiReadyInterval = setInterval(async () => {
+let apiInitializationStarted = false;
+const initializeIfReady = async () => {
+    if (apiInitializationStarted) return;
     if (window.parent && window.parent.SillyTavern && window.parent.TavernHelper && window.parent.jQuery && window.parent.toastr && window.parent.SillyTavern.getContext) {
+        apiInitializationStarted = true;
         clearInterval(apiReadyInterval);
         await mainInitialize();
     }
-}, 250);
+};
+const apiReadyInterval = setInterval(initializeIfReady, 50);
+void initializeIfReady();
 
 async function mainInitialize() {
     Logger.log("SillyView APIs ready. Initializing App (v6.1 - DI Fix)...");
 
     try {
-        await loadScript('https://cdn.jsdelivr.net/npm/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js', window.parent.document);
-        Logger.success("TradingView Lightweight Charts 库加载成功。");
+        const chartLibraryPromise = loadScript(
+            'https://cdn.jsdelivr.net/npm/lightweight-charts@4.0.1/dist/lightweight-charts.standalone.production.js',
+            window.parent.document
+        ).then(() => {
+            Logger.success("TradingView Lightweight Charts 库加载成功。");
+        }).catch(error => {
+            Logger.error("TradingView Lightweight Charts 库加载失败，角色拦截仍继续运行:", error);
+            return false;
+        });
         
         const app = new SillyViewApp();
 
@@ -129,6 +141,7 @@ async function mainInitialize() {
             logView,
             logger: Logger,
         });
+        await chartLibraryPromise;
 
     } catch (error) {
         Logger.error("CRITICAL: Failed to initialize SillyView:", error);

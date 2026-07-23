@@ -34,6 +34,7 @@ export class SillyViewApp {
         this.pendingMessageDeletionId = null;
         this.chatChangeSnapshotCleanupTimer = null;
         this.receivedMessageWatermarks = new Map();
+        this.eventListenersSetup = false;
 
         // Dependencies are set in init() by the main script.js entry point
         this.data = null;
@@ -75,9 +76,10 @@ export class SillyViewApp {
         this.tradeView.ui = this.ui; // FIX: Inject UI renderer into TradeView
 
         this.logger.log("SillyViewApp initializing with dependencies wired...");
+        this.setupEventListeners();
         this.ui.loadPanelHtml().then(() => {
             this.events.bindInitialEvents();
-            this.setupEventListeners();
+
             this.logger.success("SillyViewApp initialization complete.");
         });
     }
@@ -582,6 +584,31 @@ export class SillyViewApp {
         this.roleCaptureRetryTimers?.clear?.();
     }
 
+    async captureRoleTurnForRenderedUserMessage(messageId) {
+        if (!this.roleDecision?.isEnabled() && !this.roleDecision?.isDebugEnabled()) return;
+        try {
+            const latestMessageId = Number(await this.th.getLastMessageId());
+            if (Number(messageId) !== latestMessageId) return;
+            this.captureRoleTurnForUserMessage(latestMessageId);
+        } catch (error) {
+            this.logger.warn('从用户楼层渲染事件截取角色上下文失败:', error);
+        }
+    }
+
+    async _recoverLatestRoleTurnContext() {
+        const retryDelayMs = Math.max(0, Number(this.roleCaptureRetryDelayMs ?? 80));
+        for (let attempt = 0; attempt <= 3; attempt++) {
+            const latestMessageId = Number(await this.th.getLastMessageId());
+            const context = Number.isFinite(latestMessageId)
+                ? this.roleDecision.captureTurnContext(latestMessageId)
+                : null;
+            if (context) return context;
+            if (attempt < 3 && retryDelayMs > 0) {
+                await new Promise(resolve => setTimeout(resolve, retryDelayMs * (attempt + 1)));
+            }
+        }
+        return null;
+    }
     async prepareFrontendRoleInjection(type, option = {}, dryRun = false) {
         if (dryRun || !this.roleDecision?.isEnabled() || this.roleDecision.running) return;
         if (option?.automatic_trigger || !['normal', 'continue', undefined, null].includes(type)) {
@@ -601,10 +628,9 @@ export class SillyViewApp {
         let context = this.pendingRoleTurnContext;
         if (!context && ['normal', undefined, null].includes(type)) {
             try {
-                const latestMessageId = await this.th.getLastMessageId();
-                context = this.roleDecision.captureTurnContext(latestMessageId);
+                context = await this._recoverLatestRoleTurnContext();
                 if (context) {
-                    this.logger.warn(`未收到角色消息截取事件，已从最新用户楼层 ${latestMessageId} 恢复。`);
+                    this.logger.warn('未及时收到角色消息截取事件，已从用户楼层 ' + context.user_message_id + ' 重试恢复。');
                 }
             } catch (error) {
                 this.logger.warn('恢复最新角色消息上下文失败:', error);
@@ -1383,10 +1409,15 @@ export class SillyViewApp {
 
 
     setupEventListeners() {
+        if (this.eventListenersSetup) return;
+        this.eventListenersSetup = true;
         const { eventSource, eventTypes } = this.st_context;
         this._recordCurrentChatMessageBoundary();
         if (eventTypes.USER_MESSAGE_RENDERED) {
             eventSource.on(eventTypes.USER_MESSAGE_RENDERED, (id) => {
+                this.captureRoleTurnForRenderedUserMessage(id).catch(error => {
+                    this.logger.warn('Failed to capture role context after user message rendered:', error);
+                });
                 this.advanceMinutesForUserMessage(id).catch(error => {
                     this.logger.warn('Failed to advance minute candles after user message rendered:', error);
                 });

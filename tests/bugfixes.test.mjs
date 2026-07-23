@@ -57,6 +57,70 @@ test('liquidation line is rendered while the trade panel is in spot mode', () =>
     assert.equal(createdLines[0].lineVisible, true);
 });
 
+test('core listeners are registered before panel HTML finishes loading', async () => {
+    let resolvePanel;
+    let setupCount = 0;
+    let bindCount = 0;
+    const app = Object.create(SillyViewApp.prototype);
+    app.setupEventListeners = () => { setupCount += 1; };
+
+    const data = {};
+    const ui = {
+        dependencies: {},
+        loadPanelHtml: () => new Promise(resolve => { resolvePanel = resolve; }),
+    };
+    const tradeView = {};
+    const events = { bindInitialEvents: () => { bindCount += 1; } };
+    const logger = { log: () => {}, success: () => {} };
+
+    app.init({
+        data,
+        ui,
+        events,
+        tradeView,
+        logger,
+        commandParser: {},
+        aiDirector: {},
+        backgroundAI: {},
+        roleDecision: {},
+        marketSimulator: {},
+        positionCalculator: {},
+        assetsView: {},
+        newsView: {},
+        logView: {},
+        modals: {},
+    });
+
+    assert.equal(setupCount, 1);
+    assert.equal(bindCount, 0);
+
+    resolvePanel();
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    assert.equal(bindCount, 1);
+});
+
+test('generation-time recovery retries until the first user message becomes readable', async () => {
+    let attempts = 0;
+    const context = { user_message_id: 1, user_content: '新聊天第一条消息' };
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        roleCaptureRetryDelayMs: 0,
+        th: { getLastMessageId: async () => 1 },
+        roleDecision: {
+            captureTurnContext: () => {
+                attempts += 1;
+                return attempts < 3 ? null : context;
+            },
+        },
+    });
+
+    const recovered = await app._recoverLatestRoleTurnContext();
+
+    assert.equal(attempts, 3);
+    assert.equal(recovered, context);
+});
+
 test('frontend role injection recovers the latest user context when capture event was missed', async () => {
     const injected = [];
     const context = { user_message_id: 7, user_content: '测试输入' };
