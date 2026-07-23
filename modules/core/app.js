@@ -499,19 +499,35 @@ export class SillyViewApp {
     }
 
     async prepareFrontendRoleInjection(type, option = {}, dryRun = false) {
-        if (dryRun || !this.pendingRoleTurnContext || !this.roleDecision?.isEnabled()) return;
+        if (dryRun || !this.roleDecision?.isEnabled() || this.roleDecision.running) return;
         if (option?.automatic_trigger || !['normal', 'continue', undefined, null].includes(type)) {
-            this.lastRoleDispatchStatus = {
-                status: 'skipped',
-                user_message_id: this.pendingRoleTurnContext.user_message_id,
-                detail: option?.automatic_trigger ? '自动触发生成不运行角色决策。' : `生成类型 ${String(type)} 不运行角色决策。`,
-                updated_at: Date.now(),
-            };
+            if (this.pendingRoleTurnContext) {
+                this.lastRoleDispatchStatus = {
+                    status: 'skipped',
+                    user_message_id: this.pendingRoleTurnContext.user_message_id,
+                    detail: option?.automatic_trigger ? '自动触发生成不运行角色决策。' : `生成类型 ${String(type)} 不运行角色决策。`,
+                    updated_at: Date.now(),
+                };
+            }
             this.pendingRoleTurnContext = null;
             this.events?.refreshRoleDebugWindow?.();
             return;
         }
-        const context = this.pendingRoleTurnContext;
+
+        let context = this.pendingRoleTurnContext;
+        if (!context && ['normal', undefined, null].includes(type)) {
+            try {
+                const latestMessageId = await this.th.getLastMessageId();
+                context = this.roleDecision.captureTurnContext(latestMessageId);
+                if (context) {
+                    this.logger.warn(`未收到角色消息截取事件，已从最新用户楼层 ${latestMessageId} 恢复。`);
+                }
+            } catch (error) {
+                this.logger.warn('恢复最新角色消息上下文失败:', error);
+            }
+        }
+        if (!context) return;
+
         this.pendingRoleTurnContext = null;
         this.lastRoleDispatchStatus = {
             status: 'generating',

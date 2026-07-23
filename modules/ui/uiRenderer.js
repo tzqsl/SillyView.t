@@ -523,6 +523,9 @@ export class UIRenderer {
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio);
         const positionMode = this.tradeMode === 'leverage' ? 'leveraged' : 'spot';
         const position = this.positionCalculator.calculate(this.currentAsset, portfolio, positionMode);
+        const leveragedPosition = positionMode === 'leveraged'
+            ? position
+            : this.positionCalculator.calculate(this.currentAsset, portfolio, 'leveraged');
         
         if (position.totalAmount > 0) {
             const pnl = position.type === 'long' 
@@ -548,21 +551,23 @@ export class UIRenderer {
                 axisLabelVisible: true 
             });
             
-            if (position.isLeveraged && position.liquidationPrice > 0) {
-                 const liqColor = position.type === 'long' ? '#facc15' : '#a855f7';
-                 this.liquidationLine = this.chartManager.createPriceLine({ 
-                    price: position.liquidationPrice, 
-                    title: `强平 @ ${position.liquidationPrice.toFixed(4)}`, 
-                    color: liqColor, 
-                    lineWidth: 2, 
-                    lineStyle: this.win.LightweightCharts.LineStyle.Dotted, 
-                    axisLabelVisible: true 
-                });
-            }
-
         } else {
             if(dataPnl) dataPnl.textContent = '-';
             if(dataPnlDetails) dataPnlDetails.textContent = '';
+        }
+
+        const liquidationPrice = Number(leveragedPosition?.liquidationPrice);
+        if (leveragedPosition?.isLeveraged && Number.isFinite(liquidationPrice) && liquidationPrice > 0) {
+            const liqColor = leveragedPosition.type === 'long' ? '#facc15' : '#a855f7';
+            this.liquidationLine = this.chartManager.createPriceLine({
+                price: liquidationPrice,
+                title: `强平 @ ${liquidationPrice.toFixed(4)}`,
+                color: liqColor,
+                lineWidth: 2,
+                lineStyle: this.win.LightweightCharts.LineStyle.Dotted,
+                lineVisible: true,
+                axisLabelVisible: true,
+            });
         }
     }
     
