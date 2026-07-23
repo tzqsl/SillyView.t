@@ -119,15 +119,31 @@ export class RoleDecisionService {
         return Object.keys(customApi).length > 0 ? customApi : undefined;
     }
 
+    _getRoleName(profile) {
+        const explicitName = String(profile?.role_name || '').trim();
+        if (explicitName) return explicitName;
+        const match = String(profile?.content || '').match(/^\s*<([^\s<>/"'=]+)>/);
+        return String(match?.[1] || '').trim();
+    }
+
     _buildRoleSystemPrompt(commandGuide, outputRules, roleProfiles) {
+        const roleNames = [...new Set(roleProfiles.map(profile => this._getRoleName(profile)).filter(Boolean))];
+        const roleIndex = roleNames.length > 0
+            ? roleNames.map((roleName, index) => `${index + 1}. ${roleName}（来源标签 <${roleName}></${roleName}>）`).join('\n')
+            : '未导入角色；不得自行创造需要扮演的人物。';
         const profileText = roleProfiles.length > 0
             ? roleProfiles.map(profile => profile.content).join('\n\n')
             : '未导入角色人设。';
         return [
             '你是 SillyView 的幕后角色决策 AI，不是与用户直接对话的前台 AI。',
-            '本次只根据上一条角色正文和用户本轮信息，分别判断相关角色的内心活动、下一步剧情倾向，以及是否会主动查看手机、市场或自己的账户。',
+            '你的任务是分别进入角色索引中人物的身份，依据各自人设进行扮演，并根据上一条角色正文和用户本轮信息判断其内心活动、下一步剧情倾向，以及是否会主动查看手机、市场或自己的账户。',
+            '写角色心理时必须进入该角色自身意识，以符合其性格、认知和语言习惯的第一人称“我”表达；禁止用第三人称旁观视角直白概述“他/她/角色名在想什么”。',
             '不要续写面向用户的正文、对白或旁白，不要假定角色知道尚未观察的账户和行情。',
             '如果当前上下文不足以支持具体交易，先观察或保持不行动，禁止编造余额、持仓、价格和新闻。',
+            '',
+            '【角色索引：以下全部人物都属于你的扮演任务】',
+            '索引姓名直接取自使用 [SillyView.ImportRoleProfiles()] 的条目标签；例如 <张三></张三> 的角色名就是“张三”。不得改名、合并身份或把标签名当成普通资料标题。',
+            roleIndex,
             '',
             '【本次可用的全部角色人设】',
             profileText,
