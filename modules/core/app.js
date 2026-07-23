@@ -33,6 +33,7 @@ export class SillyViewApp {
         this.turnStateSnapshots = new Map();
         this.pendingMessageDeletionId = null;
         this.chatChangeSnapshotCleanupTimer = null;
+        this.receivedMessageWatermarks = new Map();
 
         // Dependencies are set in init() by the main script.js entry point
         this.data = null;
@@ -444,6 +445,38 @@ export class SillyViewApp {
             this.longTargetExpiryTurnRunning = false;
             this.ui.tradeView?.updateActionButtonsState(false, false);
         }
+    }
+
+    _getCurrentChatKey(chatId = null) {
+        return String(chatId || this.st?.getCurrentChatId?.() || this.st_context?.chatId || 'current');
+    }
+
+    _recordCurrentChatMessageBoundary(chatId = null) {
+        const lastMessageId = Number(this.th?.getLastMessageId?.());
+        if (!Number.isFinite(lastMessageId)) return;
+        const chatKey = this._getCurrentChatKey(chatId);
+        const currentBoundary = this.receivedMessageWatermarks?.get(chatKey);
+        if (!this.receivedMessageWatermarks) this.receivedMessageWatermarks = new Map();
+        this.receivedMessageWatermarks.set(
+            chatKey,
+            currentBoundary === undefined ? lastMessageId : Math.max(currentBoundary, lastMessageId)
+        );
+    }
+
+    _shouldProcessReceivedMessage(messageId) {
+        const numericMessageId = Number(messageId);
+        if (!Number.isFinite(numericMessageId)) return false;
+        if (!this.receivedMessageWatermarks) this.receivedMessageWatermarks = new Map();
+
+        const chatKey = this._getCurrentChatKey();
+        const boundary = this.receivedMessageWatermarks.get(chatKey);
+        if (boundary !== undefined && numericMessageId <= boundary) {
+            this.logger?.log?.('跳过已存在或重复接收的消息 ' + chatKey + '#' + numericMessageId + '，避免重复执行市场指令。');
+            return false;
+        }
+
+        this.receivedMessageWatermarks.set(chatKey, numericMessageId);
+        return true;
     }
 
     debouncedMainProcessor(msgId, isReprocessing = false) {
@@ -1351,6 +1384,7 @@ export class SillyViewApp {
 
     setupEventListeners() {
         const { eventSource, eventTypes } = this.st_context;
+        this._recordCurrentChatMessageBoundary();
         if (eventTypes.USER_MESSAGE_RENDERED) {
             eventSource.on(eventTypes.USER_MESSAGE_RENDERED, (id) => {
                 this.advanceMinutesForUserMessage(id).catch(error => {
@@ -1376,13 +1410,16 @@ export class SillyViewApp {
                 await this.prepareFrontendRoleInjection(type, option, dryRun);
             });
         }
-        eventSource.on(eventTypes.MESSAGE_RECEIVED, (id) => this.debouncedMainProcessor(id, false));
+        eventSource.on(eventTypes.MESSAGE_RECEIVED, (id) => {
+            if (this._shouldProcessReceivedMessage(id)) this.debouncedMainProcessor(id, false);
+        });
         eventSource.on(eventTypes.MESSAGE_EDITED, (id) => this.debouncedMainProcessor(id, true));
         eventSource.on(eventTypes.MESSAGE_SWIPED, (id) => this.debouncedMainProcessor(id, true));
         eventSource.on(eventTypes.MESSAGE_DELETED, async (id) => {
             await this.rollbackStateForDeletedMessage(id);
         });
-        eventSource.on(eventTypes.CHAT_CHANGED, () => {
+        eventSource.on(eventTypes.CHAT_CHANGED, (chatId) => {
+            this._recordCurrentChatMessageBoundary(chatId);
             if (this.chatChangeSnapshotCleanupTimer) clearTimeout(this.chatChangeSnapshotCleanupTimer);
             this.chatChangeSnapshotCleanupTimer = setTimeout(() => {
                 if (this.pendingMessageDeletionId === null) {

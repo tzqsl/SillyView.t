@@ -129,6 +129,32 @@ test('user role context capture retries until the just-sent message is readable'
     assert.equal(app.lastRoleDispatchStatus.status, 'queued');
 });
 
+test('refresh boundary skips historical assistant messages but accepts new replies per chat', () => {
+    let chatId = 'chat-a';
+    let lastMessageId = 12;
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        receivedMessageWatermarks: new Map(),
+        st: { getCurrentChatId: () => chatId },
+        st_context: {},
+        th: { getLastMessageId: () => lastMessageId },
+        logger: { log: () => {} },
+    });
+
+    app._recordCurrentChatMessageBoundary();
+
+    assert.equal(app._shouldProcessReceivedMessage(12), false);
+    assert.equal(app._shouldProcessReceivedMessage(13), true);
+    assert.equal(app._shouldProcessReceivedMessage(13), false);
+
+    chatId = 'chat-b';
+    lastMessageId = 3;
+    app._recordCurrentChatMessageBoundary(chatId);
+
+    assert.equal(app._shouldProcessReceivedMessage(3), false);
+    assert.equal(app._shouldProcessReceivedMessage(4), true);
+});
+
 test('records a rollback snapshot even when real-time auto advance is enabled', async () => {
     let marketAdvances = 0;
     const snapshot = new Map([['market', { minute_time_index: 10 }]]);
