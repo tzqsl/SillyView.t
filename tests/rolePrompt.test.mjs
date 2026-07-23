@@ -17,6 +17,8 @@ test('role system prompt lists imported tag names as roleplay assignments', () =
     assert.equal((prompt.match(/来源标签 <张三><\/张三>/g) || []).length, 1);
     assert.match(prompt, /第一人称“我”表达/);
     assert.match(prompt, /禁止用第三人称旁观视角/);
+    assert.match(prompt, /并不默认指角色对 FX、行情或交易的看法/);
+    assert.match(prompt, /若本轮正文与 FX 无关/);
 });
 
 test('role system prompt does not invent an index when no profiles were imported', () => {

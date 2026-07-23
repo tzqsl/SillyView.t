@@ -101,3 +101,85 @@ test('role generation does not recursively recover and dispatch itself', async (
 
     assert.equal(latestMessageReads, 0);
 });
+
+test('user role context capture retries until the just-sent message is readable', async () => {
+    let attempts = 0;
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        pendingRoleTurnContext: null,
+        lastCapturedRoleMessageId: null,
+        roleCaptureRetryDelayMs: 0,
+        roleCaptureRetryTimers: new Map(),
+        roleDecision: {
+            isEnabled: () => true,
+            isDebugEnabled: () => false,
+            captureTurnContext: id => {
+                attempts += 1;
+                return attempts < 3 ? null : { user_message_id: id, user_content: '稍后可读' };
+            },
+        },
+        events: { refreshRoleDebugWindow: () => {} },
+    });
+
+    app.captureRoleTurnForUserMessage(12);
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    assert.equal(attempts, 3);
+    assert.equal(app.pendingRoleTurnContext.user_message_id, 12);
+    assert.equal(app.lastRoleDispatchStatus.status, 'queued');
+});
+
+test('records a rollback snapshot even when real-time auto advance is enabled', async () => {
+    let marketAdvances = 0;
+    const snapshot = new Map([['market', { minute_time_index: 10 }]]);
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        lastMinuteAdvanceMessageId: null,
+        turnStateSnapshots: new Map(),
+        th: { getChatMessages: () => [{ is_user: true }] },
+        data: {
+            ensureStateLoaded: async () => true,
+            createSnapshot: () => snapshot,
+        },
+        _getAutoAdvanceSettings: () => ({ enabled: true }),
+        advanceMarketMinutes: async () => { marketAdvances += 1; },
+        resetAutoAdvanceTimer: () => {},
+    });
+
+    await app.advanceMinutesForUserMessage('5');
+
+    assert.equal(app.turnStateSnapshots.get(5), snapshot);
+    assert.equal(app.lastMinuteAdvanceMessageId, 5);
+    assert.equal(marketAdvances, 0);
+});
+test('deleting the current reply restores the market snapshot from before its user turn', async () => {
+    const snapshot = new Map([['market', { minute_time_index: 30 }]]);
+    let restored = null;
+    let saveCount = 0;
+    let renderCount = 0;
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        previousStateSnapshot: null,
+        lastMinuteAdvanceMessageId: 5,
+        pendingRoleTurnContext: { user_message_id: 5 },
+        lastCapturedRoleMessageId: 5,
+        pendingMessageDeletionId: null,
+        roleCaptureRetryTimers: new Map(),
+        turnStateSnapshots: new Map([[5, snapshot]]),
+        th: { getLastMessageId: async () => 5 },
+        data: {
+            restoreStateFromSnapshot: value => { restored = value; },
+            saveAllEntries: async () => { saveCount += 1; },
+        },
+        ui: { renderAll: () => { renderCount += 1; } },
+    });
+
+    const rolledBack = await app.rollbackStateForDeletedMessage(6);
+
+    assert.equal(rolledBack, true);
+    assert.equal(restored, snapshot);
+    assert.equal(saveCount, 1);
+    assert.equal(renderCount, 1);
+    assert.equal(app.turnStateSnapshots.has(5), false);
+    assert.equal(app.pendingRoleTurnContext, null);
+});

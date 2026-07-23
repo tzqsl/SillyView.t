@@ -27,6 +27,12 @@ export class SillyViewApp {
         this.pendingRoleTurnContext = null;
         this.lastRoleInjectionId = null;
         this.lastRoleDispatchStatus = null;
+        this.lastCapturedRoleMessageId = null;
+        this.roleCaptureRetryDelayMs = 80;
+        this.roleCaptureRetryTimers = new Map();
+        this.turnStateSnapshots = new Map();
+        this.pendingMessageDeletionId = null;
+        this.chatChangeSnapshotCleanupTimer = null;
 
         // Dependencies are set in init() by the main script.js entry point
         this.data = null;
@@ -475,10 +481,44 @@ export class SillyViewApp {
         return await this.data.endManagedObservationSession(sessionId, options);
     }
 
-    captureRoleTurnForUserMessage(messageId) {
-        if (!this.roleDecision?.isEnabled() && !this.roleDecision?.isDebugEnabled()) return;
-        const context = this.roleDecision.captureTurnContext(messageId);
-        if (!context) return;
+    captureRoleTurnForUserMessage(messageId, attempt = 0) {
+        const numericMessageId = Number(messageId);
+        if (!Number.isFinite(numericMessageId)) return;
+        if (!this.roleDecision?.isEnabled() && !this.roleDecision?.isDebugEnabled()) {
+            this._clearRoleCaptureRetry(numericMessageId);
+            return;
+        }
+        if (this.lastCapturedRoleMessageId === numericMessageId ||
+            Number(this.pendingRoleTurnContext?.user_message_id) === numericMessageId) {
+            this._clearRoleCaptureRetry(numericMessageId);
+            return;
+        }
+        if (attempt === 0 && this.roleCaptureRetryTimers?.has(numericMessageId)) return;
+
+        const context = this.roleDecision.captureTurnContext(numericMessageId);
+        if (!context) {
+            if (attempt >= 3) {
+                this._clearRoleCaptureRetry(numericMessageId);
+                this.lastRoleDispatchStatus = {
+                    status: 'capture_failed',
+                    user_message_id: numericMessageId,
+                    detail: '用户消息暂时无法读取，已完成 3 次截取重试。生成前仍会再次恢复。',
+                    updated_at: Date.now(),
+                };
+                this.events?.refreshRoleDebugWindow?.();
+                return;
+            }
+            const delay = Math.max(0, Number(this.roleCaptureRetryDelayMs) || 0) * (attempt + 1);
+            const timer = setTimeout(() => {
+                this.roleCaptureRetryTimers?.delete(numericMessageId);
+                this.captureRoleTurnForUserMessage(numericMessageId, attempt + 1);
+            }, delay);
+            this.roleCaptureRetryTimers?.set(numericMessageId, timer);
+            return;
+        }
+
+        this._clearRoleCaptureRetry(numericMessageId);
+        this.lastCapturedRoleMessageId = numericMessageId;
         if (this.roleDecision.isEnabled()) {
             this.pendingRoleTurnContext = context;
             this.lastRoleDispatchStatus = {
@@ -496,6 +536,17 @@ export class SillyViewApp {
             };
         }
         this.events?.refreshRoleDebugWindow?.();
+    }
+
+    _clearRoleCaptureRetry(messageId) {
+        const timer = this.roleCaptureRetryTimers?.get(Number(messageId));
+        if (timer) clearTimeout(timer);
+        this.roleCaptureRetryTimers?.delete(Number(messageId));
+    }
+
+    _clearAllRoleCaptureRetries() {
+        for (const timer of this.roleCaptureRetryTimers?.values?.() || []) clearTimeout(timer);
+        this.roleCaptureRetryTimers?.clear?.();
     }
 
     async prepareFrontendRoleInjection(type, option = {}, dryRun = false) {
@@ -1158,19 +1209,63 @@ export class SillyViewApp {
     }
 
     async advanceMinutesForUserMessage(msgId) {
-        if (this._getAutoAdvanceSettings().enabled) return;
-        if (this.lastMinuteAdvanceMessageId === msgId) return;
+        const numericMessageId = Number(msgId);
+        if (!Number.isFinite(numericMessageId) || this.lastMinuteAdvanceMessageId === numericMessageId) return;
 
         const messages = this.th.getChatMessages(msgId);
         if (!messages || messages.length === 0 || !messages[0].is_user) return;
-        this.lastMinuteAdvanceMessageId = msgId;
 
         const loaded = await this.data.ensureStateLoaded();
         if (!loaded) return;
+        this._rememberTurnStateSnapshot(numericMessageId);
+        this.lastMinuteAdvanceMessageId = numericMessageId;
+        if (this._getAutoAdvanceSettings().enabled) return;
 
         this.resetAutoAdvanceTimer('dialogue_minute');
         const barsToAdvance = Math.floor(Math.random() * 2) + 1;
         await this.advanceMarketMinutes(barsToAdvance, { render: true });
+    }
+
+    _rememberTurnStateSnapshot(messageId) {
+        const numericMessageId = Number(messageId);
+        if (!Number.isFinite(numericMessageId) || this.turnStateSnapshots?.has(numericMessageId)) return;
+        if (!this.turnStateSnapshots) this.turnStateSnapshots = new Map();
+        this.turnStateSnapshots.set(numericMessageId, this.data.createSnapshot());
+        while (this.turnStateSnapshots.size > 50) {
+            this.turnStateSnapshots.delete(this.turnStateSnapshots.keys().next().value);
+        }
+    }
+
+    async rollbackStateForDeletedMessage(messageId) {
+        const deletedMessageId = Number(messageId);
+        if (!Number.isFinite(deletedMessageId)) return false;
+        this.pendingMessageDeletionId = deletedMessageId;
+        try {
+            const lastMessageId = Number(await this.th.getLastMessageId());
+            if (!Number.isFinite(lastMessageId) || deletedMessageId !== lastMessageId + 1) return false;
+
+            const rollbackTurnId = this.turnStateSnapshots?.has(deletedMessageId)
+                ? deletedMessageId
+                : deletedMessageId - 1;
+            const snapshot = this.turnStateSnapshots?.get(rollbackTurnId) || this.previousStateSnapshot;
+            if (!snapshot) return false;
+
+            this.data.restoreStateFromSnapshot(snapshot);
+            this.previousStateSnapshot = null;
+            this.lastMinuteAdvanceMessageId = null;
+            this.pendingRoleTurnContext = null;
+            this.lastCapturedRoleMessageId = null;
+            this._clearAllRoleCaptureRetries();
+            for (const id of [...(this.turnStateSnapshots?.keys?.() || [])]) {
+                if (id >= rollbackTurnId) this.turnStateSnapshots.delete(id);
+            }
+            await this.data.saveAllEntries();
+            this.ui.renderAll();
+            return true;
+        } finally {
+            this.pendingMessageDeletionId = null;
+        this.chatChangeSnapshotCleanupTimer = null;
+        }
     }
 
     async advanceQuickModeMinutes(minutes = 5) {
@@ -1267,6 +1362,9 @@ export class SillyViewApp {
             eventSource.on(eventTypes.MESSAGE_SENT, (id) => {
                 this.captureRoleTurnForUserMessage(id);
                 setTimeout(() => {
+                    this.captureRoleTurnForUserMessage(id);
+                }, 80);
+                setTimeout(() => {
                     this.advanceMinutesForUserMessage(id).catch(error => {
                         this.logger.warn('Failed to advance minute candles for user message:', error);
                     });
@@ -1282,18 +1380,21 @@ export class SillyViewApp {
         eventSource.on(eventTypes.MESSAGE_EDITED, (id) => this.debouncedMainProcessor(id, true));
         eventSource.on(eventTypes.MESSAGE_SWIPED, (id) => this.debouncedMainProcessor(id, true));
         eventSource.on(eventTypes.MESSAGE_DELETED, async (id) => {
-            const lastMessageId = await this.th.getLastMessageId();
-            if (id === lastMessageId + 1 && this.previousStateSnapshot) {
-                 this.data.restoreStateFromSnapshot(this.previousStateSnapshot);
-                 this.previousStateSnapshot = null;
-                 await this.data.saveAllEntries();
-                 this.ui.renderAll();
-            }
+            await this.rollbackStateForDeletedMessage(id);
         });
         eventSource.on(eventTypes.CHAT_CHANGED, () => {
-            this.previousStateSnapshot = null;
+            if (this.chatChangeSnapshotCleanupTimer) clearTimeout(this.chatChangeSnapshotCleanupTimer);
+            this.chatChangeSnapshotCleanupTimer = setTimeout(() => {
+                if (this.pendingMessageDeletionId === null) {
+                    this.previousStateSnapshot = null;
+                    this.turnStateSnapshots.clear();
+                }
+                this.chatChangeSnapshotCleanupTimer = null;
+            }, 250);
             this.pendingRoleTurnContext = null;
             this.lastRoleDispatchStatus = null;
+            this.lastCapturedRoleMessageId = null;
+            this._clearAllRoleCaptureRetries();
             this.stopAutoAdvanceTimer();
             if (this.ui.isPanelVisible) {
                 this.data.loadInitialState();
