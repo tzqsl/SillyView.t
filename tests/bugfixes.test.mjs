@@ -65,7 +65,7 @@ test('core listeners are registered before panel HTML finishes loading', async (
     app.setupEventListeners = () => { setupCount += 1; };
 
     let roleMemoryInitCount = 0;
-    const data = { ensureRoleDecisionMemoryWorldbook: async () => { roleMemoryInitCount += 1; } };
+    const data = { ensureRoleDecisionMemoryEntry: async () => { roleMemoryInitCount += 1; } };
     const ui = {
         dependencies: {},
         loadPanelHtml: () => new Promise(resolve => { resolvePanel = resolve; }),

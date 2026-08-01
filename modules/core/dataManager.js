@@ -425,7 +425,7 @@ export class DataManager {
 
         const allBooks = await this.th.getWorldbookNames();
         this.hasGameBook = allBooks.includes(lorebookName);
-        await this.ensureRoleDecisionMemoryWorldbook();
+        await this.ensureRoleDecisionMemoryEntry();
 
         if (this.hasGameBook) {
             this.logger.log(`游戏世界书 "${lorebookName}" 已找到，正在加载数据...`);
@@ -1773,34 +1773,69 @@ export class DataManager {
         };
     }
 
-    async ensureRoleDecisionMemoryWorldbook() {
-        const worldbookName = this.config.role_memory.worldbook_name;
-        const entryKey = this.config.role_memory.entry_key;
-        const defaultMemory = this._defaultRoleDecisionMemory();
+    async _readLegacyRoleDecisionMemory() {
+        const legacyWorldbookName = 'SillyView_role_memory';
+        try {
+            const allBooks = await this.th.getWorldbookNames();
+            if (!allBooks.includes(legacyWorldbookName)) return null;
+            const entries = await this.th.getWorldbook(legacyWorldbookName);
+            const entry = entries.find(item => item.name === this.config.multi_account.role_memory_key);
+            if (!entry?.content) return null;
+            const memory = JSON.parse(entry.content);
+            return memory && typeof memory === 'object' ? memory : null;
+        } catch (error) {
+            this.logger.warn('迁移旧角色决策记忆失败，已使用空记录。', error);
+            return null;
+        }
+    }
+
+    async ensureRoleDecisionMemoryEntry() {
+        const worldbookName = this.config.multi_account.control_worldbook_name;
+        const entryKey = this.config.multi_account.role_memory_key;
         await this._ensureWorldbookExists(worldbookName, [{
             name: entryKey,
-            content: JSON.stringify(defaultMemory, null, 2),
+            content: JSON.stringify(this._defaultRoleDecisionMemory(), null, 2),
             enabled: false,
         }]);
+
+        const legacyMemory = await this._readLegacyRoleDecisionMemory();
+        const initialMemory = legacyMemory || this._defaultRoleDecisionMemory();
+
         await this.th.updateWorldbookWith(worldbookName, entries => {
             const entry = entries.find(item => item.name === entryKey);
             if (entry) {
+                if (legacyMemory) {
+                    try {
+                        const currentMemory = JSON.parse(entry.content || '{}');
+                        if (!currentMemory.latest_run) entry.content = JSON.stringify(legacyMemory, null, 2);
+                    } catch (error) {
+                        entry.content = JSON.stringify(legacyMemory, null, 2);
+                    }
+                }
                 entry.enabled = false;
             } else {
                 entries.push({
                     name: entryKey,
-                    content: JSON.stringify(defaultMemory, null, 2),
+                    content: JSON.stringify(initialMemory, null, 2),
                     enabled: false,
                 });
             }
             return entries;
         });
+
+        if (legacyMemory && typeof this.th.deleteWorldbook === 'function') {
+            try {
+                await this.th.deleteWorldbook('SillyView_role_memory');
+            } catch (error) {
+                this.logger.warn('旧角色决策记忆已迁移，但清理旧世界书失败。', error);
+            }
+        }
     }
 
     async getRoleDecisionMemory() {
         try {
-            const entries = await this.th.getWorldbook(this.config.role_memory.worldbook_name);
-            const entry = entries.find(item => item.name === this.config.role_memory.entry_key);
+            const entries = await this.th.getWorldbook(this.config.multi_account.control_worldbook_name);
+            const entry = entries.find(item => item.name === this.config.multi_account.role_memory_key);
             if (!entry?.content) return this._defaultRoleDecisionMemory();
             const memory = JSON.parse(entry.content);
             return memory && typeof memory === 'object' ? memory : this._defaultRoleDecisionMemory();
@@ -1813,9 +1848,9 @@ export class DataManager {
     async saveRoleDecisionMemory(roleRun) {
         if (!roleRun || typeof roleRun !== 'object') return false;
 
-        const worldbookName = this.config.role_memory.worldbook_name;
-        const entryKey = this.config.role_memory.entry_key;
-        await this.ensureRoleDecisionMemoryWorldbook();
+        const worldbookName = this.config.multi_account.control_worldbook_name;
+        const entryKey = this.config.multi_account.role_memory_key;
+        await this.ensureRoleDecisionMemoryEntry();
         const memory = {
             version: 1,
             updated_at: Date.now(),
@@ -2292,6 +2327,11 @@ export class DataManager {
                 enabled: false,
                 content: JSON.stringify(this._defaultAutoEventLog(), null, 2),
             },
+            {
+                name: this.config.multi_account.role_memory_key,
+                enabled: false,
+                content: JSON.stringify(this._defaultRoleDecisionMemory(), null, 2),
+            },
         );
         return entries;
     }
@@ -2312,6 +2352,12 @@ export class DataManager {
                 this._upsertWorldbookEntry(entries, this.config.multi_account.auto_event_log_key, JSON.stringify(this._defaultAutoEventLog(), null, 2), false);
             } else {
                 eventLogEntry.enabled = false;
+            }
+            const roleMemoryEntry = entries.find(entry => entry.name === this.config.multi_account.role_memory_key);
+            if (!roleMemoryEntry) {
+                this._upsertWorldbookEntry(entries, this.config.multi_account.role_memory_key, JSON.stringify(this._defaultRoleDecisionMemory(), null, 2), false);
+            } else {
+                roleMemoryEntry.enabled = false;
             }
             const accountIndex = entries.find(entry => entry.name === this.config.multi_account.account_index_key);
             if (accountIndex) accountIndex.enabled = false;

@@ -182,7 +182,7 @@ AI 从 `sv_accounts_trade_commands` 内的精简账户目录获取 account_id，
 const snapshot = await window.parent.SillyViewAPI.getSnapshot();
 ```
 
-`getSnapshot()` 返回主账户资产和挂单、市场摘要、最近一轮角色心声与剧情大纲、角色决策状态，以及按角色归属整理的账户余额、净值、盈亏、持仓、挂单和近期重大事件。最近一轮角色决策完整记录保存在未激活的 `SillyView_role_memory` 世界书内 `sv_role_decision_latest` 条目中，刷新页面或重启酒馆后手机界面仍可恢复。市场资产的 `change_pct` 根据当前价和24小时前的小时K收盘价实时计算；历史不足24小时时使用最早可用K线。`getOrders({ includeHistory: true })` 可单独读取主账户有效挂单与订单历史。接口不提供写入和交易方法，避免界面绕过插件的交易校验。
+`getSnapshot()` 返回主账户资产和挂单、市场摘要、最近一轮角色心声与剧情大纲、角色决策状态，以及按角色归属整理的账户余额、净值、盈亏、持仓、挂单和近期重大事件。最近一轮角色决策完整记录保存在 `SillyView_accounts` 世界书内未激活的 `sv_role_decision_latest` 条目中，刷新页面或重启酒馆后手机界面仍可恢复。市场资产的 `change_pct` 根据当前价和24小时前的小时K收盘价实时计算；历史不足24小时时使用最早可用K线。`getOrders({ includeHistory: true })` 可单独读取主账户有效挂单与订单历史。接口不提供写入和交易方法，避免界面绕过插件的交易校验。
 
 ## 当前建议路线
 

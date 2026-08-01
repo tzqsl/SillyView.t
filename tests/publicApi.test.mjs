@@ -4,14 +4,14 @@ import assert from 'node:assert/strict';
 import { createSillyViewPublicAPI } from '../modules/services/publicApi.js';
 
 const config = {
+    multi_account: {
+        control_worldbook_name: 'SillyView_accounts',
+        role_memory_key: 'sv_role_decision_latest',
+    },
     world_book_keys: {
         player_portfolio: 'portfolio',
         global_market: 'market',
         asset_prefix: 'asset_',
-    },
-    role_memory: {
-        worldbook_name: 'SillyView_role_memory',
-        entry_key: 'sv_role_decision_latest',
     },
     asset_definitions: {
         EURUSD: { name: '欧元/美元' },
@@ -119,5 +119,5 @@ test('mobile role thoughts come from persisted worldbook memory after runtime st
     }]);
     assert.equal(snapshot.role_status.completed_at, 120);
     assert.equal(snapshot.role_status.source, 'worldbook');
-    assert.equal(snapshot.role_status.worldbook_name, 'SillyView_role_memory');
+    assert.equal(snapshot.role_status.worldbook_name, 'SillyView_accounts');
 });

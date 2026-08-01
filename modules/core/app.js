@@ -76,7 +76,7 @@ export class SillyViewApp {
         this.tradeView.ui = this.ui; // FIX: Inject UI renderer into TradeView
 
         this.logger.log("SillyViewApp initializing with dependencies wired...");
-        const roleMemoryInitialization = this.data.ensureRoleDecisionMemoryWorldbook?.();
+        const roleMemoryInitialization = this.data.ensureRoleDecisionMemoryEntry?.();
         roleMemoryInitialization?.catch(error => {
             this.logger.warn('初始化角色决策记忆世界书失败:', error);
         });
