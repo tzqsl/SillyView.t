@@ -273,3 +273,55 @@ test('deleting the current reply restores the market snapshot from before its us
     assert.equal(app.turnStateSnapshots.has(5), false);
     assert.equal(app.pendingRoleTurnContext, null);
 });
+
+test('plain Enter on the chat textarea starts role capture but newline shortcuts do not', async () => {
+    let captureCount = 0;
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        captureRoleTurnAfterKeyboardSend: async () => { captureCount += 1; },
+        logger: { warn: () => {} },
+    });
+    const target = { matches: selector => selector === '#send_textarea' };
+
+    app.handleRoleSendKeydown({ key: 'Enter', target });
+    app.handleRoleSendKeydown({ key: 'Enter', shiftKey: true, target });
+    app.handleRoleSendKeydown({ key: 'Enter', isComposing: true, target });
+    app.handleRoleSendKeydown({ key: 'a', target });
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    assert.equal(captureCount, 1);
+});
+
+test('Enter capture retries until the new user message is persisted', async () => {
+    let latestReadCount = 0;
+    const accepted = [];
+    const context = { user_message_id: 9, user_content: '回车发送内容' };
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        roleCaptureRetryDelayMs: 0,
+        roleCaptureRetryTimers: new Map(),
+        lastCapturedRoleMessageId: null,
+        roleDecision: {
+            isEnabled: () => true,
+            isDebugEnabled: () => false,
+            captureTurnContext: id => id === 9 ? context : null,
+        },
+        th: {
+            getLastMessageId: async () => {
+                latestReadCount += 1;
+                return latestReadCount < 3 ? 8 : 9;
+            },
+        },
+        events: { refreshRoleDebugWindow: () => {} },
+        _acceptCapturedRoleContext: received => {
+            accepted.push(received);
+            return true;
+        },
+    });
+
+    const captured = await app.captureRoleTurnAfterKeyboardSend();
+
+    assert.equal(latestReadCount, 3);
+    assert.equal(captured, context);
+    assert.deepEqual(accepted, [context]);
+});

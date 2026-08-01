@@ -552,25 +552,69 @@ export class SillyViewApp {
             return;
         }
 
-        this._clearRoleCaptureRetry(numericMessageId);
-        this.lastCapturedRoleMessageId = numericMessageId;
+        this._acceptCapturedRoleContext(context);
+    }
+
+    _acceptCapturedRoleContext(context) {
+        const messageId = Number(context?.user_message_id);
+        if (!Number.isFinite(messageId)) return false;
+
+        this._clearRoleCaptureRetry(messageId);
+        this.lastCapturedRoleMessageId = messageId;
         if (this.roleDecision.isEnabled()) {
             this.pendingRoleTurnContext = context;
             this.lastRoleDispatchStatus = {
                 status: 'queued',
-                user_message_id: context.user_message_id,
+                user_message_id: messageId,
                 detail: '已截取，等待生成前事件发送给角色模型。',
                 updated_at: Date.now(),
             };
         } else {
             this.lastRoleDispatchStatus = {
                 status: 'capture_only',
-                user_message_id: context.user_message_id,
+                user_message_id: messageId,
                 detail: '角色决策流程未启用；本轮只记录调试输入，不会调用模型。',
                 updated_at: Date.now(),
             };
         }
         this.events?.refreshRoleDebugWindow?.();
+        return true;
+    }
+
+    async captureRoleTurnAfterKeyboardSend() {
+        if (!this.roleDecision?.isEnabled() && !this.roleDecision?.isDebugEnabled()) return null;
+
+        const retryDelayMs = Math.max(0, Number(this.roleCaptureRetryDelayMs ?? 80));
+        for (let attempt = 0; attempt <= 4; attempt++) {
+            const latestMessageId = Number(await this.th.getLastMessageId());
+            if (Number.isFinite(latestMessageId)) {
+                const context = this.roleDecision.captureTurnContext(latestMessageId);
+                if (context) {
+                    this._acceptCapturedRoleContext(context);
+                    return context;
+                }
+            }
+            if (attempt < 4 && retryDelayMs > 0) {
+                await new Promise(resolve => setTimeout(resolve, retryDelayMs * (attempt + 1)));
+            }
+        }
+        return null;
+    }
+
+    handleRoleSendKeydown(event) {
+        const isPlainEnter = event?.key === 'Enter'
+            && !event.shiftKey
+            && !event.ctrlKey
+            && !event.altKey
+            && !event.metaKey
+            && !event.isComposing;
+        if (!isPlainEnter || !event.target?.matches?.('#send_textarea')) return;
+
+        setTimeout(() => {
+            this.captureRoleTurnAfterKeyboardSend().catch(error => {
+                this.logger.warn('从回车发送路径截取角色上下文失败:', error);
+            });
+        }, 0);
     }
 
     _clearRoleCaptureRetry(messageId) {
@@ -1413,6 +1457,8 @@ export class SillyViewApp {
         this.eventListenersSetup = true;
         const { eventSource, eventTypes } = this.st_context;
         this._recordCurrentChatMessageBoundary();
+        const parentDoc = this.dependencies?.parentDoc || this.parentWin?.document;
+        parentDoc?.addEventListener?.('keydown', event => this.handleRoleSendKeydown(event), true);
         if (eventTypes.USER_MESSAGE_RENDERED) {
             eventSource.on(eventTypes.USER_MESSAGE_RENDERED, (id) => {
                 this.captureRoleTurnForRenderedUserMessage(id).catch(error => {
