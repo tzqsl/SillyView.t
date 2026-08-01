@@ -76,6 +76,10 @@ export class SillyViewApp {
         this.tradeView.ui = this.ui; // FIX: Inject UI renderer into TradeView
 
         this.logger.log("SillyViewApp initializing with dependencies wired...");
+        const roleMemoryInitialization = this.data.ensureRoleDecisionMemoryWorldbook?.();
+        roleMemoryInitialization?.catch(error => {
+            this.logger.warn('初始化角色决策记忆世界书失败:', error);
+        });
         this.setupEventListeners();
         this.ui.loadPanelHtml().then(() => {
             this.events.bindInitialEvents();
@@ -701,6 +705,14 @@ export class SillyViewApp {
         try {
             const result = await this.roleDecision.run(context);
             if (!result?.frontend_injection) throw new Error('角色模型未返回可注入内容。');
+            try {
+                if (this.data.saveRoleDecisionMemory) {
+                    await this.data.saveRoleDecisionMemory(result);
+                }
+            } catch (error) {
+                this.logger.error('持久化角色决策结果失败:', error);
+                this.dependencies.win.toastr?.warning?.('角色决策已完成，但心理活动持久化失败。');
+            }
             if (!this.th?.injectPrompts) throw new Error('TavernHelper.injectPrompts 不可用。');
             const injectionId = `sillyview-role-context-${context.user_message_id}-${Date.now()}`;
             this.th.injectPrompts([{

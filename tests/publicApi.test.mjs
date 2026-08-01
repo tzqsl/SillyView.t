@@ -9,6 +9,10 @@ const config = {
         global_market: 'market',
         asset_prefix: 'asset_',
     },
+    role_memory: {
+        worldbook_name: 'SillyView_role_memory',
+        entry_key: 'sv_role_decision_latest',
+    },
     asset_definitions: {
         EURUSD: { name: '欧元/美元' },
     },
@@ -26,6 +30,7 @@ function createData(asset, managedStates = []) {
         getState: key => structuredClone(states[key] || null),
         getManagedAccountStates: async () => structuredClone(managedStates),
         getManagedRoleProfiles: async () => [],
+        getRoleDecisionMemory: async () => ({ version: 1, updated_at: 0, latest_run: null }),
         getArchivedNews: () => [],
         getActiveMarketNews: () => [],
         _calculatePortfolioMarkedValue: portfolio => portfolio.cash,
@@ -51,7 +56,7 @@ test('mobile market change uses the close from 24 hours ago', async () => {
     const data = createData({ current_price: 1.04, kline_hourly: hourly });
     const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
     const snapshot = await api.getSnapshot();
-    assert.equal(snapshot.api_version, '2.2.0');
+    assert.equal(snapshot.api_version, '2.3.0');
     assert.equal(snapshot.market.assets[0].change_pct, 3.4826);
 });
 
@@ -85,4 +90,34 @@ test('managed account snapshots expose role pending orders', async () => {
     const snapshot = await api.getSnapshot();
     assert.equal(snapshot.accounts[0].pending_orders[0].id, 'ord_role');
     assert.equal(snapshot.accounts[0].pending_orders[0].trigger_price, 1.05);
+});
+
+test('mobile role thoughts come from persisted worldbook memory after runtime state is lost', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    data.getRoleDecisionMemory = async () => ({
+        version: 1,
+        updated_at: 123,
+        latest_run: {
+            status: 'completed',
+            completed_at: 120,
+            raw_output: '<role_thought role="张三">我会先冷静判断。</role_thought><role_outline role="张三">下一步观察局势。</role_outline>',
+        },
+    });
+    const roleDecision = {
+        lastRun: null,
+        running: false,
+        isEnabled: () => true,
+    };
+    const api = createSillyViewPublicAPI({ data, roleDecision, config });
+
+    const snapshot = await api.getSnapshot();
+
+    assert.deepEqual(snapshot.roles, [{
+        role_name: '张三',
+        thought: '我会先冷静判断。',
+        outline: '下一步观察局势。',
+    }]);
+    assert.equal(snapshot.role_status.completed_at, 120);
+    assert.equal(snapshot.role_status.source, 'worldbook');
+    assert.equal(snapshot.role_status.worldbook_name, 'SillyView_role_memory');
 });

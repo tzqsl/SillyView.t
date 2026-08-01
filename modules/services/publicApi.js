@@ -160,12 +160,13 @@ function buildNewsSnapshot(data, config, activeOnly = false) {
 
 export function createSillyViewPublicAPI({ data, roleDecision, config }) {
     const api = {
-        version: '2.2.0',
+        version: '2.3.0',
         readonly: true,
         async getSnapshot() {
             const states = await data.getManagedAccountStates();
             const profiles = await data.getManagedRoleProfiles();
-            const roleRun = roleDecision?.lastRun;
+            const roleMemory = await data.getRoleDecisionMemory();
+            const roleRun = roleMemory?.latest_run || null;
             const market = data.getState(config.world_book_keys.global_market) || {};
             const assets = Object.keys(config.asset_definitions || {}).map(assetCode => {
                 const asset = data.getState(`${config.world_book_keys.asset_prefix}${assetCode}`) || {};
@@ -194,6 +195,9 @@ export function createSillyViewPublicAPI({ data, roleDecision, config }) {
                     running: Boolean(roleDecision?.running),
                     completed_at: roleRun?.completed_at || 0,
                     status: roleRun?.status || 'idle',
+                    source: 'worldbook',
+                    worldbook_name: config.role_memory.worldbook_name,
+                    entry_name: config.role_memory.entry_key,
                 },
                 accounts: states.map(state => buildAccountSnapshot(data, state)),
                 news: buildNewsSnapshot(data, config),

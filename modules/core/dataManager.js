@@ -425,6 +425,7 @@ export class DataManager {
 
         const allBooks = await this.th.getWorldbookNames();
         this.hasGameBook = allBooks.includes(lorebookName);
+        await this.ensureRoleDecisionMemoryWorldbook();
 
         if (this.hasGameBook) {
             this.logger.log(`游戏世界书 "${lorebookName}" 已找到，正在加载数据...`);
@@ -1764,6 +1765,68 @@ export class DataManager {
         }
     }
 
+    _defaultRoleDecisionMemory() {
+        return {
+            version: 1,
+            updated_at: 0,
+            latest_run: null,
+        };
+    }
+
+    async ensureRoleDecisionMemoryWorldbook() {
+        const worldbookName = this.config.role_memory.worldbook_name;
+        const entryKey = this.config.role_memory.entry_key;
+        const defaultMemory = this._defaultRoleDecisionMemory();
+        await this._ensureWorldbookExists(worldbookName, [{
+            name: entryKey,
+            content: JSON.stringify(defaultMemory, null, 2),
+            enabled: false,
+        }]);
+        await this.th.updateWorldbookWith(worldbookName, entries => {
+            const entry = entries.find(item => item.name === entryKey);
+            if (entry) {
+                entry.enabled = false;
+            } else {
+                entries.push({
+                    name: entryKey,
+                    content: JSON.stringify(defaultMemory, null, 2),
+                    enabled: false,
+                });
+            }
+            return entries;
+        });
+    }
+
+    async getRoleDecisionMemory() {
+        try {
+            const entries = await this.th.getWorldbook(this.config.role_memory.worldbook_name);
+            const entry = entries.find(item => item.name === this.config.role_memory.entry_key);
+            if (!entry?.content) return this._defaultRoleDecisionMemory();
+            const memory = JSON.parse(entry.content);
+            return memory && typeof memory === 'object' ? memory : this._defaultRoleDecisionMemory();
+        } catch (error) {
+            this.logger.warn('角色决策记忆暂时不可读，已返回空记录。', error);
+            return this._defaultRoleDecisionMemory();
+        }
+    }
+
+    async saveRoleDecisionMemory(roleRun) {
+        if (!roleRun || typeof roleRun !== 'object') return false;
+
+        const worldbookName = this.config.role_memory.worldbook_name;
+        const entryKey = this.config.role_memory.entry_key;
+        await this.ensureRoleDecisionMemoryWorldbook();
+        const memory = {
+            version: 1,
+            updated_at: Date.now(),
+            latest_run: this.dependencies.win._.cloneDeep(roleRun),
+        };
+        await this.th.updateWorldbookWith(worldbookName, entries => {
+            this._upsertWorldbookEntry(entries, entryKey, JSON.stringify(memory, null, 2), false);
+            return entries;
+        });
+        return true;
+    }
     async _ensureWorldbookExists(worldbookName, initialEntries = []) {
         if (String(worldbookName || '').startsWith(LEGACY_MANAGED_ACCOUNT_WORLDBOOK_PREFIX)) {
             this.logger.warn(`已阻止创建旧版多账户个人世界书: ${worldbookName}`);

@@ -115,6 +115,10 @@ export const SillyViewConfig = {
     background_ai_defaults: DEFAULT_BACKGROUND_AI_SETTINGS,
     role_ai_defaults: DEFAULT_ROLE_AI_SETTINGS,
     market_context_worldbooks: ['SillyView_fx'],
+    role_memory: {
+        worldbook_name: 'SillyView_role_memory',
+        entry_key: 'sv_role_decision_latest',
+    },
     multi_account: {
         control_worldbook_name: 'SillyView_accounts',
         account_index_key: 'sv_accounts_index',

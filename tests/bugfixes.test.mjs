@@ -64,7 +64,8 @@ test('core listeners are registered before panel HTML finishes loading', async (
     const app = Object.create(SillyViewApp.prototype);
     app.setupEventListeners = () => { setupCount += 1; };
 
-    const data = {};
+    let roleMemoryInitCount = 0;
+    const data = { ensureRoleDecisionMemoryWorldbook: async () => { roleMemoryInitCount += 1; } };
     const ui = {
         dependencies: {},
         loadPanelHtml: () => new Promise(resolve => { resolvePanel = resolve; }),
@@ -92,6 +93,7 @@ test('core listeners are registered before panel HTML finishes loading', async (
     });
 
     assert.equal(setupCount, 1);
+    assert.equal(roleMemoryInitCount, 1);
     assert.equal(bindCount, 0);
 
     resolvePanel();

@@ -52,6 +52,7 @@ test('roleplay wait toast is shown and cleared around frontend role generation',
                 },
             },
         },
+        data: { saveRoleDecisionMemory: async () => true },
         events: { refreshRoleDebugWindow: () => {} },
     });
 
