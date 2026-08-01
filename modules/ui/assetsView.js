@@ -198,7 +198,10 @@ export class AssetsView {
                                 <span>移动止损 %</span>
                                 <input type="number" step="0.1" min="0" max="50" placeholder="未设置" value="${Number.isFinite(trailingStopPct) && trailingStopPct > 0 ? trailingStopPct : ''}" class="sv-input" data-risk-field="trailing_stop_pct">
                             </label>
-                            <button type="button" class="sv-button sv-button-blue sv-position-risk-save" data-asset-code="${assetCode}" data-position-mode="${mode}">保存调整</button>
+                            <div class="sv-position-actions">
+                                <button type="button" class="sv-button sv-button-blue sv-position-risk-save" data-asset-code="${assetCode}" data-position-mode="${mode}">保存调整</button>
+                                <button type="button" class="sv-button sv-button-red sv-position-close" data-asset-code="${assetCode}" data-position-mode="${mode}">平仓</button>
+                            </div>
                         </div>
                     </div>
                 `;

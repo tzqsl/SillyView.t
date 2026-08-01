@@ -581,6 +581,39 @@ export class EventHandler {
         this.ui.renderAll();
     }
 
+    closePosition(assetCode, itemEl) {
+        const mode = itemEl?.dataset.positionMode === 'spot' ? 'spot' : 'leveraged';
+        const portfolio = this.data.getState(this.dependencies.config.world_book_keys.player_portfolio);
+        const position = this.positionCalculator.calculate(assetCode, portfolio, mode);
+        if (!position.type || position.totalAmount <= 0) {
+            this.dependencies.win.toastr.warning('当前仓位不存在，无法平仓。');
+            this.ui.renderAll();
+            return;
+        }
+
+        const assetData = this.data.getState(`${this.dependencies.config.world_book_keys.asset_prefix}${assetCode}`);
+        const currentPrice = Number(assetData?.current_price);
+        if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+            this.dependencies.win.toastr.error('当前市价不可用，暂时无法平仓。');
+            return;
+        }
+
+        const action = mode === 'spot'
+            ? 'spot_sell'
+            : (position.type === 'long' ? 'close_long' : 'close_short');
+        const pnl = position.type === 'long'
+            ? (currentPrice - position.avgEntryPrice) * position.totalShares
+            : (position.avgEntryPrice - currentPrice) * position.totalShares;
+        const pnlSign = pnl >= 0 ? '+' : '';
+        const modeLabel = mode === 'spot' ? '现货' : `${position.leverage}x 杠杆${position.type === 'long' ? '多头' : '空头'}`;
+
+        this.modals.showConfirmation(
+            `<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: var(--red-400);">确认平仓？</h3>
+            <p style="margin-bottom: 0.5rem;">将按当前市价 <span class="font-mono">${currentPrice.toFixed(4)}</span> 平掉 ${assetCode} ${modeLabel}的全部仓位。</p>
+            <p style="color: ${pnl >= 0 ? 'var(--green-400)' : 'var(--red-400)'};">预估盈亏：<span class="font-mono">${pnlSign}${pnl.toFixed(2)}</span>（未扣手续费）</p>`,
+            () => this.app.executeTrade(action, position.totalAmount, assetCode, currentPrice, position.leverage, null, mode)
+        );
+    }
     bindMainInterfaceEvents() {
         this.logger.log("正在绑定主界面事件...");
         
@@ -634,6 +667,7 @@ export class EventHandler {
                 const fetchRoleAiModelsBtn = target.closest('#sv-fetch-role-ai-models-btn');
                 const roleAiModelOption = target.closest('.sv-role-ai-model-option');
                 const positionRiskSaveBtn = target.closest('.sv-position-risk-save');
+                const positionCloseBtn = target.closest('.sv-position-close');
                 const amountPresetBtn = target.closest('.sv-trade-amount-preset');
                 const riskPresetBtn = target.closest('.sv-risk-preset');
                 const orderModeBtn = target.closest('.sv-order-mode-button');
@@ -687,6 +721,10 @@ export class EventHandler {
                     const itemEl = positionRiskSaveBtn.closest('.sv-asset-item');
                     const assetCode = positionRiskSaveBtn.dataset.assetCode || itemEl?.dataset.assetCode;
                     if (assetCode && itemEl) await this.adjustPositionRiskControls(assetCode, itemEl);
+                } else if (positionCloseBtn) {
+                    const itemEl = positionCloseBtn.closest('.sv-asset-item');
+                    const assetCode = positionCloseBtn.dataset.assetCode || itemEl?.dataset.assetCode;
+                    if (assetCode && itemEl) this.closePosition(assetCode, itemEl);
                 } else if (resetBtn) {
                     this.modals.showConfirmation(
                         `<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: var(--red-400);">确认重置？</h3><p>此操作将永久删除当前角色的所有SillyView市场、资产和账户数据并重新开始，但会保留后台市场与角色模型设置。此操作无法撤销。</p>`,

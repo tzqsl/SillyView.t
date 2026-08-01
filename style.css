@@ -522,8 +522,13 @@
     margin-top: 0;
     padding: 0.375rem 0.5rem;
 }
-.sv-position-risk-save {
+.sv-position-actions {
     grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+.sv-position-actions .sv-button {
     white-space: nowrap;
     padding: 0.375rem 0.625rem;
 }
@@ -605,7 +610,7 @@
 }
 @media (max-width: 760px) {
     .sv-trade-risk-grid, .sv-position-risk-controls-expanded { grid-template-columns: 1fr 1fr; }
-    .sv-position-risk-controls-expanded .sv-position-risk-save { grid-column: 1 / -1; }
+    .sv-position-actions { grid-column: 1 / -1; }
     .sv-debug-grid { grid-template-columns: 1fr; }
     .sv-debug-grid pre { height: 14rem; }
 }
