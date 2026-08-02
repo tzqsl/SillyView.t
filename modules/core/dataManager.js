@@ -1273,7 +1273,7 @@ export class DataManager {
             columns: ['t', 'o', 'h', 'l', 'c'],
             m1: minuteCandles.slice(-8).map(candle => this._compactCandle(candle)),
             m1_overview_sample_interval: minuteSampleInterval,
-            m1_overview: minuteOverviewCandles.map(candle => this._compactCandle(candle)),
+            m1_overview: minuteOverviewCandles.map(candle => Number(Number(candle.close || 0).toFixed(4))),
             m1_trend: this._summarizeCandleWindow(minuteOverviewCandles),
             h1: hourlyCandles.map(candle => this._compactCandle(candle)),
         };
@@ -1500,7 +1500,7 @@ export class DataManager {
         const recentKlines = this._buildRecentKlineContext(klineAssetCodes);
 
         this._stateCache.set(keys.kline_context, {
-            comment: "Compact K-line context for market judgment. m1 keeps the latest 8 minute candles; m1_overview samples every 10 minute candles with at most 20 points; use m1_trend for the overall sampled trend. Use columns=[t,o,h,l,c].",
+            comment: "Compact K-line context for market judgment. m1 keeps the latest 8 minute candles; m1_overview contains only the close value sampled every 10 minute candles with at most 20 points; use m1_trend for the overall sampled trend. Use columns=[t,o,h,l,c].",
             updated_at: resolvedMarket.current_time_index || 0,
             updated_minute_at: resolvedMarket.minute_time_index || 0,
             selected_assets: klineAssetCodes,

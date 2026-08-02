@@ -385,8 +385,8 @@ test('K-line context keeps 8 recent minute candles and adds 20 spaced overview c
     assert.deepEqual(snapshot.m1.map(candle => candle[0]), Array.from({ length: 8 }, (_, index) => 197 + index));
     assert.equal(snapshot.m1_overview_sample_interval, 10);
     assert.equal(snapshot.m1_overview.length, 20);
-    assert.deepEqual(snapshot.m1_overview.map(candle => candle[0]), Array.from({ length: 20 }, (_, index) => 14 + index * 10));
-    assert.equal(snapshot.m1_overview.at(-1)[0], 204);
+    assert.deepEqual(snapshot.m1_overview, Array.from({ length: 20 }, (_, index) => 114.5 + index * 10));
+    assert.equal(snapshot.m1_overview.at(-1), 304.5);
     assert.equal(snapshot.m1_trend.direction, 'up');
     assert.equal(snapshot.h1.length, 8);
 });
