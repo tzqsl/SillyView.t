@@ -199,7 +199,7 @@ export const SillyViewConfig = {
             player_cash: 0.00
         },
         kline_context: {
-            comment: "Compact K-line context for market judgment. m1 samples every 10 minute candles with at most 20 points; use m1_trend for the overall sampled trend. columns=[t,o,h,l,c].",
+            comment: "Compact K-line context for market judgment. m1 keeps the latest 8 minute candles; m1_overview samples every 10 minute candles with at most 20 points; use m1_trend for the overall sampled trend. columns=[t,o,h,l,c].",
             updated_at: 0,
             updated_minute_at: 0,
             assets: []

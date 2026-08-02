@@ -357,7 +357,7 @@ test('Enter capture retries until the new user message is persisted', async () =
     assert.deepEqual(accepted, [context]);
 });
 
-test('K-line context samples 20 minute candles at 10-candle intervals and includes the overall trend', () => {
+test('K-line context keeps 8 recent minute candles and adds 20 spaced overview candles', () => {
     const manager = Object.create(DataManager.prototype);
     const minuteCandles = Array.from({ length: 205 }, (_, time) => ({
         time,
@@ -381,10 +381,12 @@ test('K-line context samples 20 minute candles at 10-candle intervals and includ
         kline_hourly: hourlyCandles,
     });
 
-    assert.equal(snapshot.m1_sample_interval, 10);
-    assert.equal(snapshot.m1.length, 20);
-    assert.deepEqual(snapshot.m1.map(candle => candle[0]), Array.from({ length: 20 }, (_, index) => 14 + index * 10));
-    assert.equal(snapshot.m1.at(-1)[0], 204);
+    assert.equal(snapshot.m1.length, 8);
+    assert.deepEqual(snapshot.m1.map(candle => candle[0]), Array.from({ length: 8 }, (_, index) => 197 + index));
+    assert.equal(snapshot.m1_overview_sample_interval, 10);
+    assert.equal(snapshot.m1_overview.length, 20);
+    assert.deepEqual(snapshot.m1_overview.map(candle => candle[0]), Array.from({ length: 20 }, (_, index) => 14 + index * 10));
+    assert.equal(snapshot.m1_overview.at(-1)[0], 204);
     assert.equal(snapshot.m1_trend.direction, 'up');
     assert.equal(snapshot.h1.length, 8);
 });
