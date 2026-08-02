@@ -100,7 +100,7 @@ const DEFAULT_ROLE_AI_SETTINGS = {
     key: '',
     model: '',
     temperature: 0.7,
-    max_tokens: 2000,
+    max_tokens: 30000,
     debug_enabled: false,
     max_observation_rounds: 4,
     timeout_ms: 60000,
