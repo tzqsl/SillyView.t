@@ -25,6 +25,7 @@ export class SillyViewApp {
         this.autoAdvanceRunning = false;
         this.autoAdvanceElapsedMinutes = 0;
         this.pendingRoleTurnContext = null;
+        this.pendingRoleKeyboardDraft = null;
         this.lastRoleInjectionId = null;
         this.lastRoleDispatchStatus = null;
         this.lastCapturedRoleMessageId = null;
@@ -606,16 +607,26 @@ export class SillyViewApp {
     }
 
     handleRoleSendKeydown(event) {
-        const isPlainEnter = event?.key === 'Enter'
+        const enterPressed = event?.key === 'Enter' || event?.code === 'Enter' || event?.code === 'NumpadEnter';
+        const isPlainEnter = enterPressed
             && !event.shiftKey
             && !event.ctrlKey
             && !event.altKey
             && !event.metaKey
             && !event.isComposing;
-        if (!isPlainEnter || !event.target?.matches?.('#send_textarea')) return;
+        if (!isPlainEnter) return;
+        const eventPath = event.composedPath?.() || [event.target];
+        const input = eventPath.find(node => node?.id === 'send_textarea')
+            || event.target?.closest?.('#send_textarea')
+            || (event.target?.matches?.('#send_textarea') ? event.target : null)
+            || this.dependencies?.parentDoc?.querySelector?.('#send_textarea')
+            || this.parentWin?.document?.querySelector?.('#send_textarea');
+        if (!input) return;
+        const content = String(input.value ?? input.textContent ?? '').trim();
+        this.pendingRoleKeyboardDraft = { content, captured_at: Date.now() };
 
         setTimeout(() => {
-            this.captureRoleTurnAfterKeyboardSend().catch(error => {
+            this.captureRoleTurnAfterKeyboardSend(content).catch(error => {
                 this.logger.warn('从回车发送路径截取角色上下文失败:', error);
             });
         }, 0);
@@ -669,6 +680,7 @@ export class SillyViewApp {
                 };
             }
             this.pendingRoleTurnContext = null;
+            this.pendingRoleKeyboardDraft = null;
             this.events?.refreshRoleDebugWindow?.();
             return;
         }
@@ -687,6 +699,7 @@ export class SillyViewApp {
         if (!context) return;
 
         this.pendingRoleTurnContext = null;
+        this.pendingRoleKeyboardDraft = null;
         this.lastRoleDispatchStatus = {
             status: 'generating',
             user_message_id: context.user_message_id,
@@ -1369,6 +1382,7 @@ export class SillyViewApp {
             this.previousStateSnapshot = null;
             this.lastMinuteAdvanceMessageId = null;
             this.pendingRoleTurnContext = null;
+            this.pendingRoleKeyboardDraft = null;
             this.lastCapturedRoleMessageId = null;
             this._clearAllRoleCaptureRetries();
             for (const id of [...(this.turnStateSnapshots?.keys?.() || [])]) {
@@ -1470,7 +1484,9 @@ export class SillyViewApp {
         const { eventSource, eventTypes } = this.st_context;
         this._recordCurrentChatMessageBoundary();
         const parentDoc = this.dependencies?.parentDoc || this.parentWin?.document;
-        parentDoc?.addEventListener?.('keydown', event => this.handleRoleSendKeydown(event), true);
+        const docs = [parentDoc, globalThis.document].filter((doc, index, all) => doc?.addEventListener && all.indexOf(doc) === index);
+        this._roleSendKeydownHandler = event => this.handleRoleSendKeydown(event);
+        docs.forEach(doc => doc.addEventListener('keydown', this._roleSendKeydownHandler, true));
         if (eventTypes.USER_MESSAGE_RENDERED) {
             eventSource.on(eventTypes.USER_MESSAGE_RENDERED, (id) => {
                 this.captureRoleTurnForRenderedUserMessage(id).catch(error => {
@@ -1518,6 +1534,7 @@ export class SillyViewApp {
                 this.chatChangeSnapshotCleanupTimer = null;
             }, 250);
             this.pendingRoleTurnContext = null;
+        this.pendingRoleKeyboardDraft = null;
             this.lastRoleDispatchStatus = null;
             this.lastCapturedRoleMessageId = null;
             this._clearAllRoleCaptureRetries();
