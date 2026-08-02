@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SillyViewApp } from '../modules/core/app.js';
+import { DataManager } from '../modules/core/dataManager.js';
 import { UIRenderer } from '../modules/ui/uiRenderer.js';
 
 test('liquidation line is rendered while the trade panel is in spot mode', () => {
@@ -354,4 +355,36 @@ test('Enter capture retries until the new user message is persisted', async () =
     assert.equal(latestReadCount, 3);
     assert.equal(captured, context);
     assert.deepEqual(accepted, [context]);
+});
+
+test('K-line context samples 20 minute candles at 10-candle intervals and includes the overall trend', () => {
+    const manager = Object.create(DataManager.prototype);
+    const minuteCandles = Array.from({ length: 205 }, (_, time) => ({
+        time,
+        open: 100 + time,
+        high: 101 + time,
+        low: 99 + time,
+        close: 100.5 + time,
+        volume: 10,
+    }));
+    const hourlyCandles = Array.from({ length: 12 }, (_, time) => ({
+        time,
+        open: 100 + time,
+        high: 101 + time,
+        low: 99 + time,
+        close: 100.5 + time,
+        volume: 10,
+    }));
+
+    const snapshot = manager._buildRecentKlineSnapshot('EURUSD', {
+        kline_minute: minuteCandles,
+        kline_hourly: hourlyCandles,
+    });
+
+    assert.equal(snapshot.m1_sample_interval, 10);
+    assert.equal(snapshot.m1.length, 20);
+    assert.deepEqual(snapshot.m1.map(candle => candle[0]), Array.from({ length: 20 }, (_, index) => 14 + index * 10));
+    assert.equal(snapshot.m1.at(-1)[0], 204);
+    assert.equal(snapshot.m1_trend.direction, 'up');
+    assert.equal(snapshot.h1.length, 8);
 });

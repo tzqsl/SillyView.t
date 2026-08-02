@@ -1252,14 +1252,28 @@ export class DataManager {
         };
     }
 
+    _sampleRecentCandles(candles, interval = 10, limit = 20) {
+        const list = (candles || []).filter(Boolean);
+        const sampled = [];
+        for (let index = list.length - 1; index >= 0 && sampled.length < limit; index -= interval) {
+            sampled.push(list[index]);
+        }
+        return sampled.reverse();
+    }
+
     _buildRecentKlineSnapshot(assetCode, assetData) {
-        const mapRecent = candles => (candles || []).slice(-8).map(candle => this._compactCandle(candle));
+        const minuteSampleInterval = 10;
+        const minuteSampleLimit = 20;
+        const minuteCandles = this._sampleRecentCandles(assetData?.kline_minute, minuteSampleInterval, minuteSampleLimit);
+        const hourlyCandles = (assetData?.kline_hourly || []).filter(Boolean).slice(-8);
 
         return {
             code: assetCode,
             columns: ['t', 'o', 'h', 'l', 'c'],
-            m1: mapRecent(assetData?.kline_minute),
-            h1: mapRecent(assetData?.kline_hourly),
+            m1_sample_interval: minuteSampleInterval,
+            m1: minuteCandles.map(candle => this._compactCandle(candle)),
+            m1_trend: this._summarizeCandleWindow(minuteCandles),
+            h1: hourlyCandles.map(candle => this._compactCandle(candle)),
         };
     }
 
@@ -1484,7 +1498,7 @@ export class DataManager {
         const recentKlines = this._buildRecentKlineContext(klineAssetCodes);
 
         this._stateCache.set(keys.kline_context, {
-            comment: "Compact K-line context for market judgment. Use columns=[t,o,h,l,c].",
+            comment: "Compact K-line context for market judgment. m1 samples every 10 minute candles with at most 20 points; use m1_trend for the overall sampled trend. Use columns=[t,o,h,l,c].",
             updated_at: resolvedMarket.current_time_index || 0,
             updated_minute_at: resolvedMarket.minute_time_index || 0,
             selected_assets: klineAssetCodes,
