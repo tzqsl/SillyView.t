@@ -606,6 +606,30 @@ export class SillyViewApp {
         return null;
     }
 
+    captureRoleTurnFromKeyboardDraft(draftContent) {
+        if (!this.roleDecision?.isEnabled() && !this.roleDecision?.isDebugEnabled()) return null;
+        const content = this.roleDecision.extractContent?.(draftContent) || String(draftContent || '').trim();
+        const latestMessageId = Number(this.th.getLastMessageId());
+        if (!content || !Number.isFinite(latestMessageId)) return null;
+
+        const messages = this.th.getChatMessages(`0-${latestMessageId}`) || [];
+        const previousAssistant = [...messages].reverse().find(message => {
+            const isAssistant = message?.role ? message.role === 'assistant' : message?.is_user === false && message?.is_system !== true;
+            return isAssistant && !message.is_hidden;
+        });
+        const extract = text => this.roleDecision.extractContent?.(text) || String(text || '').trim();
+        const context = {
+            user_message_id: latestMessageId + 1,
+            previous_message_id: previousAssistant ? Number(previousAssistant.message_id) : null,
+            previous_content: extract(previousAssistant?.message || '').slice(0, 16000),
+            user_content: content.slice(0, 16000),
+            captured_at: Date.now(),
+            source: 'keyboard_draft',
+        };
+        this.roleDecision.lastCapture = context;
+        this._acceptCapturedRoleContext(context);
+        return context;
+    }
     handleRoleSendKeydown(event) {
         const enterPressed = event?.key === 'Enter' || event?.code === 'Enter' || event?.code === 'NumpadEnter';
         const isPlainEnter = enterPressed
@@ -624,7 +648,9 @@ export class SillyViewApp {
         if (!input) return;
         const content = String(input.value ?? input.textContent ?? '').trim();
         this.pendingRoleKeyboardDraft = { content, captured_at: Date.now() };
+        const context = this.captureRoleTurnFromKeyboardDraft(content);
 
+        if (context) return;
         setTimeout(() => {
             this.captureRoleTurnAfterKeyboardSend(content).catch(error => {
                 this.logger.warn('从回车发送路径截取角色上下文失败:', error);

@@ -294,6 +294,34 @@ test('plain Enter on the chat textarea starts role capture but newline shortcuts
     assert.equal(captureCount, 1);
 });
 
+test('Enter synchronously queues the keyboard draft before generation starts', () => {
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        pendingRoleTurnContext: null,
+        lastCapturedRoleMessageId: null,
+        roleCaptureRetryTimers: new Map(),
+        roleDecision: {
+            isEnabled: () => true,
+            isDebugEnabled: () => false,
+            extractContent: text => String(text || '').trim(),
+            lastCapture: null,
+        },
+        th: {
+            getLastMessageId: () => 4,
+            getChatMessages: () => [{ message_id: 4, role: 'assistant', message: 'Previous reply' }],
+        },
+        events: { refreshRoleDebugWindow: () => {} },
+        logger: { warn: () => {} },
+    });
+    const target = { id: 'send_textarea', value: 'Keyboard message', matches: selector => selector === '#send_textarea' };
+
+    app.handleRoleSendKeydown({ key: 'Enter', target });
+
+    assert.equal(app.pendingRoleTurnContext?.user_message_id, 5);
+    assert.equal(app.pendingRoleTurnContext?.user_content, 'Keyboard message');
+    assert.equal(app.pendingRoleTurnContext?.previous_content, 'Previous reply');
+    assert.equal(app.pendingRoleTurnContext?.source, 'keyboard_draft');
+});
 test('Enter capture retries until the new user message is persisted', async () => {
     let latestReadCount = 0;
     const accepted = [];
