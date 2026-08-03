@@ -680,3 +680,22 @@ test('K-line context keeps 8 recent minute candles and adds 20 spaced overview c
     assert.equal(snapshot.m1_trend.direction, 'up');
     assert.equal(snapshot.h1.length, 8);
 });
+test('stale missing worldbook bindings are removed before adding SillyView accounts', async () => {
+    const rebinds = [];
+    const data = Object.create(DataManager.prototype);
+    data.th = {
+        getCharWorldbookNames: async () => ({
+            primary: 'FX战士久留美',
+            additional: ['SillyView_fx'],
+        }),
+        getWorldbookNames: async () => ['FX战士久留美', 'SillyView_accounts'],
+        rebindCharWorldbooks: async (target, binding) => rebinds.push({ target, binding }),
+    };
+
+    await data._ensureAdditionalWorldbook('SillyView_accounts');
+
+    assert.deepEqual(rebinds, [{
+        target: 'current',
+        binding: { primary: 'FX战士久留美', additional: ['SillyView_accounts'] },
+    }]);
+});

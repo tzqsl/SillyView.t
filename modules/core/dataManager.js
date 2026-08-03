@@ -2008,14 +2008,21 @@ export class DataManager {
     }
 
     async _ensureAdditionalWorldbook(worldbookName) {
-        const charBooks = await this.th.getCharWorldbookNames('current');
-        const additional = [...(charBooks.additional || [])];
-        if (!additional.includes(worldbookName)) {
-            additional.push(worldbookName);
-            await this.th.rebindCharWorldbooks('current', {
-                primary: charBooks.primary,
-                additional,
-            });
+        const [charBooks, allBooks] = await Promise.all([
+            this.th.getCharWorldbookNames('current'),
+            this.th.getWorldbookNames(),
+        ]);
+        const existingBooks = new Set(allBooks);
+        const primary = existingBooks.has(charBooks.primary) ? charBooks.primary : null;
+        const additional = [...new Set(charBooks.additional || [])]
+            .filter(name => existingBooks.has(name));
+        if (!additional.includes(worldbookName)) additional.push(worldbookName);
+
+        const bindingChanged = primary !== charBooks.primary
+            || additional.length !== (charBooks.additional || []).length
+            || additional.some((name, index) => name !== charBooks.additional[index]);
+        if (bindingChanged) {
+            await this.th.rebindCharWorldbooks('current', { primary, additional });
         }
     }
 
