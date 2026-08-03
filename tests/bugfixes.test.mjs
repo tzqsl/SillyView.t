@@ -729,3 +729,9 @@ test('creation UI includes the background model fields used by settings', async 
         assert.match(source, new RegExp(`id=["']${id}["']`));
     }
 });
+test('creation UI explains background model fallback and later reconfiguration', async () => {
+    const source = await readFile(new URL('../modules/ui/uiRenderer.js', import.meta.url), 'utf8');
+    assert.match(source, /未启用或未配置自定义模型时，初始化及后续市场生成将使用酒馆当前选择的模型/);
+    assert.match(source, /用于本次初始化的首次后台市场生成/);
+    assert.match(source, /可随时在 SillyView 设置中的“后台市场模型”重新配置/);
+});

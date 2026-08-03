@@ -120,7 +120,11 @@ export class UIRenderer {
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; margin-bottom:1rem; color:var(--text-gray-300);"><span>实时自动推进</span><span class="sv-toggle-switch"><input type="checkbox" id="sv-auto-advance-on-create"><span class="slider round"></span></span></label>
                 <section style="background-color:var(--bg-gray-900); padding:1rem; border:1px solid var(--bg-gray-700); border-radius:0.375rem; margin-bottom:1.25rem;">
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.75rem;"><span style="font-weight:600; color:var(--cyan-400);">使用自定义后台市场模型</span><span class="sv-toggle-switch"><input type="checkbox" id="sv-bg-ai-enabled" ${bgAI.enabled ? 'checked' : ''}><span class="slider round"></span></span></label>
-                    <div style="display:grid; gap:0.625rem;">
+                    <div class="sv-init-model-notice" style="margin-bottom:0.75rem; padding:0.75rem; border-left:3px solid var(--cyan-400); background-color:var(--bg-gray-800); color:var(--text-gray-300); font-size:0.75rem; line-height:1.65;">
+                        <div>未启用或未配置自定义模型时，初始化及后续市场生成将使用酒馆当前选择的模型。</div>
+                        <div>启用后，此处配置会保存并用于本次初始化的首次后台市场生成。</div>
+                        <div>初始化完成后，可随时在 SillyView 设置中的“后台市场模型”重新配置或切换回酒馆当前模型。</div>
+                    </div>                    <div style="display:grid; gap:0.625rem;">
                         <label style="font-size:0.75rem; color:var(--text-gray-400);">API 格式<select id="sv-bg-ai-source" class="sv-select" style="width:100%; margin-top:0.25rem;">${sourceOptions}</select></label>
                         <label style="font-size:0.75rem; color:var(--text-gray-400);">API 地址<input id="sv-bg-ai-apiurl" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.apiurl)}" placeholder="https://api.openai.com/v1"></label>
                         <label style="font-size:0.75rem; color:var(--text-gray-400);">API Key<input id="sv-bg-ai-key" type="password" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.key)}"></label>
