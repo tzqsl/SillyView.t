@@ -106,26 +106,34 @@ export class UIRenderer {
     renderCreationInterface() {
         const wrapper = this.parentDoc.getElementById('sillyview-content-wrapper');
         if (!wrapper) return;
+        const bgAI = {
+            ...SillyViewConfig.background_ai_defaults,
+            ...(this.data.getPersistentAISettings?.('background_ai') || {}),
+        };
+        const sourceOptions = ['openai', 'claude', 'openrouter', 'google', 'mistral', 'cohere']
+            .map(source => `<option value="${source}" ${bgAI.source === source ? 'selected' : ''}>${source}</option>`)
+            .join('');
         wrapper.innerHTML = `
-            <div style="margin: auto; text-align: center; padding: 2rem;">
-                <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 1rem;">欢迎来到 SillyView</h2>
-                <p style="margin-bottom: 1.5rem; color: var(--text-gray-400);">当前角色尚未初始化交易世界。是否要为其创建新的世界书条目？</p>
-                <label style="display:flex; align-items:center; justify-content:center; gap:0.75rem; margin-bottom:1.5rem; color:var(--text-gray-300);">
-                    <span>实时自动推进</span>
-                    <span class="sv-toggle-switch">
-                        <input type="checkbox" id="sv-auto-advance-on-create">
-                        <span class="slider round"></span>
-                    </span>
-                </label>
-                <div style="display: flex; justify-content: center; gap: 1rem;">
-                    <button id="sv-create-book-yes" class="sv-button sv-button-blue">是的，创建</button>
-                    <button id="sv-create-book-no" class="sv-button" style="background-color: var(--bg-gray-600);">不了，谢谢</button>
-                </div>
-            </div>
-        `;
+            <div style="margin:auto; padding:1.5rem; max-width:38rem;">
+                <h2 style="font-size:1.25rem; font-weight:700; margin-bottom:1rem;">欢迎来到 SillyView</h2>
+                <p style="margin-bottom:1.5rem; color:var(--text-gray-400);">当前角色尚未初始化交易世界。创建前可直接配置首轮生成使用的后台市场模型。</p>
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; margin-bottom:1rem; color:var(--text-gray-300);"><span>实时自动推进</span><span class="sv-toggle-switch"><input type="checkbox" id="sv-auto-advance-on-create"><span class="slider round"></span></span></label>
+                <section style="background-color:var(--bg-gray-900); padding:1rem; border:1px solid var(--bg-gray-700); border-radius:0.375rem; margin-bottom:1.25rem;">
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.75rem;"><span style="font-weight:600; color:var(--cyan-400);">使用自定义后台市场模型</span><span class="sv-toggle-switch"><input type="checkbox" id="sv-bg-ai-enabled" ${bgAI.enabled ? 'checked' : ''}><span class="slider round"></span></span></label>
+                    <div style="display:grid; gap:0.625rem;">
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">API 格式<select id="sv-bg-ai-source" class="sv-select" style="width:100%; margin-top:0.25rem;">${sourceOptions}</select></label>
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">API 地址<input id="sv-bg-ai-apiurl" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.apiurl)}" placeholder="https://api.openai.com/v1"></label>
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">API Key<input id="sv-bg-ai-key" type="password" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.key)}"></label>
+                        <label style="font-size:0.75rem; color:var(--text-gray-400);">模型<input id="sv-bg-ai-model" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.model)}" placeholder="gpt-4o-mini"></label>
+                        <button id="sv-fetch-bg-ai-models-btn" type="button" class="sv-button" style="width:100%; background-color:var(--bg-gray-700);">获取模型</button>
+                        <div id="sv-bg-ai-model-list" style="display:grid; gap:0.375rem; max-height:8rem; overflow:auto;"></div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.625rem;"><label style="font-size:0.75rem; color:var(--text-gray-400);">温度<input id="sv-bg-ai-temperature" type="number" min="0" max="2" step="0.1" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.temperature)}"></label><label style="font-size:0.75rem; color:var(--text-gray-400);">最大 Token<input id="sv-bg-ai-max-tokens" type="number" min="64" step="1" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.max_tokens)}"></label></div>
+                    </div>
+                </section>
+                <div style="display:flex; justify-content:center; gap:1rem;"><button id="sv-create-book-yes" class="sv-button sv-button-blue">是的，创建</button><button id="sv-create-book-no" class="sv-button" style="background-color:var(--bg-gray-600);">不了，谢谢</button></div>
+            </div>`;
         this.dependencies.events.bindCreationEvents();
     }
-    
     renderMainInterface() {
         this.isInitialized = true;
         const wrapper = this.parentDoc.getElementById('sillyview-content-wrapper');

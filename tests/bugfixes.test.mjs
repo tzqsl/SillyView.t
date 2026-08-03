@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import { SillyViewApp } from '../modules/core/app.js';
 import { DataManager } from '../modules/core/dataManager.js';
@@ -698,4 +699,33 @@ test('stale missing worldbook bindings are removed before adding SillyView accou
         target: 'current',
         binding: { primary: 'FX战士久留美', additional: ['SillyView_accounts'] },
     }]);
+});
+test('persistent background AI settings are readable before world creation', () => {
+    const manager = Object.create(DataManager.prototype);
+    manager.config = { extension_settings_key: 'SillyView', extension_name: 'SillyView' };
+    manager.dependencies = {
+        st: { extensionSettings: { SillyView: { ai_settings: { background_ai: { enabled: true, model: 'bootstrap-model' } } } } },
+        win: { _: { cloneDeep: value => structuredClone(value) } },
+    };
+
+    assert.deepEqual(manager.getPersistentAISettings('background_ai'), {
+        enabled: true,
+        model: 'bootstrap-model',
+    });
+    assert.equal(manager.getPersistentAISettings('role_ai'), null);
+});
+
+test('creation UI includes the background model fields used by settings', async () => {
+    const source = await readFile(new URL('../modules/ui/uiRenderer.js', import.meta.url), 'utf8');
+    for (const id of [
+        'sv-bg-ai-enabled',
+        'sv-bg-ai-source',
+        'sv-bg-ai-apiurl',
+        'sv-bg-ai-key',
+        'sv-bg-ai-model',
+        'sv-bg-ai-temperature',
+        'sv-bg-ai-max-tokens',
+    ]) {
+        assert.match(source, new RegExp(`id=["']${id}["']`));
+    }
 });

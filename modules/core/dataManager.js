@@ -755,6 +755,13 @@ export class DataManager {
         return true;
     }
 
+    getPersistentAISettings(kind) {
+        const store = this._getPersistentAISettingsStore();
+        const settings = store?.[kind];
+        return settings && typeof settings === 'object'
+            ? this.dependencies.win._.cloneDeep(settings)
+            : null;
+    }
     async restorePersistentAISettings() {
         const key = this.config.world_book_keys.config;
         const configState = this.getState(key) || {};

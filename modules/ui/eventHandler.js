@@ -495,20 +495,43 @@ export class EventHandler {
     bindCreationEvents() {
         const yesButton = this.parentDoc.getElementById('sv-create-book-yes');
         const noButton = this.parentDoc.getElementById('sv-create-book-no');
+        const fetchModelsButton = this.parentDoc.getElementById('sv-fetch-bg-ai-models-btn');
+
+        fetchModelsButton?.addEventListener('click', () => this.fetchBackgroundModels());
+        this.parentDoc.getElementById('sv-bg-ai-model-list')?.addEventListener('click', event => {
+            const option = event.target.closest('.sv-bg-ai-model-option');
+            if (!option) return;
+            const modelInput = this.parentDoc.getElementById('sv-bg-ai-model');
+            if (modelInput) modelInput.value = option.dataset.model || '';
+        });
 
         if (yesButton) {
-            yesButton.addEventListener('click', () => {
+            yesButton.addEventListener('click', async () => {
                 const autoAdvanceEnabled = Boolean(this.parentDoc.getElementById('sv-auto-advance-on-create')?.checked);
-                this.logger.log("用户同意创建世界书...");
+                const backgroundAI = this.ui.collectBackgroundAISettings();
+                if (backgroundAI.enabled && (!backgroundAI.apiurl || !backgroundAI.model)) {
+                    this.dependencies.win.toastr.warning('使用自定义后台市场模型时，请填写 API 地址和模型。');
+                    return;
+                }
+                this.logger.log('用户同意创建世界书...');
                 yesButton.disabled = true;
-                yesButton.textContent = "正在创建...";
+                yesButton.textContent = '正在创建...';
                 this.ui.renderInitializationProgress({
                     step: '创建',
                     title: '正在创建 SillyView 世界书',
                     detail: '正在准备初始化流程。',
                     percent: 3,
                 });
-                this.data.createInitialWorldState({ autoAdvance: { enabled: autoAdvanceEnabled } });
+                try {
+                    await this.data.persistAISettings('background_ai', backgroundAI);
+                    await this.data.createInitialWorldState({
+                        autoAdvance: { enabled: autoAdvanceEnabled },
+                        backgroundAI,
+                    });
+                } catch (error) {
+                    this.logger.error('创建 SillyView 世界失败:', error);
+                    this.ui.renderError('SillyView initialization failed: ' + (error?.message || error));
+                }
             });
         }
         if (noButton) {
@@ -521,7 +544,6 @@ export class EventHandler {
             });
         }
     }
-
     _readPositionRiskValue(input, label) {
         const raw = input?.value?.trim();
         if (!raw) return null;
