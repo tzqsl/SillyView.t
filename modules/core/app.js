@@ -1371,7 +1371,7 @@ export class SillyViewApp {
 
         const loaded = await this.data.ensureStateLoaded();
         if (!loaded) return;
-        this._rememberTurnStateSnapshot(numericMessageId);
+        await this._rememberTurnStateSnapshot(numericMessageId);
         this.lastMinuteAdvanceMessageId = numericMessageId;
         if (this._getAutoAdvanceSettings().enabled) return;
 
@@ -1380,11 +1380,15 @@ export class SillyViewApp {
         await this.advanceMarketMinutes(barsToAdvance, { render: true });
     }
 
-    _rememberTurnStateSnapshot(messageId) {
+    async _rememberTurnStateSnapshot(messageId) {
         const numericMessageId = Number(messageId);
         if (!Number.isFinite(numericMessageId) || this.turnStateSnapshots?.has(numericMessageId)) return;
         if (!this.turnStateSnapshots) this.turnStateSnapshots = new Map();
-        this.turnStateSnapshots.set(numericMessageId, this.data.createSnapshot());
+        const roleMemory = this.data.getRoleDecisionMemory ? await this.data.getRoleDecisionMemory() : null;
+        this.turnStateSnapshots.set(numericMessageId, {
+            state: this.data.createSnapshot(),
+            role_memory: roleMemory,
+        });
         while (this.turnStateSnapshots.size > 50) {
             this.turnStateSnapshots.delete(this.turnStateSnapshots.keys().next().value);
         }
@@ -1401,10 +1405,14 @@ export class SillyViewApp {
             const rollbackTurnId = this.turnStateSnapshots?.has(deletedMessageId)
                 ? deletedMessageId
                 : deletedMessageId - 1;
-            const snapshot = this.turnStateSnapshots?.get(rollbackTurnId) || this.previousStateSnapshot;
-            if (!snapshot) return false;
+            const turnSnapshot = this.turnStateSnapshots?.get(rollbackTurnId) || this.previousStateSnapshot;
+            if (!turnSnapshot) return false;
 
-            this.data.restoreStateFromSnapshot(snapshot);
+            this.data.restoreStateFromSnapshot(turnSnapshot?.state instanceof Map ? turnSnapshot.state : turnSnapshot);
+            if (turnSnapshot?.state instanceof Map && this.data.restoreRoleDecisionMemory) {
+                await this.data.restoreRoleDecisionMemory(turnSnapshot.role_memory);
+                if (this.roleDecision) this.roleDecision.lastRun = turnSnapshot.role_memory?.latest_run || null;
+            }
             this.previousStateSnapshot = null;
             this.lastMinuteAdvanceMessageId = null;
             this.pendingRoleTurnContext = null;
@@ -1419,7 +1427,6 @@ export class SillyViewApp {
             return true;
         } finally {
             this.pendingMessageDeletionId = null;
-        this.chatChangeSnapshotCleanupTimer = null;
         }
     }
 

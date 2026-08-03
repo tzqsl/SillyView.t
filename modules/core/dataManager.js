@@ -1936,6 +1936,20 @@ export class DataManager {
         });
         return true;
     }
+    async restoreRoleDecisionMemory(memory = null) {
+        const worldbookName = this.config.multi_account.control_worldbook_name;
+        const entryKey = this.config.multi_account.role_memory_key;
+        await this.ensureRoleDecisionMemoryEntry();
+        const restored = memory && typeof memory === 'object'
+            ? this.dependencies.win._.cloneDeep(memory)
+            : this._defaultRoleDecisionMemory();
+        await this.th.updateWorldbookWith(worldbookName, entries => {
+            this._upsertWorldbookEntry(entries, entryKey, JSON.stringify(restored, null, 2), false);
+            return entries;
+        });
+        return true;
+    }
+
     async _ensureWorldbookExists(worldbookName, initialEntries = []) {
         if (String(worldbookName || '').startsWith(LEGACY_MANAGED_ACCOUNT_WORLDBOOK_PREFIX)) {
             this.logger.warn(`已阻止创建旧版多账户个人世界书: ${worldbookName}`);

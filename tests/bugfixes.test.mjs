@@ -389,6 +389,7 @@ test('records a rollback snapshot even when real-time auto advance is enabled', 
         data: {
             ensureStateLoaded: async () => true,
             createSnapshot: () => snapshot,
+            getRoleDecisionMemory: async () => ({ latest_run: { raw_output: 'before' } }),
         },
         _getAutoAdvanceSettings: () => ({ enabled: true }),
         advanceMarketMinutes: async () => { marketAdvances += 1; },
@@ -397,7 +398,8 @@ test('records a rollback snapshot even when real-time auto advance is enabled', 
 
     await app.advanceMinutesForUserMessage('5');
 
-    assert.equal(app.turnStateSnapshots.get(5), snapshot);
+    assert.equal(app.turnStateSnapshots.get(5).state, snapshot);
+    assert.equal(app.turnStateSnapshots.get(5).role_memory.latest_run.raw_output, 'before');
     assert.equal(app.lastMinuteAdvanceMessageId, 5);
     assert.equal(marketAdvances, 0);
 });
@@ -406,6 +408,8 @@ test('deleting the current reply restores the market snapshot from before its us
     let restored = null;
     let saveCount = 0;
     let renderCount = 0;
+    const roleMemory = { version: 1, latest_run: { raw_output: 'old thought' } };
+    let restoredRoleMemory = null;
     const app = Object.create(SillyViewApp.prototype);
     Object.assign(app, {
         previousStateSnapshot: null,
@@ -414,13 +418,15 @@ test('deleting the current reply restores the market snapshot from before its us
         lastCapturedRoleMessageId: 5,
         pendingMessageDeletionId: null,
         roleCaptureRetryTimers: new Map(),
-        turnStateSnapshots: new Map([[5, snapshot]]),
+        turnStateSnapshots: new Map([[5, { state: snapshot, role_memory: roleMemory }]]),
         th: { getLastMessageId: async () => 5 },
         data: {
             restoreStateFromSnapshot: value => { restored = value; },
             saveAllEntries: async () => { saveCount += 1; },
+            restoreRoleDecisionMemory: async value => { restoredRoleMemory = value; },
         },
         ui: { renderAll: () => { renderCount += 1; } },
+        roleDecision: { lastRun: { raw_output: 'deleted thought' } },
     });
 
     const rolledBack = await app.rollbackStateForDeletedMessage(6);
@@ -429,6 +435,8 @@ test('deleting the current reply restores the market snapshot from before its us
     assert.equal(restored, snapshot);
     assert.equal(saveCount, 1);
     assert.equal(renderCount, 1);
+    assert.equal(restoredRoleMemory, roleMemory);
+    assert.equal(app.roleDecision.lastRun.raw_output, 'old thought');
     assert.equal(app.turnStateSnapshots.has(5), false);
     assert.equal(app.pendingRoleTurnContext, null);
 });
