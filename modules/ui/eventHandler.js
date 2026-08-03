@@ -471,7 +471,7 @@ export class EventHandler {
                 this.logger.log("面板变为可见，正在加载/刷新状态...");
                 this.data.loadInitialState().catch(error => {
                     this.logger.error('加载 SillyView 初始状态失败:', error);
-                    this.ui.renderError(加载失败：${error?.message || error});
+                    this.ui.renderError('SillyView initialization failed: ' + (error?.message || error));
                 });
             }
         });
