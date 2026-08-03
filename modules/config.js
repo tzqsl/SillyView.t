@@ -109,6 +109,7 @@ const DEFAULT_ROLE_AI_SETTINGS = {
 export const SillyViewConfig = {
     version: '2.8.0',
     extension_name: 'SillyView',
+    extension_settings_key: 'SillyView',
 
     // Expose asset definitions for other modules
     asset_definitions: ASSET_DEFINITIONS,

@@ -436,6 +436,7 @@ export class DataManager {
                 percent: 15,
             });
             await this.loadAllEntries(lorebookName);
+            await this.restorePersistentAISettings();
             this.ui.renderInitializationProgress({
                 step: '上下文',
                 title: '正在检查上下文条目',
@@ -714,6 +715,64 @@ export class DataManager {
         };
         delete normalized.proxy_preset;
         return normalized;
+    }
+
+    _getPersistentAISettingsStore() {
+        const extensionSettings = this.dependencies.st?.extensionSettings;
+        if (!extensionSettings || typeof extensionSettings !== 'object') return null;
+
+        const key = this.config.extension_settings_key || this.config.extension_name;
+        const pluginSettings = extensionSettings[key];
+        if (!pluginSettings || typeof pluginSettings !== 'object') {
+            extensionSettings[key] = {};
+        }
+        const store = extensionSettings[key];
+        if (!store.ai_settings || typeof store.ai_settings !== 'object') {
+            store.ai_settings = {};
+        }
+        return store.ai_settings;
+    }
+
+    async persistAISettings(kind, settings) {
+        const store = this._getPersistentAISettingsStore();
+        if (!store) return false;
+        if (kind === 'background_ai') {
+            store.background_ai = this._normalizeBackgroundAISettings(settings);
+        } else if (kind === 'role_ai') {
+            store.role_ai = this._normalizeRoleAISettings(settings);
+        } else {
+            throw new Error('Unknown AI settings kind: ' + kind);
+        }
+        await this.dependencies.st.saveSettingsDebounced?.();
+        return true;
+    }
+
+    async restorePersistentAISettings() {
+        const key = this.config.world_book_keys.config;
+        const configState = this.getState(key) || {};
+        const store = this._getPersistentAISettingsStore();
+        if (!store) return false;
+        const hasStoredBackground = store.background_ai && typeof store.background_ai === 'object';
+        const hasStoredRole = store.role_ai && typeof store.role_ai === 'object';
+        const backgroundAI = this._normalizeBackgroundAISettings(hasStoredBackground ? store.background_ai : configState.background_ai);
+        const roleAI = this._normalizeRoleAISettings(hasStoredRole ? store.role_ai : configState.role_ai);
+
+        // Existing installs keep their worldbook values on first upgrade.
+        store.background_ai = backgroundAI;
+        store.role_ai = roleAI;
+        if (!hasStoredBackground || !hasStoredRole) {
+            await this.dependencies.st.saveSettingsDebounced?.();
+        }
+        const changed = JSON.stringify(configState.background_ai) !== JSON.stringify(backgroundAI)
+            || JSON.stringify(configState.role_ai) !== JSON.stringify(roleAI);
+        if (changed) {
+            await this.updateState(key, config => ({
+                ...(config || {}),
+                background_ai: backgroundAI,
+                role_ai: roleAI,
+            }));
+        }
+        return changed;
     }
 
     async createInitialWorldState(options = {}) {
@@ -2204,6 +2263,7 @@ export class DataManager {
             '[Observe.Market()]：角色只查看市场行情；系统将在下一次请求中临时提供一份 sv_kline_context。',
             '[Observe.Combined("account_id")]：同时查看指定账户和市场，效果等同于 Account；多个不同角色查看时逐行输出各自的 account_id。',
             '同一轮可输出任意多个不同账户的观察指令；系统会去重并合并为一次后续请求，sv_kline_context 只发送一份。无人查看时不要输出 Observe 指令。',
+            'Only one observation result is returned per user input. Any Observe command emitted after receiving that result is deferred and merged with the next user input. Never repeat Observe merely to refresh the same data.',
             '首次请求中如果账户和行情实况尚不可见，只能输出观察意图，不能凭空生成交易指令；收到观察数据后的后续请求才可交易。',
             '',
             '普通交易参数顺序：("account_id", "asset_code", amount, leverage, take_profit, stop_loss, trailing_stop_pct)。',

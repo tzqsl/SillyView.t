@@ -5,6 +5,55 @@ import { SillyViewApp } from '../modules/core/app.js';
 import { DataManager } from '../modules/core/dataManager.js';
 import { UIRenderer } from '../modules/ui/uiRenderer.js';
 
+const cloneDeep = value => value == null ? value : structuredClone(value);
+
+test('AI settings are persisted in extension settings', async () => {
+    let saves = 0;
+    const manager = Object.create(DataManager.prototype);
+    manager.config = {
+        extension_name: 'SillyView',
+        extension_settings_key: 'SillyView',
+        background_ai_defaults: { enabled: false, model: '' },
+        role_ai_defaults: { enabled: false, model: '' },
+    };
+    manager.dependencies = { st: {
+        extensionSettings: {},
+        saveSettingsDebounced: async () => { saves += 1; },
+    } };
+    await manager.persistAISettings('background_ai', { enabled: true, model: 'market-model' });
+    await manager.persistAISettings('role_ai', { enabled: true, model: 'role-model' });
+    assert.equal(manager.dependencies.st.extensionSettings.SillyView.ai_settings.background_ai.model, 'market-model');
+    assert.equal(manager.dependencies.st.extensionSettings.SillyView.ai_settings.role_ai.model, 'role-model');
+    assert.equal(saves, 2);
+});
+
+test('persisted AI settings are restored after reload', async () => {
+    const manager = Object.create(DataManager.prototype);
+    const states = new Map([['sv_config', {
+        background_ai: { enabled: false, model: '' },
+        role_ai: { enabled: false, model: '' },
+    }]]);
+    manager.config = {
+        extension_name: 'SillyView',
+        extension_settings_key: 'SillyView',
+        world_book_keys: { config: 'sv_config' },
+        background_ai_defaults: { enabled: false, model: '' },
+        role_ai_defaults: { enabled: false, model: '' },
+    };
+    manager.dependencies = { st: {
+        extensionSettings: { SillyView: { ai_settings: {
+            background_ai: { enabled: true, model: 'saved-market' },
+            role_ai: { enabled: true, model: 'saved-role' },
+        } } },
+        saveSettingsDebounced: async () => {},
+    } };
+    manager.getState = key => cloneDeep(states.get(key));
+    manager.updateState = async (key, updater) => states.set(key, updater(cloneDeep(states.get(key))));
+    assert.equal(await manager.restorePersistentAISettings(), true);
+    assert.equal(states.get('sv_config').background_ai.model, 'saved-market');
+    assert.equal(states.get('sv_config').role_ai.model, 'saved-role');
+});
+
 test('liquidation line is rendered while the trade panel is in spot mode', () => {
     const createdLines = [];
     const elements = {

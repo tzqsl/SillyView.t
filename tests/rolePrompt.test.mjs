@@ -27,3 +27,63 @@ test('role system prompt does not invent an index when no profiles were imported
 
     assert.match(prompt, /未导入角色；不得自行创造需要扮演的人物/);
 });
+
+test('repeated observation is deferred and merged into the next user turn', async () => {
+    const observeCommand = { module: 'Observe', type: 'Market', args: [] };
+    const service = Object.create(RoleDecisionService.prototype);
+    let marketVersion = 0;
+    let generationCalls = [];
+    let outputs = [
+        '<command>[Observe.Market()]</command>',
+        '<command>[Observe.Market()]</command>',
+    ];
+    Object.assign(service, {
+        running: false,
+        pendingObservationCommands: null,
+        lastRun: null,
+        commandParser: {
+            parse: text => String(text).includes('Observe.Market') ? [observeCommand] : [],
+        },
+        data: {
+            beginManagedObservationSession: async () => {
+                marketVersion += 1;
+                return {
+                    active: true,
+                    id: 'session-' + marketVersion,
+                    context: 'MARKET-' + marketVersion,
+                    account_ids: [],
+                    market_requested: true,
+                    activated_entries: [],
+                };
+            },
+            endManagedObservationSession: async () => true,
+        },
+        _loadPromptGuides: async () => ({ command_guide: '', output_rules: '' }),
+        _loadRoleProfiles: async () => [],
+        _buildRoleSystemPrompt: () => 'SYSTEM',
+        _generate: async prompts => {
+            generationCalls.push(prompts);
+            return outputs.shift() || 'FINAL';
+        },
+        _executeTradeCommands: async () => [],
+        _buildFrontendInjection: output => output,
+    });
+
+    const first = await service.run({ previous_content: 'PREVIOUS-1', user_content: 'USER-1' });
+    assert.equal(generationCalls.length, 2);
+    assert.equal(marketVersion, 1);
+    assert.equal(first.observation_rounds.filter(round => round.active).length, 1);
+    assert.equal(first.observation_rounds.at(-1).deferred_to_next_turn, true);
+    assert.deepEqual(service.pendingObservationCommands, [observeCommand]);
+
+    generationCalls = [];
+    outputs = ['FINAL'];
+    const second = await service.run({ previous_content: 'PREVIOUS-2', user_content: 'USER-2' });
+    assert.equal(generationCalls.length, 1);
+    assert.equal(marketVersion, 2);
+    const mergedPrompt = generationCalls[0].map(item => item.content).join('\n');
+    assert.match(mergedPrompt, /USER-2/);
+    assert.match(mergedPrompt, /MARKET-2/);
+    assert.equal(second.observation_rounds[0].deferred_from_previous_turn, true);
+    assert.equal(service.pendingObservationCommands, null);
+});

@@ -26,6 +26,7 @@ export class EventHandler {
             config.background_ai = settings;
             return config;
         });
+        await this.data.persistAISettings('background_ai', settings);
         return settings;
     }
 
@@ -39,6 +40,7 @@ export class EventHandler {
             };
             return config;
         });
+        await this.data.persistAISettings('role_ai', settings);
         return settings;
     }
 
@@ -51,6 +53,8 @@ export class EventHandler {
             };
             return config;
         });
+        const roleAI = this.data.getState(this.dependencies.config.world_book_keys.config)?.role_ai || {};
+        await this.data.persistAISettings('role_ai', roleAI);
     }
 
     async setRoleDebugEnabled(enabled) {
@@ -62,6 +66,8 @@ export class EventHandler {
             };
             return config;
         });
+        const roleAI = this.data.getState(this.dependencies.config.world_book_keys.config)?.role_ai || {};
+        await this.data.persistAISettings('role_ai', roleAI);
     }
 
     refreshRoleDebugWindow() {
