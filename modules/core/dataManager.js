@@ -1844,6 +1844,7 @@ export class DataManager {
             version: 1,
             updated_at: 0,
             latest_run: null,
+            history: [],
         };
     }
 
@@ -1925,16 +1926,41 @@ export class DataManager {
         const worldbookName = this.config.multi_account.control_worldbook_name;
         const entryKey = this.config.multi_account.role_memory_key;
         await this.ensureRoleDecisionMemoryEntry();
+        const current = await this.getRoleDecisionMemory();
+        const history = Array.isArray(current.history) ? current.history : [];
+        const nextRun = this.dependencies.win._.cloneDeep(roleRun);
         const memory = {
-            version: 1,
+            version: 2,
             updated_at: Date.now(),
-            latest_run: this.dependencies.win._.cloneDeep(roleRun),
+            latest_run: nextRun,
+            history: [...history, nextRun].slice(-50),
         };
         await this.th.updateWorldbookWith(worldbookName, entries => {
             this._upsertWorldbookEntry(entries, entryKey, JSON.stringify(memory, null, 2), false);
             return entries;
         });
         return true;
+    }
+
+    async restoreRoleDecisionMemoryBeforeMessage(messageId) {
+        const cutoff = Number(messageId);
+        if (!Number.isFinite(cutoff)) return null;
+        const memory = await this.getRoleDecisionMemory();
+        const candidates = Array.isArray(memory.history) ? memory.history : [];
+        const latestRun = [...candidates].reverse().find(run => (
+            Number(run?.context?.user_message_id) <= cutoff
+        )) || null;
+        const restoredHistory = candidates.filter(run => (
+            Number(run?.context?.user_message_id) <= cutoff
+        ));
+        const restored = {
+            version: 2,
+            updated_at: Date.now(),
+            latest_run: latestRun,
+            history: restoredHistory.slice(-50),
+        };
+        await this.restoreRoleDecisionMemory(restored);
+        return restored;
     }
     async restoreRoleDecisionMemory(memory = null) {
         const worldbookName = this.config.multi_account.control_worldbook_name;

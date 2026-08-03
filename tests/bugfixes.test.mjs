@@ -471,6 +471,43 @@ test('deleting multiple trailing messages restores the earliest affected user tu
     assert.equal(app.turnStateSnapshots.size, 0);
 });
 
+test('deleting after reload restores persisted role memory without an in-memory market snapshot', async () => {
+    const oldMemory = { latest_run: { raw_output: 'persisted old thought' } };
+    let cutoff = null;
+    const dispatched = [];
+    class SnapshotEvent {
+        constructor(type, options) { this.type = type; this.detail = options.detail; }
+    }
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        previousStateSnapshot: null,
+        pendingMessageDeletionId: null,
+        turnStateSnapshots: new Map(),
+        th: {
+            getLastMessageId: async () => 5,
+            getChatMessages: () => [{ is_user: true }],
+        },
+        data: {
+            restoreRoleDecisionMemoryBeforeMessage: async value => {
+                cutoff = value;
+                return oldMemory;
+            },
+        },
+        roleDecision: { lastRun: { raw_output: 'deleted thought' } },
+        parentWin: {
+            CustomEvent: SnapshotEvent,
+            dispatchEvent: event => { dispatched.push(event); },
+        },
+    });
+
+    const rolledBack = await app.rollbackStateForDeletedMessage(6);
+
+    assert.equal(rolledBack, true);
+    assert.equal(cutoff, 4);
+    assert.equal(app.roleDecision.lastRun.raw_output, 'persisted old thought');
+    assert.equal(dispatched[0].type, 'sillyview:snapshot-updated');
+});
+
 test('plain Enter on the chat textarea starts role capture but newline shortcuts do not', async () => {
     let captureCount = 0;
     const app = Object.create(SillyViewApp.prototype);

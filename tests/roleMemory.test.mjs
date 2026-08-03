@@ -54,6 +54,7 @@ test('role memory is a disabled entry in SillyView_accounts, not a separate worl
         version: 1,
         updated_at: 0,
         latest_run: null,
+        history: [],
     });
 });
 
@@ -97,5 +98,21 @@ test('role decision memory persists the complete latest run and stays disabled',
     const entry = books.get(CONTROL_BOOK).find(item => item.name === MEMORY_ENTRY);
 
     assert.deepEqual(memory.latest_run, roleRun);
+    assert.deepEqual(memory.history, [roleRun]);
     assert.equal(entry.enabled, false);
+});
+
+
+test('role decision memory rolls back by persisted user message history', async () => {
+    const { manager } = createManager({ [CONTROL_BOOK]: [] });
+    const first = { context: { user_message_id: 3 }, raw_output: 'first' };
+    const second = { context: { user_message_id: 5 }, raw_output: 'second' };
+    await manager.saveRoleDecisionMemory(first);
+    await manager.saveRoleDecisionMemory(second);
+
+    const restored = await manager.restoreRoleDecisionMemoryBeforeMessage(4);
+
+    assert.deepEqual(restored.latest_run, first);
+    assert.deepEqual(restored.history, [first]);
+    assert.deepEqual((await manager.getRoleDecisionMemory()).latest_run, first);
 });

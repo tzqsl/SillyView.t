@@ -1408,7 +1408,16 @@ export class SillyViewApp {
             const rollbackTurnId = affectedTurnIds[0]
                 ?? (this.turnStateSnapshots?.has(deletedMessageId - 1) ? deletedMessageId - 1 : deletedMessageId);
             const turnSnapshot = this.turnStateSnapshots?.get(rollbackTurnId) || this.previousStateSnapshot;
-            if (!turnSnapshot) return false;
+            const lastMessages = lastMessageId >= 0 ? (this.th.getChatMessages?.(lastMessageId) || []) : [];
+            const roleHistoryCutoff = lastMessages[0]?.is_user ? lastMessageId - 1 : lastMessageId;
+            if (!turnSnapshot) {
+                if (!this.data.restoreRoleDecisionMemoryBeforeMessage) return false;
+                const restoredMemory = await this.data.restoreRoleDecisionMemoryBeforeMessage(roleHistoryCutoff);
+                if (this.roleDecision) this.roleDecision.lastRun = restoredMemory?.latest_run || null;
+                const SnapshotEvent = this.parentWin?.CustomEvent || globalThis.CustomEvent;
+                if (SnapshotEvent) this.parentWin?.dispatchEvent?.(new SnapshotEvent('sillyview:snapshot-updated', { detail: { reason: 'message_deleted' } }));
+                return true;
+            }
 
             this.data.restoreStateFromSnapshot(turnSnapshot?.state instanceof Map ? turnSnapshot.state : turnSnapshot);
             if (turnSnapshot?.state instanceof Map && this.data.restoreRoleDecisionMemory) {
@@ -1426,6 +1435,8 @@ export class SillyViewApp {
             }
             await this.data.saveAllEntries();
             this.ui.renderAll();
+            const SnapshotEvent = this.parentWin?.CustomEvent || globalThis.CustomEvent;
+            if (SnapshotEvent) this.parentWin?.dispatchEvent?.(new SnapshotEvent('sillyview:snapshot-updated', { detail: { reason: 'message_deleted' } }));
             return true;
         } finally {
             this.pendingMessageDeletionId = null;
