@@ -54,6 +54,19 @@ test('persisted AI settings are restored after reload', async () => {
     assert.equal(states.get('sv_config').role_ai.model, 'saved-role');
 });
 
+test('sv_ai_context is visible to role AI by default', () => {
+    const manager = Object.create(DataManager.prototype);
+    manager.config = {
+        world_book_keys: {
+            config: 'sv_config',
+            ai_context: 'sv_ai_context',
+            asset_prefix: 'sv_asset_',
+        },
+    };
+    assert.equal(manager._isWorldbookEntryVisibleToRoleAI('sv_ai_context'), true);
+    assert.equal(manager._isWorldbookEntryVisibleToRoleAI('sv_config'), false);
+});
+
 test('liquidation line is rendered while the trade panel is in spot mode', () => {
     const createdLines = [];
     const elements = {
