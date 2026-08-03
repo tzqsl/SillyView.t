@@ -45,19 +45,23 @@ export class Modals {
             <input type="number" id="sv-loan-amount" placeholder="输入金额" class="sv-input" max="${maxAmount}" min="0">
         `;
         
-        const modal = this._createModal(message, buttonText, () => {
+        const modal = this._createModal(message, buttonText, async () => {
             const amountInput = this.parentDoc.getElementById('sv-loan-amount');
             const amount = parseFloat(amountInput.value);
 
             if (isNaN(amount) || amount <= 0) { this.win.toastr.error("请输入有效金额。"); return; }
             if (amount > maxAmount) { this.win.toastr.error(`金额超过上限。`); return; }
 
-            if (isLoan) {
-                this.data.takeLoan(amount);
-            } else {
-                this.data.repayLoan(amount);
+            try {
+                if (isLoan) {
+                    await this.data.takeLoan(amount);
+                } else {
+                    await this.data.repayLoan(amount);
+                }
+                this._removeModal(modal);
+            } catch (error) {
+                this.win.toastr.error(error?.message || '贷款操作失败。');
             }
-            this._removeModal(modal);
         });
         this.parentDoc.body.appendChild(modal);
     }
@@ -77,7 +81,16 @@ export class Modals {
             </div>
         `;
 
-        modal.querySelector('#sv-modal-ok').addEventListener('click', onConfirm);
+        modal.querySelector('#sv-modal-ok').addEventListener('click', async event => {
+            const button = event.currentTarget;
+            if (button.disabled) return;
+            button.disabled = true;
+            try {
+                await onConfirm();
+            } finally {
+                if (button.isConnected) button.disabled = false;
+            }
+        });
         modal.querySelector('#sv-modal-cancel').addEventListener('click', () => this._removeModal(modal));
         modal.addEventListener('click', (e) => { if (e.target === modal) this._removeModal(modal); });
 

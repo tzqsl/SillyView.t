@@ -735,3 +735,71 @@ test('creation UI explains background model fallback and later reconfiguration',
     assert.match(source, /用于本次初始化的首次后台市场生成/);
     assert.match(source, /可随时在 SillyView 设置中的“后台市场模型”重新配置/);
 });
+
+test('loan operations adjust cash once while still recording transactions', async () => {
+    const state = { cash: 10000, debt: 0, transaction_log: [] };
+    const manager = Object.create(DataManager.prototype);
+    manager.config = { world_book_keys: { player_portfolio: 'portfolio', global_market: 'market' } };
+    manager.dependencies = { win: { toastr: { success() {}, info() {}, warning() {}, error() {} } } };
+    manager.getState = key => key === 'portfolio' ? state : { current_time_index: 3 };
+    manager.updateState = async (_key, updater) => updater(state);
+
+    await manager.takeLoan(500);
+    assert.deepEqual({ cash: state.cash, debt: state.debt }, { cash: 10500, debt: 500 });
+    await manager.repayLoan(200);
+    assert.deepEqual({ cash: state.cash, debt: state.debt }, { cash: 10300, debt: 300 });
+    await manager.grantLoanByAI(100, 'test');
+    assert.deepEqual({ cash: state.cash, debt: state.debt }, { cash: 10400, debt: 400 });
+    await manager.forceRepayLoanByAI(50, 'test');
+    assert.deepEqual({ cash: state.cash, debt: state.debt }, { cash: 10350, debt: 350 });
+    assert.deepEqual(state.transaction_log.map(entry => entry.amount), [-50, 100, -200, 500]);
+});
+
+test('pending-order risk controls are validated against the trigger price', async () => {
+    const errors = [];
+    const triggerInput = { value: '1.05' };
+    const renderer = Object.create(UIRenderer.prototype);
+    Object.assign(renderer, {
+        isAnimating: false,
+        isSubmittingTrade: false,
+        tradeMode: 'leverage',
+        orderMode: 'limit',
+        currentAsset: 'EURUSD',
+        selectedLeverage: 5,
+        parentDoc: { getElementById: id => ({
+            'sillyview-trade-amount': { value: '500' },
+            'sillyview-leverage-slider': { value: '5' },
+            'sillyview-order-trigger-price': triggerInput,
+        }[id] || null) },
+        win: { toastr: { error: message => errors.push(message), info() {} } },
+        data: { getState: key => key.includes('asset_')
+            ? { current_price: 1.08, kline_minute: [], kline_hourly: [{ close: 1.08 }] }
+            : { assets: {} } },
+        positionCalculator: { calculate: () => ({ type: 'long', totalAmount: 1000 }) },
+        _getKlineDataForTimeframe: asset => asset.kline_hourly,
+        _readRiskControls: (_action, referencePrice) => referencePrice === 1.05 ? { stop_loss: 1.01 } : undefined,
+        app: { placePendingOrder: async spec => { renderer.placed = spec; return true; } },
+    });
+
+    await renderer.initiateTrade('buy');
+
+    assert.equal(renderer.placed.triggerPrice, 1.05);
+    assert.equal(renderer.placed.riskControls.stop_loss, 1.01);
+    assert.deepEqual(errors, []);
+});
+
+test('trade submission lock prevents overlap and is released after failure', async () => {
+    const errors = [];
+    const renderer = Object.create(UIRenderer.prototype);
+    renderer.win = { toastr: { error: message => errors.push(message) } };
+    let release;
+    const pending = renderer._submitTradeOperation(() => new Promise(resolve => { release = resolve; }));
+    assert.equal(renderer.isSubmittingTrade, true);
+    release(true);
+    assert.equal(await pending, true);
+    assert.equal(renderer.isSubmittingTrade, false);
+
+    assert.equal(await renderer._submitTradeOperation(async () => { throw new Error('save failed'); }), false);
+    assert.equal(renderer.isSubmittingTrade, false);
+    assert.deepEqual(errors, ['save failed']);
+});

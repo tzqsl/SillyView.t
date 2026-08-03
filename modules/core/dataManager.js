@@ -3624,7 +3624,7 @@ export class DataManager {
             p.debt = (p.debt || 0) + amount;
             return p;
         });
-        await this.logTransaction('申请贷款', amount, false);
+        await this.logTransaction('申请贷款', amount, true);
         this.dependencies.win.toastr.success(`成功贷款 ${amount.toFixed(2)} 信用点。`);
     }
 
@@ -3634,7 +3634,7 @@ export class DataManager {
             p.debt = (p.debt || 0) - amount;
             return p;
         });
-        await this.logTransaction('偿还贷款', -amount, false);
+        await this.logTransaction('偿还贷款', -amount, true);
         this.dependencies.win.toastr.info(`已偿还 ${amount.toFixed(2)} 信用点贷款。`);
     }
 
@@ -3644,7 +3644,7 @@ export class DataManager {
             p.debt = (p.debt || 0) + amount;
             return p;
         });
-        await this.logTransaction(`AI贷款: ${reason}`, amount, false);
+        await this.logTransaction(`AI贷款: ${reason}`, amount, true);
         this.dependencies.win.toastr.info(`AI为你提供了一笔 ${amount.toFixed(2)} 信用点的贷款。`, "融资机会");
     }
     
@@ -3668,7 +3668,7 @@ export class DataManager {
             p.debt = (p.debt || 0) - amount;
             return p;
         });
-        await this.logTransaction(`AI强制还款: ${reason}`, -amount, false);
+        await this.logTransaction(`AI强制还款: ${reason}`, -amount, true);
         this.dependencies.win.toastr.warning(`AI强制你偿还了 ${amount.toFixed(2)} 信用点的贷款。`, "债务催收");
     }
     

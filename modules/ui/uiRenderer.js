@@ -719,8 +719,8 @@ export class UIRenderer {
         return { take_profit: takeProfit, stop_loss: stopLoss, trailing_stop_pct: trailingStopPct };
     }
 
-    initiateTrade(type) {
-        if (this.isAnimating) return;
+    async initiateTrade(type) {
+        if (this.isAnimating || this.isSubmittingTrade) return;
         const positionMode = this.tradeMode === 'leverage' ? 'leveraged' : 'spot';
         const position = this.positionCalculator.calculate(this.currentAsset, this.data.getState(SillyViewConfig.world_book_keys.player_portfolio), positionMode);
         
@@ -759,11 +759,10 @@ export class UIRenderer {
         const currentKlineData = this._getKlineDataForTimeframe(assetData);
         const lastCandle = currentKlineData.slice(-1)[0] || assetData.kline_minute?.slice(-1)[0] || assetData.kline_hourly.slice(-1)[0];
         const currentPrice = this.isAnimating && this.liveAnimationPrice !== null ? this.liveAnimationPrice : (assetData.current_price ?? lastCandle.close);
-        const riskControls = this._readRiskControls(action, currentPrice);
-        if (riskControls === undefined) return;
-
         if (this.orderMode === 'market') {
-            this.app.executeTrade(action, amount, this.currentAsset, currentPrice, leverage, riskControls, positionMode);
+            const riskControls = this._readRiskControls(action, currentPrice);
+            if (riskControls === undefined) return;
+            await this._submitTradeOperation(() => this.app.executeTrade(action, amount, this.currentAsset, currentPrice, leverage, riskControls, positionMode));
             return;
         }
 
@@ -772,7 +771,6 @@ export class UIRenderer {
             intent: action,
             amount,
             leverage,
-            riskControls,
             mode: positionMode,
         };
         if (this.orderMode === 'oco') {
@@ -782,11 +780,13 @@ export class UIRenderer {
                 this.win.toastr.error('OCO 下轨必须低于当前价，上轨必须高于当前价。');
                 return;
             }
+            const riskControls = this._readRiskControls(action, currentPrice);
+            if (riskControls === undefined) return;
             const side = type === 'buy' ? 'buy' : 'sell';
-            this.app.placeOcoOrders([
+            await this._submitTradeOperation(() => this.app.placeOcoOrders([
                 { ...common, orderType: side === 'buy' ? 'limit' : 'stop', triggerPrice: lowerPrice },
                 { ...common, orderType: side === 'buy' ? 'stop' : 'limit', triggerPrice: upperPrice },
-            ]);
+            ].map(order => ({ ...order, riskControls }))));
             return;
         }
 
@@ -795,7 +795,21 @@ export class UIRenderer {
             this.win.toastr.error('请输入有效的挂单触发价。');
             return;
         }
-        this.app.placePendingOrder({ ...common, orderType: this.orderMode, triggerPrice });
+        const riskControls = this._readRiskControls(action, triggerPrice);
+        if (riskControls === undefined) return;
+        await this._submitTradeOperation(() => this.app.placePendingOrder({ ...common, riskControls, orderType: this.orderMode, triggerPrice }));
+    }
+
+    async _submitTradeOperation(operation) {
+        this.isSubmittingTrade = true;
+        try {
+            return await operation();
+        } catch (error) {
+            this.win.toastr.error(error?.message || '交易操作失败。');
+            return false;
+        } finally {
+            this.isSubmittingTrade = false;
+        }
     }
 
     updateUIVisibility() {
