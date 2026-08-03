@@ -441,6 +441,36 @@ test('deleting the current reply restores the market snapshot from before its us
     assert.equal(app.pendingRoleTurnContext, null);
 });
 
+test('deleting multiple trailing messages restores the earliest affected user turn', async () => {
+    const firstSnapshot = new Map([['market', { minute_time_index: 10 }]]);
+    const laterSnapshot = new Map([['market', { minute_time_index: 20 }]]);
+    let restored = null;
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        previousStateSnapshot: null,
+        pendingMessageDeletionId: null,
+        roleCaptureRetryTimers: new Map(),
+        turnStateSnapshots: new Map([
+            [5, { state: firstSnapshot, role_memory: null }],
+            [7, { state: laterSnapshot, role_memory: null }],
+        ]),
+        th: { getLastMessageId: async () => 4 },
+        data: {
+            restoreStateFromSnapshot: value => { restored = value; },
+            restoreRoleDecisionMemory: async () => {},
+            saveAllEntries: async () => {},
+        },
+        ui: { renderAll: () => {} },
+        _clearAllRoleCaptureRetries: () => {},
+    });
+
+    const rolledBack = await app.rollbackStateForDeletedMessage(8);
+
+    assert.equal(rolledBack, true);
+    assert.equal(restored, firstSnapshot);
+    assert.equal(app.turnStateSnapshots.size, 0);
+});
+
 test('plain Enter on the chat textarea starts role capture but newline shortcuts do not', async () => {
     let captureCount = 0;
     const app = Object.create(SillyViewApp.prototype);

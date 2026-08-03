@@ -1400,11 +1400,13 @@ export class SillyViewApp {
         this.pendingMessageDeletionId = deletedMessageId;
         try {
             const lastMessageId = Number(await this.th.getLastMessageId());
-            if (!Number.isFinite(lastMessageId) || deletedMessageId !== lastMessageId + 1) return false;
+            if (!Number.isFinite(lastMessageId) || deletedMessageId <= lastMessageId) return false;
 
-            const rollbackTurnId = this.turnStateSnapshots?.has(deletedMessageId)
-                ? deletedMessageId
-                : deletedMessageId - 1;
+            const affectedTurnIds = [...(this.turnStateSnapshots?.keys?.() || [])]
+                .filter(id => id >= lastMessageId && id <= deletedMessageId)
+                .sort((a, b) => a - b);
+            const rollbackTurnId = affectedTurnIds[0]
+                ?? (this.turnStateSnapshots?.has(deletedMessageId - 1) ? deletedMessageId - 1 : deletedMessageId);
             const turnSnapshot = this.turnStateSnapshots?.get(rollbackTurnId) || this.previousStateSnapshot;
             if (!turnSnapshot) return false;
 
