@@ -101,10 +101,104 @@ test('liquidation line is rendered while the trade panel is in spot mode', () =>
 
     renderer.updatePnlAndPriceLines(1.08);
 
-    assert.equal(createdLines.length, 1);
+    assert.equal(createdLines.length, 2);
     assert.equal(createdLines[0].price, 1.02);
     assert.match(createdLines[0].title, /^强平 @/);
     assert.equal(createdLines[0].lineVisible, true);
+
+});
+test('chart renders risk, pending-order, and trailing-stop lines without leaving stale handles', () => {
+    const createdLines = [];
+    const removedLines = [];
+    const elements = {
+        'sillyview-panel': { classList: { contains: value => value === 'visible' } },
+        'sillyview-data-pnl': { innerHTML: '', textContent: '' },
+        'sillyview-data-pnl-details': { innerHTML: '', textContent: '' },
+    };
+    const portfolio = {
+        assets: {
+            EURUSD: {
+                spot: {
+                    trades: [{}],
+                    risk_controls: {
+                        take_profit: 1.15,
+                        stop_loss: 1.05,
+                        trailing_stop_pct: 1,
+                        trailing_anchor: 1.1,
+                    },
+                },
+                leveraged: {
+                    trades: [{}],
+                    risk_controls: {
+                        take_profit: 1.1,
+                        stop_loss: 1.3,
+                        trailing_stop_pct: 2,
+                        trailing_anchor: 1.2,
+                    },
+                },
+            },
+        },
+        pending_orders: [
+            { id: 'buy-limit', status: 'pending', asset_code: 'EURUSD', side: 'buy', order_type: 'limit', trigger_price: 1.06 },
+            { id: 'sell-stop', status: 'pending', asset_code: 'EURUSD', side: 'sell', order_type: 'stop', trigger_price: 1.25 },
+            { id: 'filled', status: 'filled', asset_code: 'EURUSD', side: 'buy', order_type: 'limit', trigger_price: 1.01 },
+            { id: 'other', status: 'pending', asset_code: 'GBPUSD', side: 'buy', order_type: 'limit', trigger_price: 1.2 },
+        ],
+    };
+    const positions = {
+        spot: {
+            type: 'long',
+            totalAmount: 1000,
+            avgEntryPrice: 1.08,
+            totalShares: 1000,
+            isLeveraged: false,
+            liquidationPrice: 0,
+        },
+        leveraged: {
+            type: 'short',
+            totalAmount: 500,
+            avgEntryPrice: 1.2,
+            totalShares: 2000,
+            isLeveraged: true,
+            liquidationPrice: 1.31,
+        },
+    };
+    const renderer = Object.create(UIRenderer.prototype);
+    Object.assign(renderer, {
+        isInitialized: true,
+        parentDoc: { getElementById: id => elements[id] || null },
+        data: { getState: () => portfolio },
+        currentAsset: 'EURUSD',
+        tradeMode: 'spot',
+        avgCostLine: null,
+        liquidationLine: null,
+        auxiliaryPriceLines: [],
+        win: { LightweightCharts: { LineStyle: { Solid: 0, Dashed: 2, Dotted: 1 } } },
+        chartManager: {
+            createPriceLine: options => {
+                const handle = { options };
+                createdLines.push(options);
+                return handle;
+            },
+            removePriceLine: handle => removedLines.push(handle),
+        },
+        positionCalculator: {
+            calculate: (_assetCode, _portfolio, mode) => positions[mode],
+        },
+    });
+
+    renderer.updatePnlAndPriceLines(1.09);
+    assert.equal(createdLines.length, 11);
+    assert.deepEqual(
+        new Set(createdLines.map(line => Number(line.price.toFixed(4)))),
+        new Set([1.08, 1.2, 1.31, 1.15, 1.05, 1.089, 1.1, 1.3, 1.224, 1.06, 1.25]),
+    );
+    assert.equal(createdLines.filter(line => /\u6302\u5355/.test(line.title)).length, 2);
+    assert.equal(createdLines.filter(line => /\u79fb\u52a8\u6b62\u635f/.test(line.title)).length, 2);
+
+    renderer.updatePnlAndPriceLines(1.09);
+    assert.equal(removedLines.length, 11);
+    assert.equal(createdLines.length, 22);
 });
 
 test('core listeners are registered before panel HTML finishes loading', async () => {

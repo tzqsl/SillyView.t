@@ -27,6 +27,7 @@ export class UIRenderer {
         this.chartManager = new ChartManager(dependencies);
         this.avgCostLine = null;
         this.liquidationLine = null;
+        this.auxiliaryPriceLines = [];
 
         this.isAnimating = false;
         this.isPanelVisible = false;
@@ -519,6 +520,9 @@ export class UIRenderer {
         if (this.liquidationLine) this.chartManager.removePriceLine(this.liquidationLine);
         this.avgCostLine = null;
         this.liquidationLine = null;
+        for (const line of this.auxiliaryPriceLines || []) this.chartManager.removePriceLine(line);
+        this.auxiliaryPriceLines = [];
+
 
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio);
         const positionMode = this.tradeMode === 'leverage' ? 'leveraged' : 'spot';
@@ -569,8 +573,84 @@ export class UIRenderer {
                 axisLabelVisible: true,
             });
         }
-    }
     
+
+        const lineStyles = this.win.LightweightCharts.LineStyle;
+        const addAuxiliaryLine = options => {
+            const line = this.chartManager.createPriceLine({ lineVisible: true, axisLabelVisible: true, ...options });
+            if (line) this.auxiliaryPriceLines.push(line);
+        };
+        const assetBuckets = portfolio?.assets?.[this.currentAsset] || {};
+        for (const mode of ['spot', 'leveraged']) {
+            const modePosition = mode === positionMode ? position : this.positionCalculator.calculate(this.currentAsset, portfolio, mode);
+            if (!modePosition?.type || modePosition.totalAmount <= 0) continue;
+            const controls = assetBuckets?.[mode]?.risk_controls || {};
+            const modeLabel = mode === 'spot' ? '\u73b0\u8d27' : '\u6760\u6746';
+            if (mode !== positionMode) {
+                addAuxiliaryLine({
+                    price: modePosition.avgEntryPrice,
+                    title: modeLabel + '\u4ed3\u4f4d @ ' + modePosition.avgEntryPrice.toFixed(4),
+                    color: mode === 'spot' ? '#06b6d4' : '#3b82f6',
+                    lineWidth: 2,
+                    lineStyle: lineStyles.Dashed,
+                });
+            }
+
+            const takeProfit = Number(controls.take_profit);
+            if (Number.isFinite(takeProfit) && takeProfit > 0) {
+                addAuxiliaryLine({
+                    price: takeProfit,
+                    title: modeLabel + '\u6b62\u76c8 @ ' + takeProfit.toFixed(4),
+                    color: '#22c55e',
+                    lineWidth: 1,
+                    lineStyle: lineStyles.Dotted,
+                });
+            }
+            const stopLoss = Number(controls.stop_loss);
+            if (Number.isFinite(stopLoss) && stopLoss > 0) {
+                addAuxiliaryLine({
+                    price: stopLoss,
+                    title: modeLabel + '\u6b62\u635f @ ' + stopLoss.toFixed(4),
+                    color: '#ef4444',
+                    lineWidth: 1,
+                    lineStyle: lineStyles.Dotted,
+                });
+            }
+            const trailingPct = Number(controls.trailing_stop_pct);
+            let trailingAnchor = Number(controls.trailing_anchor);
+            if (Number.isFinite(trailingPct) && trailingPct > 0 && trailingPct <= 50) {
+                if (!Number.isFinite(trailingAnchor) || trailingAnchor <= 0) trailingAnchor = modePosition.avgEntryPrice;
+                const trailingPrice = modePosition.type === 'short'
+                    ? trailingAnchor * (1 + trailingPct / 100)
+                    : trailingAnchor * (1 - trailingPct / 100);
+                if (Number.isFinite(trailingPrice) && trailingPrice > 0) {
+                    addAuxiliaryLine({
+                        price: trailingPrice,
+                        title: modeLabel + '\u79fb\u52a8\u6b62\u635f ' + trailingPct.toFixed(2) + '% @ ' + trailingPrice.toFixed(4),
+                        color: '#f97316',
+                        lineWidth: 2,
+                        lineStyle: lineStyles.Dashed,
+                    });
+                }
+            }
+        }
+
+        for (const order of portfolio?.pending_orders || []) {
+            if (order?.status !== 'pending' || order.asset_code !== this.currentAsset) continue;
+            const triggerPrice = Number(order.trigger_price);
+            if (!Number.isFinite(triggerPrice) || triggerPrice <= 0) continue;
+            const sideLabel = order.side === 'buy' ? '\u4e70\u5165' : '\u5356\u51fa';
+            const typeLabel = order.order_type === 'limit' ? '\u9650\u4ef7' : '\u6761\u4ef6';
+            addAuxiliaryLine({
+                price: triggerPrice,
+                title: sideLabel + typeLabel + '\u6302\u5355 @ ' + triggerPrice.toFixed(4),
+                color: order.side === 'buy' ? '#10b981' : '#f43f5e',
+                lineWidth: 1,
+                lineStyle: lineStyles.Solid ?? 0,
+            });
+        }
+    }
+
     renderTotalAssets() {
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio);
         if (!portfolio) return;
@@ -768,6 +848,8 @@ export class UIRenderer {
         this.currentAsset = assetCode;
         if (this.avgCostLine) { this.chartManager.removePriceLine(this.avgCostLine); this.avgCostLine = null; }
         if (this.liquidationLine) { this.chartManager.removePriceLine(this.liquidationLine); this.liquidationLine = null; }
+        for (const line of this.auxiliaryPriceLines || []) this.chartManager.removePriceLine(line);
+        this.auxiliaryPriceLines = [];
         this.renderAll();
     }
 
@@ -806,6 +888,8 @@ export class UIRenderer {
         if (this.liquidationLine) this.chartManager.removePriceLine(this.liquidationLine);
         this.avgCostLine = null;
         this.liquidationLine = null;
+        for (const line of this.auxiliaryPriceLines || []) this.chartManager.removePriceLine(line);
+        this.auxiliaryPriceLines = [];
         this.renderChartData();
     }
 
