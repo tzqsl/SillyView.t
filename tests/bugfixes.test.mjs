@@ -311,6 +311,46 @@ test('frontend role injection recovers the latest user context when capture even
     assert.equal(app.lastRoleDispatchStatus.status, 'injected');
 });
 
+test('regenerate and swipe replay persisted role decisions without rerunning role AI', async () => {
+    for (const type of ['regenerate', 'swipe']) {
+        const injected = [];
+        let runCount = 0;
+        const app = Object.create(SillyViewApp.prototype);
+        Object.assign(app, {
+            pendingRoleTurnContext: { user_message_id: 7 },
+            pendingRoleKeyboardDraft: { content: 'draft' },
+            roleDecision: {
+                running: false,
+                isEnabled: () => true,
+                run: async () => { runCount += 1; },
+            },
+            data: {
+                getRoleDecisionRunForMessage: async id => id === 7
+                    ? { frontend_injection: 'persisted thoughts and outline' }
+                    : null,
+            },
+            th: {
+                getLastMessageId: async () => 8,
+                getChatMessages: () => [
+                    { message_id: 7, is_user: true },
+                    { message_id: 8, is_user: false },
+                ],
+                injectPrompts: (prompts, options) => injected.push({ prompts, options }),
+            },
+            events: { refreshRoleDebugWindow: () => {} },
+        });
+
+        await app.prepareFrontendRoleInjection(type, {}, false);
+
+        assert.equal(runCount, 0);
+        assert.equal(injected.length, 1);
+        assert.equal(injected[0].prompts[0].content, 'persisted thoughts and outline');
+        assert.deepEqual(injected[0].options, { once: true });
+        assert.equal(app.lastRoleDispatchStatus.status, 'replayed');
+        assert.equal(app.pendingRoleTurnContext, null);
+    }
+});
+
 test('role generation does not recursively recover and dispatch itself', async () => {
     let latestMessageReads = 0;
     const app = Object.create(SillyViewApp.prototype);

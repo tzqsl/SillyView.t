@@ -1942,6 +1942,16 @@ export class DataManager {
         return true;
     }
 
+    async getRoleDecisionRunForMessage(messageId) {
+        const targetId = Number(messageId);
+        if (!Number.isFinite(targetId)) return null;
+        const memory = await this.getRoleDecisionMemory();
+        const history = Array.isArray(memory.history) ? memory.history : [];
+        return [...history].reverse().find(run => (
+            Number(run?.context?.user_message_id) === targetId
+        )) || (Number(memory.latest_run?.context?.user_message_id) === targetId ? memory.latest_run : null);
+    }
+
     async restoreRoleDecisionMemoryBeforeMessage(messageId) {
         const cutoff = Number(messageId);
         if (!Number.isFinite(cutoff)) return null;

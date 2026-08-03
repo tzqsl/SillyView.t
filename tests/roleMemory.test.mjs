@@ -116,3 +116,16 @@ test('role decision memory rolls back by persisted user message history', async 
     assert.deepEqual(restored.history, [first]);
     assert.deepEqual((await manager.getRoleDecisionMemory()).latest_run, first);
 });
+
+
+test('role decision run can be loaded for an exact user message', async () => {
+    const { manager } = createManager({ [CONTROL_BOOK]: [] });
+    const first = { context: { user_message_id: 3 }, frontend_injection: 'first injection' };
+    const second = { context: { user_message_id: 5 }, frontend_injection: 'second injection' };
+    await manager.saveRoleDecisionMemory(first);
+    await manager.saveRoleDecisionMemory(second);
+
+    assert.deepEqual(await manager.getRoleDecisionRunForMessage(3), first);
+    assert.deepEqual(await manager.getRoleDecisionRunForMessage(5), second);
+    assert.equal(await manager.getRoleDecisionRunForMessage(4), null);
+});

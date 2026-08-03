@@ -694,8 +694,51 @@ export class SillyViewApp {
         }
         return null;
     }
+    async _findLatestUserMessageId() {
+        const lastMessageId = Number(await this.th.getLastMessageId());
+        if (!Number.isFinite(lastMessageId)) return null;
+        const messages = this.th.getChatMessages('0-' + lastMessageId) || [];
+        const latestUser = [...messages].reverse().find(message => (
+            message?.role ? message.role === 'user' : message?.is_user === true
+        ));
+        const messageId = Number(latestUser?.message_id);
+        return Number.isFinite(messageId) ? messageId : null;
+    }
+
+    async _injectPersistedRoleDecisionForRegeneration(type) {
+        const userMessageId = await this._findLatestUserMessageId();
+        if (!Number.isFinite(userMessageId) || !this.data.getRoleDecisionRunForMessage) return false;
+        const roleRun = await this.data.getRoleDecisionRunForMessage(userMessageId);
+        if (!roleRun?.frontend_injection || !this.th?.injectPrompts) return false;
+        const injectionId = 'sillyview-role-replay-' + userMessageId + '-' + Date.now();
+        this.th.injectPrompts([{
+            id: injectionId,
+            position: 'in_chat',
+            depth: 0,
+            role: 'system',
+            content: roleRun.frontend_injection,
+            should_scan: false,
+        }], { once: true });
+        this.lastRoleInjectionId = injectionId;
+        this.lastRoleDispatchStatus = {
+            status: 'replayed',
+            user_message_id: userMessageId,
+            detail: '已从 sv_role_decision_latest 重放角色决策用于 ' + type + '。',
+            injection_id: injectionId,
+            updated_at: Date.now(),
+        };
+        this.events?.refreshRoleDebugWindow?.();
+        return true;
+    }
+
     async prepareFrontendRoleInjection(type, option = {}, dryRun = false) {
         if (dryRun || !this.roleDecision?.isEnabled() || this.roleDecision.running) return;
+        if (['regenerate', 'swipe'].includes(type)) {
+            await this._injectPersistedRoleDecisionForRegeneration(type);
+            this.pendingRoleTurnContext = null;
+            this.pendingRoleKeyboardDraft = null;
+            return;
+        }
         if (option?.automatic_trigger || !['normal', 'continue', undefined, null].includes(type)) {
             if (this.pendingRoleTurnContext) {
                 this.lastRoleDispatchStatus = {
