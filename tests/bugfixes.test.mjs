@@ -250,7 +250,7 @@ test('core listeners are registered before panel HTML finishes loading', async (
     });
 
     assert.equal(setupCount, 1);
-    assert.equal(roleMemoryInitCount, 1);
+    assert.equal(roleMemoryInitCount, 0);
     assert.equal(bindCount, 0);
 
     resolvePanel();
@@ -259,6 +259,25 @@ test('core listeners are registered before panel HTML finishes loading', async (
     assert.equal(bindCount, 1);
 });
 
+test('initial state loading is single-flight', async () => {
+    let resolveLoad;
+    let loadCount = 0;
+    const data = Object.create(DataManager.prototype);
+    data.initialStateLoadPromise = null;
+    data._loadInitialState = () => {
+        loadCount += 1;
+        return new Promise(resolve => { resolveLoad = resolve; });
+    };
+
+    const first = data.loadInitialState();
+    const second = data.loadInitialState();
+
+    assert.equal(first, second);
+    assert.equal(loadCount, 1);
+    resolveLoad(true);
+    await first;
+    assert.equal(data.initialStateLoadPromise, null);
+});
 test('generation-time recovery retries until the first user message becomes readable', async () => {
     let attempts = 0;
     const context = { user_message_id: 1, user_content: '新聊天第一条消息' };

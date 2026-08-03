@@ -409,7 +409,16 @@ export class DataManager {
         return Math.abs(hash).toString(36);
     }
 
-    async loadInitialState() {
+    loadInitialState() {
+        if (this.initialStateLoadPromise) return this.initialStateLoadPromise;
+
+        this.initialStateLoadPromise = this._loadInitialState().finally(() => {
+            this.initialStateLoadPromise = null;
+        });
+        return this.initialStateLoadPromise;
+    }
+
+    async _loadInitialState() {
         this.logger.log("正在加载初始状态...");
         this.ui.renderInitializationProgress({
             step: '准备',
