@@ -736,6 +736,13 @@ test('creation UI explains background model fallback and later reconfiguration',
     assert.match(source, /可随时在 SillyView 设置中的“后台市场模型”重新配置/);
 });
 
+test('mobile panel toggle uses the initialized parent document', async () => {
+    const source = await readFile(new URL('../script.js', import.meta.url), 'utf8');
+    assert.match(source, /parentWin\.document\.getElementById\('sillyview-entry-button'\)/);
+    assert.match(source, /parentWin\.document\.getElementById\('sillyview-panel'\)/);
+    assert.doesNotMatch(source, /const entryButton = parentDoc\./);
+});
+
 test('loan operations adjust cash once while still recording transactions', async () => {
     const state = { cash: 10000, debt: 0, transaction_log: [] };
     const manager = Object.create(DataManager.prototype);

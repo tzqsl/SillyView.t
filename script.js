@@ -118,8 +118,8 @@ async function mainInitialize() {
             roleDecision,
             config: SillyViewConfig,
             togglePanel: () => {
-                const entryButton = parentDoc.getElementById('sillyview-entry-button');
-                const panel = parentDoc.getElementById('sillyview-panel');
+                const entryButton = parentWin.document.getElementById('sillyview-entry-button');
+                const panel = parentWin.document.getElementById('sillyview-panel');
                 if (!entryButton || !panel) return { visible: false, error: 'panel_unavailable' };
                 entryButton.click();
                 return { visible: panel.classList.contains('visible') };
