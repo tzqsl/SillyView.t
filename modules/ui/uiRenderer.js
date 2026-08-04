@@ -326,6 +326,7 @@ export class UIRenderer {
         const roleDebugEnabled = Boolean(configState.role_ai?.debug_enabled);
         const bgAI = this._getBackgroundAISettings();
         const roleAI = this._getRoleAISettings();
+        const chartIndicators = this.data.getChartIndicatorSettings?.() || { average: true, ma5: false, ma10: false, ma20: false };
         const sourceOptions = ['openai', 'claude', 'openrouter', 'google', 'mistral', 'cohere']
             .map(source => `<option value="${source}" ${bgAI.source === source ? 'selected' : ''}>${source}</option>`)
             .join('');
@@ -336,6 +337,23 @@ export class UIRenderer {
         container.innerHTML = `
             <div>
                 <h3 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">游戏设置</h3>
+                <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--bg-gray-700); margin-bottom: 1rem;">
+                    <h4 style="font-weight: 600; color: var(--cyan-400); margin-bottom: 0.75rem;">图表指标</h4>
+                    ${[
+                        ['average', '均价', true],
+                        ['ma5', 'MA5', chartIndicators.ma5],
+                        ['ma10', 'MA10', chartIndicators.ma10],
+                        ['ma20', 'MA20', chartIndicators.ma20],
+                    ].map(([key, label, enabled]) => `
+                        <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-top:${key === 'average' ? '0' : '0.65rem'};">
+                            <span style="font-size:0.875rem; color:var(--text-gray-300);">${label}${key === 'average' ? '（始终显示）' : ''}</span>
+                            <span class="sv-toggle-switch">
+                                <input type="checkbox" data-sv-chart-indicator="${key}" ${enabled ? 'checked' : ''} ${key === 'average' ? 'disabled' : ''}>
+                                <span class="slider round"></span>
+                            </span>
+                        </label>
+                    `).join('')}
+                </div>
                 <div style="background-color: var(--bg-gray-900); padding: 1rem; border-radius: 0.375rem; border: 1px solid var(--bg-gray-700); margin-bottom: 1rem;">
                     <h4 style="font-weight: 600; color: var(--cyan-400); margin-bottom: 0.75rem;">市场时钟</h4>
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
@@ -528,12 +546,23 @@ export class UIRenderer {
             runningValue += Number(item.close || 0) * volume;
             return { time: item.time, value: runningValue / runningVolume };
         }) : [];
-        this.chartManager.setIndicators({ average, ma5: makeAverage(5), ma10: makeAverage(10), ma20: makeAverage(20) });
+        const indicators = { average, ma5: makeAverage(5), ma10: makeAverage(10), ma20: makeAverage(20) };
+        this.chartManager.setIndicators(indicators);
+        this.chartManager.setIndicatorVisibility(this.dependencies.data?.getChartIndicatorSettings?.() || { average: true, ma5: false, ma10: false, ma20: false });
         if (klineData.length > 0) {
             this.chartManager.scrollToPosition(klineData.length - 1, false);
         }
         this.updatePnlAndPriceLines(klineData[klineData.length - 1].close);
         this._startIdleFluctuation(); 
+    }
+
+    applyChartIndicatorSettings(settings = {}) {
+        const normalized = { average: true, ma5: false, ma10: false, ma20: false, ...settings };
+        this.chartManager.setIndicatorVisibility(normalized);
+        for (const input of this.parentDoc.querySelectorAll('[data-sv-chart-indicator]')) {
+            const key = input.dataset.svChartIndicator;
+            input.checked = key === 'average' ? true : Boolean(normalized[key]);
+        }
     }
     
     updatePnlAndPriceLines(currentPrice) {

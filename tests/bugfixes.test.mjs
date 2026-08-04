@@ -55,6 +55,25 @@ test('persisted AI settings are restored after reload', async () => {
     assert.equal(states.get('sv_config').role_ai.model, 'saved-role');
 });
 
+test('chart indicator settings keep average enabled and persist only boolean MA flags', async () => {
+    const dispatched = [];
+    const manager = Object.create(DataManager.prototype);
+    manager.config = { extension_name: 'SillyView', extension_settings_key: 'SillyView' };
+    manager.dependencies = {
+        st: { extensionSettings: {}, saveSettingsDebounced: async () => {} },
+        win: {
+            CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init.detail; } },
+            dispatchEvent: event => dispatched.push(event),
+        },
+    };
+
+    assert.deepEqual(manager.getChartIndicatorSettings(), { average: true, ma5: false, ma10: false, ma20: false });
+    const saved = await manager.persistChartIndicatorSettings({ average: false, ma5: true, ma10: 'true', unknown: true });
+    assert.deepEqual(saved, { average: true, ma5: true, ma10: false, ma20: false });
+    assert.equal(dispatched[0].type, 'sillyview:chart-indicators-updated');
+    assert.deepEqual(dispatched[0].detail.settings, saved);
+});
+
 test('sv_ai_context is visible to role AI by default', () => {
     const manager = Object.create(DataManager.prototype);
     manager.config = {

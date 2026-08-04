@@ -162,6 +162,12 @@ export class ChartManager {
         }
     }
 
+    setIndicatorVisibility(visibility = {}) {
+        for (const [name, series] of Object.entries(this.indicatorSeries)) {
+            if (Object.prototype.hasOwnProperty.call(visibility, name)) series.applyOptions({ visible: Boolean(visibility[name]) });
+        }
+    }
+
     update(candle, volume) {
         if (!this.candlestickSeries || !this.lineSeries || !this.volumeSeries) return;
         try {

@@ -647,6 +647,13 @@ export class EventHandler {
     }
     bindMainInterfaceEvents() {
         this.logger.log("正在绑定主界面事件...");
+
+        if (!this.chartIndicatorListener) {
+            this.chartIndicatorListener = event => {
+                this.ui.applyChartIndicatorSettings(event?.detail?.settings || this.data.getChartIndicatorSettings?.());
+            };
+            this.dependencies.win.addEventListener('sillyview:chart-indicators-updated', this.chartIndicatorListener);
+        }
         
         const endTurnBtn = this.parentDoc.getElementById('sillyview-end-turn-btn');
         const quickModeToggle = this.parentDoc.getElementById('sillyview-quick-mode-toggle');
@@ -769,6 +776,7 @@ export class EventHandler {
                 const autoAdvanceToggle = event.target.closest('#sv-auto-advance-enabled');
                 const roleAIToggle = event.target.closest('#sv-role-ai-enabled');
                 const roleDebugToggle = event.target.closest('#sv-role-debug-enabled');
+                const chartIndicatorToggle = event.target.closest('[data-sv-chart-indicator]');
                 if (leverageToggle) {
                     this.ui.setTradeMode(leverageToggle.checked ? 'leverage' : 'spot');
                 } else if (autoAdvanceToggle) {
@@ -789,6 +797,12 @@ export class EventHandler {
                     }).catch(error => {
                         this.logger.error('切换角色截取调试失败:', error);
                         this.dependencies.win.toastr.error(`切换角色截取调试失败: ${error.message || error}`);
+                    });
+                } else if (chartIndicatorToggle && chartIndicatorToggle.dataset.svChartIndicator !== 'average') {
+                    const key = chartIndicatorToggle.dataset.svChartIndicator;
+                    this.data.persistChartIndicatorSettings({ [key]: chartIndicatorToggle.checked }).catch(error => {
+                        this.logger.error('保存图表指标失败:', error);
+                        this.dependencies.win.toastr.error(`保存图表指标失败: ${error.message || error}`);
                     });
                 }
             });

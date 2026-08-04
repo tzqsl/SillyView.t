@@ -762,6 +762,37 @@ export class DataManager {
             ? this.dependencies.win._.cloneDeep(settings)
             : null;
     }
+
+    getChartIndicatorSettings() {
+        const store = this._getPersistentAISettingsStore();
+        const saved = store?.chart_indicators || {};
+        return {
+            average: true,
+            ma5: saved.ma5 === true,
+            ma10: saved.ma10 === true,
+            ma20: saved.ma20 === true,
+        };
+    }
+
+    async persistChartIndicatorSettings(settings = {}) {
+        const store = this._getPersistentAISettingsStore();
+        if (!store) return false;
+        const current = this.getChartIndicatorSettings();
+        store.chart_indicators = {
+            average: true,
+            ma5: Object.prototype.hasOwnProperty.call(settings, 'ma5') ? settings.ma5 === true : current.ma5,
+            ma10: Object.prototype.hasOwnProperty.call(settings, 'ma10') ? settings.ma10 === true : current.ma10,
+            ma20: Object.prototype.hasOwnProperty.call(settings, 'ma20') ? settings.ma20 === true : current.ma20,
+        };
+        await this.dependencies.st.saveSettingsDebounced?.();
+        const EventType = this.dependencies.win?.CustomEvent || globalThis.CustomEvent;
+        if (EventType) {
+            this.dependencies.win?.dispatchEvent?.(new EventType('sillyview:chart-indicators-updated', {
+                detail: { settings: { ...store.chart_indicators } },
+            }));
+        }
+        return { ...store.chart_indicators };
+    }
     async restorePersistentAISettings() {
         const key = this.config.world_book_keys.config;
         const configState = this.getState(key) || {};

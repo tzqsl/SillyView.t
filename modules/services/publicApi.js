@@ -196,7 +196,7 @@ function buildNewsSnapshot(data, config, activeOnly = false) {
 
 export function createSillyViewPublicAPI({ data, app = null, roleDecision, config, togglePanel = null }) {
     const api = {
-        version: '2.5.0',
+        version: '2.6.0',
         readonly: false,
         async togglePanel() {
             if (typeof togglePanel !== 'function') return { visible: false, error: 'panel_unavailable' };
@@ -278,6 +278,7 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
                 ? (asset.kline_daily || [])
                 : timeframe === 'HOURLY' ? (asset.kline_hourly || []) : (asset.kline_minute || []);
             const portfolio = data.getState(config.world_book_keys.player_portfolio) || {};
+            const feeRate = finiteNumber(config.asset_definitions?.[code]?.trade_config?.fee_rate, 0.001);
             return {
                 asset: {
                     code,
@@ -291,6 +292,10 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
                 ma5: movingAverage(candles, 5),
                 ma10: movingAverage(candles, 10),
                 ma20: movingAverage(candles, 20),
+                trade_limits: {
+                    available_cash: finiteNumber(portfolio.cash),
+                    fee_rate: feeRate,
+                },
                 positions: Object.entries(data.positionCalculator.calculateAll(code, portfolio))
                     .filter(([, position]) => position?.type)
                     .map(([mode, position]) => buildPositionSnapshot(data, code, mode, position)),
@@ -316,11 +321,13 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             return {
                 background_ai: data.getPersistentAISettings?.('background_ai') || {},
                 role_ai: data.getPersistentAISettings?.('role_ai') || {},
+                chart_indicators: data.getChartIndicatorSettings?.() || { average: true, ma5: false, ma10: false, ma20: false },
             };
         },
         async saveAISettings(settings = {}) {
             if (settings.background_ai) await data.persistAISettings('background_ai', settings.background_ai);
             if (settings.role_ai) await data.persistAISettings('role_ai', settings.role_ai);
+            if (settings.chart_indicators) await data.persistChartIndicatorSettings?.(settings.chart_indicators);
             return api.getAISettings();
         },
     };
