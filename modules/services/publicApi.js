@@ -158,10 +158,14 @@ function buildNewsSnapshot(data, config, activeOnly = false) {
     }));
 }
 
-export function createSillyViewPublicAPI({ data, roleDecision, config }) {
+export function createSillyViewPublicAPI({ data, roleDecision, config, togglePanel = null }) {
     const api = {
-        version: '2.3.0',
+        version: '2.4.0',
         readonly: true,
+        async togglePanel() {
+            if (typeof togglePanel !== 'function') return { visible: false, error: 'panel_unavailable' };
+            return togglePanel();
+        },
         async getSnapshot() {
             const states = await data.getManagedAccountStates();
             const profiles = await data.getManagedRoleProfiles();

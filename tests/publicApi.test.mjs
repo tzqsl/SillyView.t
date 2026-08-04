@@ -56,7 +56,7 @@ test('mobile market change uses the close from 24 hours ago', async () => {
     const data = createData({ current_price: 1.04, kline_hourly: hourly });
     const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
     const snapshot = await api.getSnapshot();
-    assert.equal(snapshot.api_version, '2.3.0');
+    assert.equal(snapshot.api_version, '2.4.0');
     assert.equal(snapshot.market.assets[0].change_pct, 3.4826);
 });
 
@@ -120,4 +120,18 @@ test('mobile role thoughts come from persisted worldbook memory after runtime st
     assert.equal(snapshot.role_status.completed_at, 120);
     assert.equal(snapshot.role_status.source, 'worldbook');
     assert.equal(snapshot.role_status.worldbook_name, 'SillyView_accounts');
+});
+
+test('mobile API delegates panel toggling without exposing data mutation', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    const api = createSillyViewPublicAPI({
+        data,
+        roleDecision: null,
+        config,
+        togglePanel: async () => ({ visible: true }),
+    });
+
+    assert.equal(api.version, '2.4.0');
+    assert.equal(api.readonly, true);
+    assert.deepEqual(await api.togglePanel(), { visible: true });
 });

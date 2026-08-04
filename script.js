@@ -117,6 +117,13 @@ async function mainInitialize() {
             data,
             roleDecision,
             config: SillyViewConfig,
+            togglePanel: () => {
+                const entryButton = parentDoc.getElementById('sillyview-entry-button');
+                const panel = parentDoc.getElementById('sillyview-panel');
+                if (!entryButton || !panel) return { visible: false, error: 'panel_unavailable' };
+                entryButton.click();
+                return { visible: panel.classList.contains('visible') };
+            },
         });
         parentWin.SillyViewAPI = publicApi;
         window.addEventListener('pagehide', () => {
