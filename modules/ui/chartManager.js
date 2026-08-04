@@ -16,6 +16,7 @@ export class ChartManager {
         this.candlestickSeries = null;
         this.lineSeries = null;
         this.volumeSeries = null;
+        this.indicatorSeries = {};
         this.resizeObserver = null;
         this.chartType = 'candlestick';
     }
@@ -88,6 +89,12 @@ export class ChartManager {
         this.volumeSeries = this.chart.addHistogramSeries({
             color: '#64748b', priceFormat: { type: 'volume' }, priceScaleId: '',
         });
+        this.indicatorSeries = {
+            average: this.chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
+            ma5: this.chart.addLineSeries({ color: '#facc15', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
+            ma10: this.chart.addLineSeries({ color: '#a78bfa', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
+            ma20: this.chart.addLineSeries({ color: '#22d3ee', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
+        };
         
         this.chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.25 } });
         this.chart.priceScale('').applyOptions({ scaleMargins: { top: 0.75, bottom: 0 } });
@@ -146,6 +153,13 @@ export class ChartManager {
             value: Number(candle.close),
         })));
         this.volumeSeries.setData(this._normalizeSeriesData(volumeData));
+    }
+
+    setIndicators(indicators = {}) {
+        for (const [name, series] of Object.entries(this.indicatorSeries)) {
+            series.setData(this._normalizeSeriesData(indicators[name] || []));
+            series.applyOptions({ visible: (indicators[name] || []).length > 0 });
+        }
     }
 
     update(candle, volume) {
@@ -243,6 +257,7 @@ export class ChartManager {
         this.candlestickSeries = null;
         this.lineSeries = null;
         this.volumeSeries = null;
+        this.indicatorSeries = {};
         this.logger.log("ChartManager destroyed chart instance.");
     }
 }

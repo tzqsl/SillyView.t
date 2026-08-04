@@ -26,6 +26,37 @@ function calculateAssetChangePct(asset = {}) {
     return Number((((currentPrice / baselinePrice) - 1) * 100).toFixed(4));
 }
 
+function normalizeCandle(candle = {}) {
+    return {
+        time: finiteNumber(candle.time),
+        open: finiteNumber(candle.open),
+        high: finiteNumber(candle.high),
+        low: finiteNumber(candle.low),
+        close: finiteNumber(candle.close),
+        volume: finiteNumber(candle.volume),
+    };
+}
+
+function movingAverage(candles, period) {
+    const source = candles.map(normalizeCandle).filter(item => Number.isFinite(item.time) && item.close > 0);
+    return source.flatMap((item, index) => {
+        if (index + 1 < period) return [];
+        const window = source.slice(index + 1 - period, index + 1);
+        return [{ time: item.time, value: window.reduce((sum, entry) => sum + entry.close, 0) / period }];
+    });
+}
+
+function intradayAverage(candles) {
+    let totalVolume = 0;
+    let totalValue = 0;
+    return candles.map(normalizeCandle).filter(item => Number.isFinite(item.time) && item.close > 0).map(item => {
+        const volume = item.volume > 0 ? item.volume : 1;
+        totalVolume += volume;
+        totalValue += item.close * volume;
+        return { time: item.time, value: totalValue / totalVolume };
+    });
+}
+
 function parseRoleOutput(rawText = '') {
     const text = String(rawText || '');
     const roleMap = new Map();
@@ -53,6 +84,7 @@ function buildPositionSnapshot(data, assetCode, mode, position) {
     const unrealizedPnl = position.type === 'short'
         ? (position.avgEntryPrice - currentPrice) * position.totalShares
         : (currentPrice - position.avgEntryPrice) * position.totalShares;
+    const riskControls = data.getState(data.config.world_book_keys.player_portfolio)?.assets?.[assetCode]?.[mode]?.risk_controls || {};
     return {
         asset_code: assetCode,
         asset_name: data.config.asset_definitions?.[assetCode]?.name || assetCode,
@@ -66,6 +98,10 @@ function buildPositionSnapshot(data, assetCode, mode, position) {
         current_price: currentPrice,
         unrealized_pnl: finiteNumber(unrealizedPnl),
         liquidation_price: finiteNumber(position.liquidationPrice),
+        take_profit: riskControls.take_profit == null ? null : finiteNumber(riskControls.take_profit),
+        stop_loss: riskControls.stop_loss == null ? null : finiteNumber(riskControls.stop_loss),
+        trailing_stop_pct: riskControls.trailing_stop_pct == null ? null : finiteNumber(riskControls.trailing_stop_pct),
+        trailing_anchor: riskControls.trailing_anchor == null ? null : finiteNumber(riskControls.trailing_anchor),
     };
 }
 
@@ -158,10 +194,10 @@ function buildNewsSnapshot(data, config, activeOnly = false) {
     }));
 }
 
-export function createSillyViewPublicAPI({ data, roleDecision, config, togglePanel = null }) {
+export function createSillyViewPublicAPI({ data, app = null, roleDecision, config, togglePanel = null }) {
     const api = {
-        version: '2.4.0',
-        readonly: true,
+        version: '2.5.0',
+        readonly: false,
         async togglePanel() {
             if (typeof togglePanel !== 'function') return { visible: false, error: 'panel_unavailable' };
             return togglePanel();
@@ -234,6 +270,58 @@ export function createSillyViewPublicAPI({ data, roleDecision, config, togglePan
                 pending,
                 history: (portfolio.order_history || []).slice(0, 50).map(buildOrderSnapshot),
             };
+        },
+        async getTradingSnapshot(assetCode, timeframe = 'MINUTE') {
+            const code = String(assetCode || Object.keys(config.asset_definitions || {})[0] || '');
+            const asset = data.getState(`${config.world_book_keys.asset_prefix}${code}`) || {};
+            const candles = timeframe === 'DAILY'
+                ? (asset.kline_daily || [])
+                : timeframe === 'HOURLY' ? (asset.kline_hourly || []) : (asset.kline_minute || []);
+            const portfolio = data.getState(config.world_book_keys.player_portfolio) || {};
+            return {
+                asset: {
+                    code,
+                    name: config.asset_definitions?.[code]?.name || code,
+                    current_price: finiteNumber(asset.current_price),
+                    change_pct: calculateAssetChangePct(asset),
+                },
+                timeframe,
+                candles: candles.map(normalizeCandle),
+                average: intradayAverage(candles),
+                ma5: movingAverage(candles, 5),
+                ma10: movingAverage(candles, 10),
+                ma20: movingAverage(candles, 20),
+                positions: Object.entries(data.positionCalculator.calculateAll(code, portfolio))
+                    .filter(([, position]) => position?.type)
+                    .map(([mode, position]) => buildPositionSnapshot(data, code, mode, position)),
+                orders: (portfolio.pending_orders || []).filter(order => order.asset_code === code).map(buildOrderSnapshot),
+            };
+        },
+        async executeTrade(params = {}) {
+            if (!app?.executeTrade) return false;
+            await app.executeTrade(params.action, params.amount, params.assetCode, params.executionPrice, params.leverage, params.riskControls, params.mode);
+            return true;
+        },
+        async placePendingOrder(params = {}) { return app?.placePendingOrder?.(params) ?? false; },
+        async placeOcoOrders(specs = []) { return app?.placeOcoOrders?.(specs) ?? false; },
+        async cancelPendingOrder(orderId) { return app?.cancelPendingOrder?.(orderId) ?? false; },
+        async updatePositionRisk(params = {}) {
+            const result = await data.updatePositionRiskControls?.(params.assetCode, params.riskControls || {}, params.mode || 'leveraged');
+            if (!result) return false;
+            await data.updateAIContext?.();
+            await data.saveAllEntries?.();
+            return true;
+        },
+        async getAISettings() {
+            return {
+                background_ai: data.getPersistentAISettings?.('background_ai') || {},
+                role_ai: data.getPersistentAISettings?.('role_ai') || {},
+            };
+        },
+        async saveAISettings(settings = {}) {
+            if (settings.background_ai) await data.persistAISettings('background_ai', settings.background_ai);
+            if (settings.role_ai) await data.persistAISettings('role_ai', settings.role_ai);
+            return api.getAISettings();
         },
     };
     return Object.freeze(api);

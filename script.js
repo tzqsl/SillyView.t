@@ -115,6 +115,7 @@ async function mainInitialize() {
 
         const publicApi = createSillyViewPublicAPI({
             data,
+            app,
             roleDecision,
             config: SillyViewConfig,
             togglePanel: () => {

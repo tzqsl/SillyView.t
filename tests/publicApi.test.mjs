@@ -56,7 +56,7 @@ test('mobile market change uses the close from 24 hours ago', async () => {
     const data = createData({ current_price: 1.04, kline_hourly: hourly });
     const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
     const snapshot = await api.getSnapshot();
-    assert.equal(snapshot.api_version, '2.4.0');
+    assert.equal(snapshot.api_version, '2.5.0');
     assert.equal(snapshot.market.assets[0].change_pct, 3.4826);
 });
 
@@ -122,7 +122,7 @@ test('mobile role thoughts come from persisted worldbook memory after runtime st
     assert.equal(snapshot.role_status.worldbook_name, 'SillyView_accounts');
 });
 
-test('mobile API delegates panel toggling without exposing data mutation', async () => {
+test('mobile API delegates panel toggling and exposes mobile actions', async () => {
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
     const api = createSillyViewPublicAPI({
         data,
@@ -131,7 +131,19 @@ test('mobile API delegates panel toggling without exposing data mutation', async
         togglePanel: async () => ({ visible: true }),
     });
 
-    assert.equal(api.version, '2.4.0');
-    assert.equal(api.readonly, true);
+    assert.equal(api.version, '2.5.0');
+    assert.equal(api.readonly, false);
     assert.deepEqual(await api.togglePanel(), { visible: true });
+});
+
+test('mobile trading snapshot exposes intraday average and moving averages', async () => {
+    const candles = Array.from({ length: 20 }, (_, time) => ({ time, open: 1 + time * 0.01, high: 1.02 + time * 0.01, low: 0.99 + time * 0.01, close: 1.01 + time * 0.01, volume: time + 1 }));
+    const data = createData({ current_price: 1.2, kline_minute: candles, kline_hourly: candles });
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
+    const trading = await api.getTradingSnapshot('EURUSD', 'MINUTE');
+    assert.equal(trading.average.length, 20);
+    assert.equal(trading.ma5.length, 16);
+    assert.equal(trading.ma10.length, 11);
+    assert.equal(trading.ma20.length, 1);
+    assert.equal(trading.candles[0].time, 0);
 });

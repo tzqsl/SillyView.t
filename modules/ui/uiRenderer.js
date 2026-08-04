@@ -515,6 +515,20 @@ export class UIRenderer {
         }));
         
         this.chartManager.setData(klineData, volumeData);
+        const makeAverage = period => klineData.flatMap((item, index) => {
+            if (index + 1 < period) return [];
+            const window = klineData.slice(index + 1 - period, index + 1);
+            return [{ time: item.time, value: window.reduce((sum, candle) => sum + Number(candle.close || 0), 0) / period }];
+        });
+        let runningVolume = 0;
+        let runningValue = 0;
+        const average = this.currentTimeframe === 'MINUTE' ? klineData.map(item => {
+            const volume = Math.max(1, Number(item.volume || 0));
+            runningVolume += volume;
+            runningValue += Number(item.close || 0) * volume;
+            return { time: item.time, value: runningValue / runningVolume };
+        }) : [];
+        this.chartManager.setIndicators({ average, ma5: makeAverage(5), ma10: makeAverage(10), ma20: makeAverage(20) });
         if (klineData.length > 0) {
             this.chartManager.scrollToPosition(klineData.length - 1, false);
         }
