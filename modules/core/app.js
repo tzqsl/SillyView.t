@@ -26,6 +26,8 @@ export class SillyViewApp {
         this.autoAdvanceElapsedMinutes = 0;
         this.pendingRoleTurnContext = null;
         this.pendingRoleKeyboardDraft = null;
+        this.roleWaitingToast = null;
+        this.lastRoleSendIntentAt = 0;
         this.lastRoleInjectionId = null;
         this.lastRoleDispatchStatus = null;
         this.lastCapturedRoleMessageId = null;
@@ -33,6 +35,7 @@ export class SillyViewApp {
         this.roleCaptureRetryTimers = new Map();
         this.turnStateSnapshots = new Map();
         this.pendingMessageDeletionId = null;
+        this.pendingUiDeleteMessageId = null;
         this.chatChangeSnapshotCleanupTimer = null;
         this.receivedMessageWatermarks = new Map();
         this.eventListenersSetup = false;
@@ -45,6 +48,7 @@ export class SillyViewApp {
         this.aiDirector = null;
         this.backgroundAI = null;
         this.roleDecision = null;
+        this.chatSessionGeneration = 0;
         this.marketSimulator = null;
         this.positionCalculator = null;
         this.logger = null;
@@ -483,20 +487,25 @@ export class SillyViewApp {
     }
 
     debouncedMainProcessor(msgId, isReprocessing = false) {
+        const chatKey = this._getCurrentChatKey();
+        const generation = this.chatSessionGeneration;
         clearTimeout(this.processorTimeout);
         this.processorTimeout = setTimeout(async () => {
+            if (generation !== this.chatSessionGeneration || chatKey !== this._getCurrentChatKey()) return;
             if (isReprocessing && this.previousStateSnapshot) {
                 this.data.restoreStateFromSnapshot(this.previousStateSnapshot);
                 this.ui.renderAll();
             }
             this.previousStateSnapshot = this.data.createSnapshot();
-            await this.processSingleMessage(msgId);
+            await this.processSingleMessage(msgId, chatKey);
         }, 350);
     }
 
-    async processSingleMessage(msgId) {
+    async processSingleMessage(msgId, expectedChatKey = this._getCurrentChatKey()) {
+        if (expectedChatKey !== this._getCurrentChatKey()) return;
         const messages = this.th.getChatMessages(msgId);
-        if (!messages || messages.length === 0 || messages[0].is_user) { return; }
+        const isUserMessage = messages?.[0]?.role ? messages[0].role === 'user' : messages?.[0]?.is_user === true;
+        if (!messages || messages.length === 0 || isUserMessage) { return; }
         const msg = messages[0].message;
         return await this.processGeneratedMarketText(msg);
     }
@@ -642,7 +651,28 @@ export class SillyViewApp {
             || this.dependencies?.parentDoc?.querySelector?.('#send_textarea')
             || this.parentWin?.document?.querySelector?.('#send_textarea');
         if (!input) return;
-        const content = String(input.value ?? input.textContent ?? '').trim();
+        this._captureRoleSendIntent(input);
+    }
+
+    handleRoleSendButton(event) {
+        const path = event.composedPath?.() || [event.target];
+        const sendButton = path.find(node => node?.id === 'send_but') || event.target?.closest?.('#send_but');
+        if (!sendButton) return;
+        const input = this.dependencies?.parentDoc?.querySelector?.('#send_textarea') || this.parentWin?.document?.querySelector?.('#send_textarea');
+        if (input) this._captureRoleSendIntent(input);
+    }
+
+    _captureRoleSendIntent(input) {
+        if (this.roleDecision && !this.roleDecision.isEnabled?.() && !this.roleDecision.isDebugEnabled?.()) return;
+        const now = Date.now();
+        if (now - this.lastRoleSendIntentAt < 250) return;
+        this.lastRoleSendIntentAt = now;
+        const content = String(input?.value ?? input?.textContent ?? '').trim();
+        if (!content) {
+            setTimeout(() => this.captureRoleTurnAfterKeyboardSend().catch(error => this.logger.warn('从发送路径截取角色上下文失败:', error)), 0);
+            return;
+        }
+        this._updateRoleWaitingToast('正在等待其余插件处理完毕。', '角色决策准备中');
         this.pendingRoleKeyboardDraft = { content, captured_at: Date.now() };
         const context = this.captureRoleTurnFromKeyboardDraft(content);
 
@@ -652,6 +682,20 @@ export class SillyViewApp {
                 this.logger.warn('从回车发送路径截取角色上下文失败:', error);
             });
         }, 0);
+    }
+
+    _updateRoleWaitingToast(message, title = '角色决策处理中') {
+        const toastr = this.dependencies?.win?.toastr;
+        if (toastr?.clear && this.roleWaitingToast) toastr.clear(this.roleWaitingToast);
+        else this.roleWaitingToast?.remove?.();
+        this.roleWaitingToast = toastr?.info?.(message, title, { timeOut: 0, extendedTimeOut: 0, closeButton: false, tapToDismiss: false }) || null;
+    }
+
+    _clearRoleWaitingToast() {
+        const toastr = this.dependencies?.win?.toastr;
+        if (toastr?.clear && this.roleWaitingToast) toastr.clear(this.roleWaitingToast);
+        else this.roleWaitingToast?.remove?.();
+        this.roleWaitingToast = null;
     }
 
     _clearRoleCaptureRetry(messageId) {
@@ -728,6 +772,7 @@ export class SillyViewApp {
     }
 
     async prepareFrontendRoleInjection(type, option = {}, dryRun = false) {
+        if (option?.__sillyview_role_processed) return;
         if (dryRun || !this.roleDecision?.isEnabled() || this.roleDecision.running) return;
         if (['regenerate', 'swipe'].includes(type)) {
             await this._injectPersistedRoleDecisionForRegeneration(type);
@@ -773,16 +818,22 @@ export class SillyViewApp {
         };
         this.events?.refreshRoleDebugWindow?.();
 
-        const toastr = this.dependencies.win.toastr;
-        const waitingToast = toastr?.info?.(
-            '正在等待角色扮演 AI 输出，请稍候……',
-            '角色 AI 处理中',
-            { timeOut: 0, extendedTimeOut: 0, closeButton: false, tapToDismiss: false }
-        );
+        if (!this.roleWaitingToast) this._updateRoleWaitingToast('正在等待其余插件处理完毕。', '角色决策准备中');
 
         try {
-            const result = await this.roleDecision.run(context);
+            const managedAccountsBefore = this.data?.getManagedAccountStates
+                ? await this.data.getManagedAccountStates()
+                : null;
+            const result = await this.roleDecision.run(context, {
+                onStage: (stage, attempt, total) => {
+                    if (stage === 'decision') this._updateRoleWaitingToast(`决策 AI 思考中（当前尝试 ${attempt}/${total} 次）`);
+                    if (stage === 'observation') this._updateRoleWaitingToast(`角色 AI 查看账户与市场详情中（当前尝试 ${attempt}/${total} 次）`);
+                },
+            });
             if (!result?.frontend_injection) throw new Error('角色模型未返回可注入内容。');
+            if (Array.isArray(managedAccountsBefore)) {
+                result.managed_accounts_before = this.dependencies.win._.cloneDeep(managedAccountsBefore);
+            }
             try {
                 if (this.data.saveRoleDecisionMemory) {
                     await this.data.saveRoleDecisionMemory(result);
@@ -820,10 +871,47 @@ export class SillyViewApp {
             this.logger.error('角色决策流程失败，前台生成将继续但不注入角色决策。', error);
             this.dependencies.win.toastr?.warning(`角色决策流程失败: ${error.message || error}`);
         } finally {
-            if (toastr?.clear && waitingToast) toastr.clear(waitingToast);
-            else waitingToast?.remove?.();
+            this._clearRoleWaitingToast();
             this.events?.refreshRoleDebugWindow?.();
         }
+    }
+
+    _installGenerateCompatibilityHook() {
+        const host = this.parentWin || this.dependencies?.win;
+        const tavernHelper = host?.TavernHelper;
+        let currentGenerate = tavernHelper?.generate;
+        const acuOriginal = host?.original_TavernHelper_generate_ACU;
+        if (typeof currentGenerate !== 'function') return;
+
+        if (currentGenerate.__sillyviewRoleHook && typeof acuOriginal !== 'function') return;
+        if (currentGenerate.__sillyviewRoleHook && typeof currentGenerate.__sillyviewWrappedGenerate === 'function') {
+            tavernHelper.generate = currentGenerate.__sillyviewWrappedGenerate;
+            currentGenerate = tavernHelper.generate;
+        }
+
+        const installInsideAcu = typeof acuOriginal === 'function';
+        const nextGenerate = installInsideAcu ? acuOriginal : currentGenerate;
+        if (nextGenerate.__sillyviewRoleHook) return;
+
+        const app = this;
+        async function sillyViewGenerateHook(...args) {
+            const options = args[0] && typeof args[0] === 'object' ? args[0] : {};
+            const shouldCapture = !options.__sillyview_role_processed
+                && !options.automatic_trigger
+                && !options.quiet_prompt
+                && app.roleDecision?.isEnabled?.();
+            if (shouldCapture) {
+                const content = String(options.user_input || options.prompt || '').trim();
+                if (content && !app.pendingRoleTurnContext) app.captureRoleTurnFromKeyboardDraft(content);
+                await app.prepareFrontendRoleInjection('normal', options, false);
+                options.__sillyview_role_processed = true;
+            }
+            return await nextGenerate.apply(this, args);
+        }
+        Object.defineProperty(sillyViewGenerateHook, '__sillyviewRoleHook', { value: true });
+        Object.defineProperty(sillyViewGenerateHook, '__sillyviewWrappedGenerate', { value: nextGenerate });
+        if (installInsideAcu) host.original_TavernHelper_generate_ACU = sillyViewGenerateHook;
+        else tavernHelper.generate = sillyViewGenerateHook;
     }
 
     async processGeneratedMarketText(msg, options = {}) {
@@ -1406,7 +1494,8 @@ export class SillyViewApp {
         if (!Number.isFinite(numericMessageId) || this.lastMinuteAdvanceMessageId === numericMessageId) return;
 
         const messages = this.th.getChatMessages(msgId);
-        if (!messages || messages.length === 0 || !messages[0].is_user) return;
+        const isUserMessage = messages?.[0]?.role ? messages[0].role === 'user' : messages?.[0]?.is_user === true;
+        if (!messages || messages.length === 0 || !isUserMessage) return;
 
         const loaded = await this.data.ensureStateLoaded();
         if (!loaded) return;
@@ -1424,9 +1513,11 @@ export class SillyViewApp {
         if (!Number.isFinite(numericMessageId) || this.turnStateSnapshots?.has(numericMessageId)) return;
         if (!this.turnStateSnapshots) this.turnStateSnapshots = new Map();
         const roleMemory = this.data.getRoleDecisionMemory ? await this.data.getRoleDecisionMemory() : null;
+        const managedAccounts = this.data.getManagedAccountStates ? await this.data.getManagedAccountStates() : null;
         this.turnStateSnapshots.set(numericMessageId, {
             state: this.data.createSnapshot(),
             role_memory: roleMemory,
+            managed_accounts: managedAccounts,
         });
         while (this.turnStateSnapshots.size > 50) {
             this.turnStateSnapshots.delete(this.turnStateSnapshots.keys().next().value);
@@ -1438,7 +1529,11 @@ export class SillyViewApp {
         if (!Number.isFinite(deletedMessageId)) return false;
         this.pendingMessageDeletionId = deletedMessageId;
         try {
-            const lastMessageId = Number(await this.th.getLastMessageId());
+            let lastMessageId = Number(await this.th.getLastMessageId());
+            for (let attempt = 0; attempt < 6 && Number.isFinite(lastMessageId) && deletedMessageId <= lastMessageId; attempt += 1) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+                lastMessageId = Number(await this.th.getLastMessageId());
+            }
             if (!Number.isFinite(lastMessageId) || deletedMessageId <= lastMessageId) return false;
 
             const affectedTurnIds = [...(this.turnStateSnapshots?.keys?.() || [])]
@@ -1447,10 +1542,16 @@ export class SillyViewApp {
             const rollbackTurnId = affectedTurnIds[0]
                 ?? (this.turnStateSnapshots?.has(deletedMessageId - 1) ? deletedMessageId - 1 : deletedMessageId);
             const turnSnapshot = this.turnStateSnapshots?.get(rollbackTurnId) || this.previousStateSnapshot;
-            const lastMessages = lastMessageId >= 0 ? (this.th.getChatMessages?.(lastMessageId) || []) : [];
-            const roleHistoryCutoff = lastMessages[0]?.is_user ? lastMessageId - 1 : lastMessageId;
+            const lastMessages = lastMessageId >= 0 ? (await this.th.getChatMessages?.(lastMessageId) || []) : [];
+            const lastMessageIsUser = lastMessages[0]?.role
+                ? lastMessages[0].role === 'user'
+                : lastMessages[0]?.is_user === true;
+            const roleHistoryCutoff = lastMessageIsUser ? lastMessageId - 1 : lastMessageId;
             if (!turnSnapshot) {
                 if (!this.data.restoreRoleDecisionMemoryBeforeMessage) return false;
+                if (this.data.restoreManagedAccountStatesBeforeMessage) {
+                    await this.data.restoreManagedAccountStatesBeforeMessage(roleHistoryCutoff);
+                }
                 const restoredMemory = await this.data.restoreRoleDecisionMemoryBeforeMessage(roleHistoryCutoff);
                 if (this.roleDecision) this.roleDecision.lastRun = restoredMemory?.latest_run || null;
                 const SnapshotEvent = this.parentWin?.CustomEvent || globalThis.CustomEvent;
@@ -1458,10 +1559,13 @@ export class SillyViewApp {
                 return true;
             }
 
-            this.data.restoreStateFromSnapshot(turnSnapshot?.state instanceof Map ? turnSnapshot.state : turnSnapshot);
-            if (turnSnapshot?.state instanceof Map && this.data.restoreRoleDecisionMemory) {
+            this.data.restoreStateFromSnapshot(turnSnapshot?.state instanceof Map ? turnSnapshot.state : turnSnapshot?.state || turnSnapshot);
+            if (turnSnapshot && Object.prototype.hasOwnProperty.call(turnSnapshot, 'role_memory') && this.data.restoreRoleDecisionMemory) {
                 await this.data.restoreRoleDecisionMemory(turnSnapshot.role_memory);
                 if (this.roleDecision) this.roleDecision.lastRun = turnSnapshot.role_memory?.latest_run || null;
+            }
+            if (Array.isArray(turnSnapshot?.managed_accounts) && this.data.restoreManagedAccountStates) {
+                await this.data.restoreManagedAccountStates(turnSnapshot.managed_accounts);
             }
             this.previousStateSnapshot = null;
             this.lastMinuteAdvanceMessageId = null;
@@ -1571,9 +1675,35 @@ export class SillyViewApp {
         const parentDoc = this.dependencies?.parentDoc || this.parentWin?.document;
         const docs = [parentDoc, globalThis.document].filter((doc, index, all) => doc?.addEventListener && all.indexOf(doc) === index);
         this._roleSendKeydownHandler = event => this.handleRoleSendKeydown(event);
+        this._roleSendButtonHandler = event => this.handleRoleSendButton(event);
+        this._messageDeleteClickHandler = event => {
+            const deleteAction = event.target?.closest?.('.mes_edit_delete');
+            if (deleteAction) {
+                const messageId = Number(deleteAction.closest?.('.mes')?.getAttribute?.('mesid'));
+                this.pendingUiDeleteMessageId = Number.isFinite(messageId) ? messageId : null;
+                return;
+            }
+            const confirmButton = event.target?.closest?.('[role="dialog"] button, .popup button, .popup .menu_button');
+            if (!confirmButton || !String(confirmButton.textContent || '').trim().includes('删除消息')) return;
+            const messageId = this.pendingUiDeleteMessageId;
+            this.pendingUiDeleteMessageId = null;
+            if (!Number.isFinite(messageId)) return;
+            setTimeout(() => {
+                this.rollbackStateForDeletedMessage(messageId).catch(error => {
+                    this.logger.error('删除楼层后的 UI 回退失败:', error);
+                });
+            }, 50);
+        };
         docs.forEach(doc => doc.addEventListener('keydown', this._roleSendKeydownHandler, true));
+        docs.forEach(doc => doc.addEventListener('pointerdown', this._roleSendButtonHandler, true));
+        docs.forEach(doc => doc.addEventListener('click', this._roleSendButtonHandler, true));
+        docs.forEach(doc => doc.addEventListener('click', this._messageDeleteClickHandler, true));
+        this._installGenerateCompatibilityHook();
         if (eventTypes.USER_MESSAGE_RENDERED) {
             eventSource.on(eventTypes.USER_MESSAGE_RENDERED, (id) => {
+                const chatKey = this._getCurrentChatKey();
+                const generation = this.chatSessionGeneration;
+                if (generation !== this.chatSessionGeneration || chatKey !== this._getCurrentChatKey()) return;
                 this.captureRoleTurnForRenderedUserMessage(id).catch(error => {
                     this.logger.warn('Failed to capture role context after user message rendered:', error);
                 });
@@ -1584,11 +1714,16 @@ export class SillyViewApp {
         }
         if (eventTypes.MESSAGE_SENT) {
             eventSource.on(eventTypes.MESSAGE_SENT, (id) => {
+                const chatKey = this._getCurrentChatKey();
+                const generation = this.chatSessionGeneration;
+                if (generation !== this.chatSessionGeneration || chatKey !== this._getCurrentChatKey()) return;
                 this.captureRoleTurnForUserMessage(id);
                 setTimeout(() => {
+                    if (generation !== this.chatSessionGeneration || chatKey !== this._getCurrentChatKey()) return;
                     this.captureRoleTurnForUserMessage(id);
                 }, 80);
                 setTimeout(() => {
+                    if (generation !== this.chatSessionGeneration || chatKey !== this._getCurrentChatKey()) return;
                     this.advanceMinutesForUserMessage(id).catch(error => {
                         this.logger.warn('Failed to advance minute candles for user message:', error);
                     });
@@ -1602,14 +1737,31 @@ export class SillyViewApp {
         }
         eventSource.on(eventTypes.MESSAGE_RECEIVED, (id) => {
             if (this._shouldProcessReceivedMessage(id)) this.debouncedMainProcessor(id, false);
+            setTimeout(() => this._moveDeletionHandlerToEnd?.(), 500);
         });
         eventSource.on(eventTypes.MESSAGE_EDITED, (id) => this.debouncedMainProcessor(id, true));
         eventSource.on(eventTypes.MESSAGE_SWIPED, (id) => this.debouncedMainProcessor(id, true));
-        eventSource.on(eventTypes.MESSAGE_DELETED, async (id) => {
-            await this.rollbackStateForDeletedMessage(id);
-        });
+        this._messageDeletedHandler = async (id) => {
+            try {
+                await this.rollbackStateForDeletedMessage(id);
+            } catch (error) {
+                this.logger.error('删除楼层后的状态回退失败:', error);
+            }
+        };
+        this._moveDeletionHandlerToEnd = () => {
+            eventSource.removeListener?.(eventTypes.MESSAGE_DELETED, this._messageDeletedHandler);
+            eventSource.on(eventTypes.MESSAGE_DELETED, this._messageDeletedHandler);
+        };
+        this._moveDeletionHandlerToEnd();
         eventSource.on(eventTypes.CHAT_CHANGED, (chatId) => {
+            setTimeout(() => this._moveDeletionHandlerToEnd?.(), 500);
+            this.chatSessionGeneration += 1;
+            this._clearRoleWaitingToast();
+            clearTimeout(this.processorTimeout);
+            this.processorTimeout = null;
+            this._clearAllRoleCaptureRetries();
             this._recordCurrentChatMessageBoundary(chatId);
+            this._installGenerateCompatibilityHook();
             if (this.chatChangeSnapshotCleanupTimer) clearTimeout(this.chatChangeSnapshotCleanupTimer);
             this.chatChangeSnapshotCleanupTimer = setTimeout(() => {
                 if (this.pendingMessageDeletionId === null) {

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import { SillyViewApp } from '../modules/core/app.js';
 import { DataManager } from '../modules/core/dataManager.js';
+import { RoleDecisionService } from '../modules/services/roleDecisionService.js';
 import { UIRenderer } from '../modules/ui/uiRenderer.js';
 
 const cloneDeep = value => value == null ? value : structuredClone(value);
@@ -481,6 +482,7 @@ test('refresh boundary skips historical assistant messages but accepts new repli
 test('records a rollback snapshot even when real-time auto advance is enabled', async () => {
     let marketAdvances = 0;
     const snapshot = new Map([['market', { minute_time_index: 10 }]]);
+    const managedAccounts = [{ account_id: 'fx-main', cash: 10000, positions: [] }];
     const app = Object.create(SillyViewApp.prototype);
     Object.assign(app, {
         lastMinuteAdvanceMessageId: null,
@@ -490,6 +492,7 @@ test('records a rollback snapshot even when real-time auto advance is enabled', 
             ensureStateLoaded: async () => true,
             createSnapshot: () => snapshot,
             getRoleDecisionMemory: async () => ({ latest_run: { raw_output: 'before' } }),
+            getManagedAccountStates: async () => managedAccounts,
         },
         _getAutoAdvanceSettings: () => ({ enabled: true }),
         advanceMarketMinutes: async () => { marketAdvances += 1; },
@@ -500,6 +503,7 @@ test('records a rollback snapshot even when real-time auto advance is enabled', 
 
     assert.equal(app.turnStateSnapshots.get(5).state, snapshot);
     assert.equal(app.turnStateSnapshots.get(5).role_memory.latest_run.raw_output, 'before');
+    assert.equal(app.turnStateSnapshots.get(5).managed_accounts, managedAccounts);
     assert.equal(app.lastMinuteAdvanceMessageId, 5);
     assert.equal(marketAdvances, 0);
 });
@@ -541,6 +545,66 @@ test('deleting the current reply restores the market snapshot from before its us
     assert.equal(app.pendingRoleTurnContext, null);
 });
 
+test('deleting restores role memory when snapshots use the real object state shape', async () => {
+    const state = { cache: { market: { minute_time_index: 10 } } };
+    const roleMemory = { latest_run: { raw_output: 'before delete' } };
+    let restoredState = null;
+    let restoredMemory = null;
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        previousStateSnapshot: null,
+        pendingMessageDeletionId: null,
+        roleCaptureRetryTimers: new Map(),
+        turnStateSnapshots: new Map([[3, { state, role_memory: roleMemory }]]),
+        th: { getLastMessageId: async () => 3 },
+        data: {
+            restoreStateFromSnapshot: value => { restoredState = value; },
+            restoreRoleDecisionMemory: async value => { restoredMemory = value; },
+            saveAllEntries: async () => {},
+        },
+        ui: { renderAll: () => {} },
+        _clearAllRoleCaptureRetries: () => {},
+        roleDecision: { lastRun: null },
+    });
+
+    assert.equal(await app.rollbackStateForDeletedMessage(4), true);
+    assert.equal(restoredState, state);
+    assert.equal(restoredMemory, roleMemory);
+    assert.equal(app.roleDecision.lastRun.raw_output, 'before delete');
+});
+
+test('deleting restores managed role account states stored outside the main cache', async () => {
+    const accountState = {
+        account_id: 'fx-main',
+        cash: 7350,
+        positions: { TEST: { quantity: 120, average_price: 12.45 } },
+        risk_controls: { take_profit: 14, stop_loss: 11.2 },
+        pending_orders: [{ side: 'sell', symbol: 'TEST', quantity: 20 }],
+    };
+    const state = { cache: { market: { minute_time_index: 10 } } };
+    let restoredState = null;
+    let restoredAccounts = null;
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        previousStateSnapshot: null,
+        pendingMessageDeletionId: null,
+        roleCaptureRetryTimers: new Map(),
+        turnStateSnapshots: new Map([[3, { state, role_memory: null, managed_accounts: [accountState] }]]),
+        th: { getLastMessageId: async () => 3 },
+        data: {
+            restoreStateFromSnapshot: value => { restoredState = value; },
+            restoreManagedAccountStates: async value => { restoredAccounts = value; },
+            saveAllEntries: async () => {},
+        },
+        ui: { renderAll: () => {} },
+        _clearAllRoleCaptureRetries: () => {},
+    });
+
+    assert.equal(await app.rollbackStateForDeletedMessage(4), true);
+    assert.equal(restoredState, state);
+    assert.deepEqual(restoredAccounts, [accountState]);
+});
+
 test('deleting multiple trailing messages restores the earliest affected user turn', async () => {
     const firstSnapshot = new Map([['market', { minute_time_index: 10 }]]);
     const laterSnapshot = new Map([['market', { minute_time_index: 20 }]]);
@@ -574,6 +638,7 @@ test('deleting multiple trailing messages restores the earliest affected user tu
 test('deleting after reload restores persisted role memory without an in-memory market snapshot', async () => {
     const oldMemory = { latest_run: { raw_output: 'persisted old thought' } };
     let cutoff = null;
+    let accountCutoff = null;
     const dispatched = [];
     class SnapshotEvent {
         constructor(type, options) { this.type = type; this.detail = options.detail; }
@@ -585,9 +650,10 @@ test('deleting after reload restores persisted role memory without an in-memory 
         turnStateSnapshots: new Map(),
         th: {
             getLastMessageId: async () => 5,
-            getChatMessages: () => [{ is_user: true }],
+            getChatMessages: async () => [{ role: 'user' }],
         },
         data: {
+            restoreManagedAccountStatesBeforeMessage: async value => { accountCutoff = value; },
             restoreRoleDecisionMemoryBeforeMessage: async value => {
                 cutoff = value;
                 return oldMemory;
@@ -604,8 +670,53 @@ test('deleting after reload restores persisted role memory without an in-memory 
 
     assert.equal(rolledBack, true);
     assert.equal(cutoff, 4);
+    assert.equal(accountCutoff, 4);
     assert.equal(app.roleDecision.lastRun.raw_output, 'persisted old thought');
     assert.equal(dispatched[0].type, 'sillyview:snapshot-updated');
+});
+
+test('deletion waits for SillyTavern to publish the new last message id', async () => {
+    const observedLastIds = [6, 6, 5];
+    let restored = false;
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        previousStateSnapshot: null,
+        pendingMessageDeletionId: null,
+        turnStateSnapshots: new Map(),
+        th: {
+            getLastMessageId: async () => observedLastIds.shift() ?? 5,
+            getChatMessages: () => [{ role: 'user' }],
+        },
+        data: {
+            restoreManagedAccountStatesBeforeMessage: async () => {},
+            restoreRoleDecisionMemoryBeforeMessage: async () => {
+                restored = true;
+                return { latest_run: null };
+            },
+        },
+    });
+
+    assert.equal(await app.rollbackStateForDeletedMessage(6), true);
+    assert.equal(restored, true);
+});
+
+test('persisted role history restores the earliest account snapshot after a deletion cutoff', async () => {
+    const beforeFirst = [{ account_id: 'fx-a', cash: 10000, positions: [] }];
+    const beforeSecond = [{ account_id: 'fx-a', cash: 8000, positions: [{ asset_code: 'EURUSD' }] }];
+    let restored = null;
+    const manager = Object.create(DataManager.prototype);
+    Object.assign(manager, {
+        getRoleDecisionMemory: async () => ({
+            history: [
+                { context: { user_message_id: 3 }, managed_accounts_before: beforeFirst },
+                { context: { user_message_id: 5 }, managed_accounts_before: beforeSecond },
+            ],
+        }),
+        restoreManagedAccountStates: async states => { restored = states; },
+    });
+
+    assert.equal(await manager.restoreManagedAccountStatesBeforeMessage(2), true);
+    assert.equal(restored, beforeFirst);
 });
 
 test('plain Enter on the chat textarea starts role capture but newline shortcuts do not', async () => {
@@ -653,6 +764,93 @@ test('Enter synchronously queues the keyboard draft before generation starts', (
     assert.equal(app.pendingRoleTurnContext?.user_content, 'Keyboard message');
     assert.equal(app.pendingRoleTurnContext?.previous_content, 'Previous reply');
     assert.equal(app.pendingRoleTurnContext?.source, 'keyboard_draft');
+});
+
+test('generate compatibility hook chains with another interceptor without duplicate role processing', async () => {
+    const calls = [];
+    const originalGenerate = async options => { calls.push(['original', options.prompt]); return 'ok'; };
+    const otherPluginWrapper = async function (options) {
+        calls.push(['other', options.prompt]);
+        return originalGenerate(options);
+    };
+    const host = { TavernHelper: { generate: otherPluginWrapper } };
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        parentWin: host,
+        dependencies: { win: host },
+        pendingRoleTurnContext: null,
+        roleDecision: { isEnabled: () => true },
+        captureRoleTurnFromKeyboardDraft: content => { calls.push(['capture', content]); app.pendingRoleTurnContext = { user_content: content }; },
+        prepareFrontendRoleInjection: async (_type, options) => { calls.push(['role', options.prompt]); app.pendingRoleTurnContext = null; },
+    });
+
+    app._installGenerateCompatibilityHook();
+    const options = { prompt: 'shared interception' };
+    const result = await host.TavernHelper.generate(options);
+
+    assert.equal(result, 'ok');
+    assert.deepEqual(calls, [
+        ['capture', 'shared interception'],
+        ['role', 'shared interception'],
+        ['other', 'shared interception'],
+        ['original', 'shared interception'],
+    ]);
+    assert.equal(options.__sillyview_role_processed, true);
+});
+
+test('generate compatibility hook runs after the ACU interceptor', async () => {
+    const calls = [];
+    const host = {};
+    const originalGenerate = async () => { calls.push('original'); return 'ok'; };
+    host.original_TavernHelper_generate_ACU = originalGenerate;
+    host.TavernHelper = {
+        generate: async function (options) {
+            calls.push('other plugin');
+            return host.original_TavernHelper_generate_ACU(options);
+        },
+    };
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        parentWin: host,
+        dependencies: { win: host },
+        pendingRoleTurnContext: null,
+        roleDecision: { isEnabled: () => true },
+        captureRoleTurnFromKeyboardDraft: () => { calls.push('capture'); app.pendingRoleTurnContext = {}; },
+        prepareFrontendRoleInjection: async () => { calls.push('role decision'); },
+    });
+
+    app._installGenerateCompatibilityHook();
+    await host.TavernHelper.generate({ prompt: 'click send' });
+
+    assert.deepEqual(calls, ['other plugin', 'capture', 'role decision', 'original']);
+});
+
+test('send button pointer capture records the draft and shows the waiting stage', () => {
+    const messages = [];
+    const input = { value: 'button message' };
+    const app = Object.create(SillyViewApp.prototype);
+    Object.assign(app, {
+        lastRoleSendIntentAt: 0,
+        roleDecision: { isEnabled: () => true, isDebugEnabled: () => false },
+        dependencies: { parentDoc: { querySelector: () => input }, win: { toastr: { info: message => { messages.push(message); return {}; }, clear: () => {} } } },
+        captureRoleTurnFromKeyboardDraft: content => ({ user_content: content }),
+    });
+
+    app.handleRoleSendButton({ target: { closest: selector => selector === '#send_but' ? {} : null } });
+
+    assert.equal(app.pendingRoleKeyboardDraft.content, 'button message');
+    assert.match(messages[0], /等待其余插件处理完毕/);
+});
+
+test('role decision enabled state includes persistent mobile settings', () => {
+    const service = Object.create(RoleDecisionService.prototype);
+    service.config = { world_book_keys: { config: 'config' }, role_ai_defaults: { enabled: false } };
+    service.data = {
+        getState: () => ({ role_ai: { enabled: false } }),
+        getPersistentAISettings: key => key === 'role_ai' ? { enabled: true } : {},
+    };
+
+    assert.equal(service.isEnabled(), true);
 });
 test('Enter capture retries until the new user message is persisted', async () => {
     let latestReadCount = 0;

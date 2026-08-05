@@ -2028,6 +2028,19 @@ export class DataManager {
         await this.restoreRoleDecisionMemory(restored);
         return restored;
     }
+
+    async restoreManagedAccountStatesBeforeMessage(messageId) {
+        const cutoff = Number(messageId);
+        if (!Number.isFinite(cutoff)) return false;
+        const memory = await this.getRoleDecisionMemory();
+        const affectedRun = (Array.isArray(memory.history) ? memory.history : [])
+            .filter(run => Number(run?.context?.user_message_id) > cutoff && Array.isArray(run?.managed_accounts_before))
+            .sort((a, b) => Number(a.context.user_message_id) - Number(b.context.user_message_id))[0];
+        if (!affectedRun) return false;
+        await this.restoreManagedAccountStates(affectedRun.managed_accounts_before);
+        return true;
+    }
+
     async restoreRoleDecisionMemory(memory = null) {
         const worldbookName = this.config.multi_account.control_worldbook_name;
         const entryKey = this.config.multi_account.role_memory_key;
@@ -2356,6 +2369,13 @@ export class DataManager {
             this._upsertWorldbookEntry(entries, stateEntryName, JSON.stringify(state, null, 2), false);
             return entries;
         });
+    }
+
+    async restoreManagedAccountStates(states = []) {
+        for (const state of states) {
+            if (!state?.account_id) continue;
+            await this._writeManagedAccountState(this.dependencies.win._.cloneDeep(state));
+        }
     }
 
     _buildManagedTradeCommandGuide(states = []) {

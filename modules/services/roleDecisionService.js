@@ -27,9 +27,11 @@ export class RoleDecisionService {
 
   _getSettings() {
     const configState = this.data.getState(this.config.world_book_keys.config) || {};
+    const persistentSettings = this.data.getPersistentAISettings?.('role_ai') || {};
     return {
       ...this.config.role_ai_defaults,
       ...(configState.role_ai || {}),
+      ...persistentSettings,
     };
   }
 
@@ -83,10 +85,11 @@ export class RoleDecisionService {
     return await this.data.getManagedRoleProfiles();
   }
 
-  async _withRetries(operation, label) {
+  async _withRetries(operation, label, onAttempt = null) {
     let lastError;
     for (let attempt = 0; attempt <= 3; attempt++) {
       try {
+        onAttempt?.(attempt + 1, 4);
         return await operation(attempt);
       } catch (error) {
         lastError = error;
@@ -100,13 +103,14 @@ export class RoleDecisionService {
     throw lastError;
   }
 
-  async _generate(orderedPrompts, suffix) {
+  async _generate(orderedPrompts, suffix, onStage = null) {
     if (!this.th?.generateRaw) throw new Error('TavernHelper.generateRaw 不可用。');
     const settings = this._getSettings();
     const customApi = this._buildCustomApi(settings);
     const timeoutMs = Math.max(1000, Number(settings.timeout_ms) || 60000);
 
     return await this._withRetries(async attempt => {
+      onStage?.(suffix === 'initial' ? 'decision' : 'observation', attempt + 1, 4);
       const generationId = `sillyview-role-${Date.now()}-${suffix}-${attempt}`;
       const generationPromise = this.th.generateRaw({
         generation_id: generationId,
@@ -163,7 +167,7 @@ export class RoleDecisionService {
     return [
       '你是 SillyView 的幕后角色决策 AI，不是与用户直接对话的前台 AI。',
       '你的任务是分别进入角色索引中人物的身份，依据各自人设进行扮演，并根据上一条角色正文和用户本轮信息判断其内心活动、下一步剧情倾向，以及是否会主动查看手机、市场或自己的账户。',
-      '“内心活动”和“下一步剧情倾向”首先服务于当前角色扮演与剧情推进，即对正文剧情以及user输入内容依据性格的真实反应，并不默认指角色对 FX、行情或交易的看法。只有正文或角色动机明确涉及你所扮演的角色即将对 FX 操作时才考虑市场与账户；若本轮正文与 FX 无关，心理和下一步必须围绕当前剧情、角色想法、关系、情绪、冲突与现实行动，禁止强行引入行情、货币、交易或账户。',
+      '“内心活动”和“下一步剧情倾向”首先服务于当前角色扮演与剧情推进，即对正文剧情以及user输入内容依据性格的真实反应，并不默认指角色对 FX、行情或交易的看法。只有正文或角色动机明确涉及你所扮演的角色即将对 FX 操作时才考虑市场与账户；若本轮正文与 FX 无关，心理和下一步必须围绕当前剧情、角色想法、关系、情绪、冲突与现实行动，禁止强行引入行情、货币、交易或账户。禁止出现角色正在睡觉，却能进行股市操作/查看股市这种基础逻辑性问题。',
       '写角色心理时必须进入该角色自身意识，以符合其性格、认知和语言习惯的第一人称“我”表达；禁止用第三人称旁观视角直白概述“他/她/角色名在想什么”。',
       '不要续写面向用户的正文、对白或旁白，不要假定角色知道尚未观察的账户和行情。',
       '如果当前上下文不足以支持具体交易，先观察或保持不行动，禁止编造余额、持仓、价格和新闻。',
@@ -226,7 +230,7 @@ export class RoleDecisionService {
     ].join('\n');
   }
 
-  async run(context) {
+  async run(context, options = {}) {
     if (!context || this.running) return null;
     this.running = true;
     const startedAt = Date.now();
@@ -246,49 +250,52 @@ export class RoleDecisionService {
       let deferredPrompts = [];
       let output = await this._generate(
         [
-      ...await (async () => {
-      if (deferredCommands?.length) {
-        const session = await this.data.beginManagedObservationSession(deferredCommands);
-        if (session.active) {
-          activeSessionId = session.id;
-          observationDelivered = true;
-          deferredPrompts = [{
-            role: 'user',
-            content: [
-              '[Latest deferred observation from the previous turn]',
-              session.context,
-              '',
-              'This observation was requested again last turn and is now merged into the normal prompt. Complete this turn directly. Any further Observe command will be deferred until the next user input.',
-            ].join('\n'),
-          }];
-          await this.data.endManagedObservationSession(session.id, { markObserved: true });
-          activeSessionId = null;
-          observationRounds.push({
-            round: 0,
-            active: true,
-            deferred_from_previous_turn: true,
-            account_ids: session.account_ids,
-            market_requested: session.market_requested,
-            activated_entries: session.activated_entries,
-          });
-          (session.account_ids || []).forEach(accountId => observedAccountIds.add(accountId));
-        } else {
-          observationRounds.push({
-            round: 0,
-            active: false,
-            deferred_from_previous_turn: true,
-            rejected: session.rejected || [],
-          });
-        }
-      }
-        return [];
-      })(),
+          ...(await (async () => {
+            if (deferredCommands?.length) {
+              const session = await this.data.beginManagedObservationSession(deferredCommands);
+              if (session.active) {
+                activeSessionId = session.id;
+                observationDelivered = true;
+                deferredPrompts = [
+                  {
+                    role: 'user',
+                    content: [
+                      '[Latest deferred observation from the previous turn]',
+                      session.context,
+                      '',
+                      'This observation was requested again last turn and is now merged into the normal prompt. Complete this turn directly. Any further Observe command will be deferred until the next user input.',
+                    ].join('\n'),
+                  },
+                ];
+                await this.data.endManagedObservationSession(session.id, { markObserved: true });
+                activeSessionId = null;
+                observationRounds.push({
+                  round: 0,
+                  active: true,
+                  deferred_from_previous_turn: true,
+                  account_ids: session.account_ids,
+                  market_requested: session.market_requested,
+                  activated_entries: session.activated_entries,
+                });
+                (session.account_ids || []).forEach(accountId => observedAccountIds.add(accountId));
+              } else {
+                observationRounds.push({
+                  round: 0,
+                  active: false,
+                  deferred_from_previous_turn: true,
+                  rejected: session.rejected || [],
+                });
+              }
+            }
+            return [];
+          })()),
           { role: 'system', content: systemPrompt },
           { role: 'assistant', content: `【上一条角色正文】\n${context.previous_content || '无。'}` },
           ...deferredPrompts,
           { role: 'user', content: `【用户本轮信息】\n${context.user_content}` },
         ],
         'initial',
+        options.onStage,
       );
 
       const maxObservationRounds = observationDelivered ? 0 : 1;
@@ -324,6 +331,7 @@ export class RoleDecisionService {
               },
             ],
             `observe-${round}`,
+            options.onStage,
           );
           await this.data.endManagedObservationSession(session.id, { markObserved: true });
           activeSessionId = null;
@@ -344,8 +352,7 @@ export class RoleDecisionService {
       }
 
       const tradeResults = await this._executeTradeCommands(output, observedAccountIds);
-      const repeatedObserveCommands = this.commandParser.parse(output)
-        .filter(command => command.module === 'Observe');
+      const repeatedObserveCommands = this.commandParser.parse(output).filter(command => command.module === 'Observe');
       if (repeatedObserveCommands.length > 0) {
         this.pendingObservationCommands = repeatedObserveCommands;
         observationRounds.push({ round: observationDelivered ? 1 : 2, active: false, deferred_to_next_turn: true });

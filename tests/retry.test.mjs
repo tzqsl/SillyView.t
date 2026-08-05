@@ -35,7 +35,11 @@ test('roleplay wait toast is shown and cleared around frontend role generation',
         roleDecision: {
             running: false,
             isEnabled: () => true,
-            run: async () => ({ frontend_injection: '角色决策结果' }),
+            run: async (_context, options) => {
+                options.onStage('decision', 1, 4);
+                options.onStage('observation', 2, 4);
+                return { frontend_injection: '角色决策结果' };
+            },
         },
         th: {
             injectPrompts: () => {},
@@ -59,6 +63,8 @@ test('roleplay wait toast is shown and cleared around frontend role generation',
     await app.prepareFrontendRoleInjection('normal', {}, false);
 
     assert.equal(calls[0][0], 'show');
-    assert.match(calls[0][1], /等待角色扮演 AI 输出/);
+    assert.match(calls[0][1], /等待其余插件处理完毕/);
+    assert.ok(calls.some(call => call[0] === 'show' && /决策 AI 思考中（当前尝试 1\/4 次）/.test(call[1])));
+    assert.ok(calls.some(call => call[0] === 'show' && /角色 AI 查看账户与市场详情中（当前尝试 2\/4 次）/.test(call[1])));
     assert.deepEqual(calls.at(-1), ['clear', toast]);
 });
