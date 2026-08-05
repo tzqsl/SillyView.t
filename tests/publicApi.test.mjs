@@ -12,6 +12,7 @@ const config = {
         player_portfolio: 'portfolio',
         global_market: 'market',
         asset_prefix: 'asset_',
+        config: 'config',
     },
     asset_definitions: {
         EURUSD: { name: '欧元/美元', trade_config: { fee_rate: 0.002 } },
@@ -56,7 +57,7 @@ test('mobile market change uses the close from 24 hours ago', async () => {
     const data = createData({ current_price: 1.04, kline_hourly: hourly });
     const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
     const snapshot = await api.getSnapshot();
-    assert.equal(snapshot.api_version, '2.6.0');
+    assert.equal(snapshot.api_version, '2.7.0');
     assert.equal(snapshot.market.assets[0].change_pct, 3.4826);
 });
 
@@ -124,16 +125,37 @@ test('mobile role thoughts come from persisted worldbook memory after runtime st
 
 test('mobile API delegates panel toggling and exposes mobile actions', async () => {
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    let advanced = false;
     const api = createSillyViewPublicAPI({
         data,
+        app: { commitAndAdvance: async options => { advanced = options.source === 'mobile'; } },
         roleDecision: null,
         config,
         togglePanel: async () => ({ visible: true }),
     });
 
-    assert.equal(api.version, '2.6.0');
+    assert.equal(api.version, '2.7.0');
     assert.equal(api.readonly, false);
     assert.deepEqual(await api.togglePanel(), { visible: true });
+    assert.deepEqual(await api.commitAndAdvance(), { ok: true });
+    assert.equal(advanced, true);
+});
+
+test('mobile AI settings merge current config and persist partial updates', async () => {
+    let configState = { background_ai: { enabled: true, apiurl: 'https://example.test', key: 'secret', model: 'old' }, role_ai: { enabled: true } };
+    const persisted = {};
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    data.getState = key => key === 'config' ? structuredClone(configState) : createData({}).getState(key);
+    data.updateState = async (_key, updater) => { configState = updater(structuredClone(configState)); };
+    data.getPersistentAISettings = kind => persisted[kind] || null;
+    data.persistAISettings = async (kind, settings) => { persisted[kind] = structuredClone(settings); };
+    data.getChartIndicatorSettings = () => ({ average: true, ma5: false, ma10: false, ma20: false });
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
+
+    const saved = await api.saveAISettings({ background_ai: { model: 'new' } });
+    assert.equal(saved.background_ai.apiurl, 'https://example.test');
+    assert.equal(saved.background_ai.key, 'secret');
+    assert.equal(saved.background_ai.model, 'new');
 });
 
 test('mobile trading snapshot exposes intraday average and moving averages', async () => {

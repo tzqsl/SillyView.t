@@ -726,7 +726,9 @@ export class DataManager {
     }
 
     _getPersistentAISettingsStore() {
-        const extensionSettings = this.dependencies.st?.extensionSettings;
+        const extensionSettings = this.dependencies.st_context?.extensionSettings
+            || this.dependencies.st?.getContext?.()?.extensionSettings
+            || this.dependencies.st?.extensionSettings;
         if (!extensionSettings || typeof extensionSettings !== 'object') return null;
 
         const key = this.config.extension_settings_key || this.config.extension_name;
@@ -741,6 +743,13 @@ export class DataManager {
         return store.ai_settings;
     }
 
+    async _savePersistentExtensionSettings() {
+        const save = this.dependencies.st_context?.saveSettingsDebounced
+            || this.dependencies.st?.getContext?.()?.saveSettingsDebounced
+            || this.dependencies.st?.saveSettingsDebounced;
+        await save?.();
+    }
+
     async persistAISettings(kind, settings) {
         const store = this._getPersistentAISettingsStore();
         if (!store) return false;
@@ -751,7 +760,7 @@ export class DataManager {
         } else {
             throw new Error('Unknown AI settings kind: ' + kind);
         }
-        await this.dependencies.st.saveSettingsDebounced?.();
+        await this._savePersistentExtensionSettings();
         return true;
     }
 
@@ -784,7 +793,7 @@ export class DataManager {
             ma10: Object.prototype.hasOwnProperty.call(settings, 'ma10') ? settings.ma10 === true : current.ma10,
             ma20: Object.prototype.hasOwnProperty.call(settings, 'ma20') ? settings.ma20 === true : current.ma20,
         };
-        await this.dependencies.st.saveSettingsDebounced?.();
+        await this._savePersistentExtensionSettings();
         const EventType = this.dependencies.win?.CustomEvent || globalThis.CustomEvent;
         if (EventType) {
             this.dependencies.win?.dispatchEvent?.(new EventType('sillyview:chart-indicators-updated', {
@@ -798,8 +807,8 @@ export class DataManager {
         const configState = this.getState(key) || {};
         const store = this._getPersistentAISettingsStore();
         if (!store) return false;
-        const hasStoredBackground = store.background_ai && typeof store.background_ai === 'object';
-        const hasStoredRole = store.role_ai && typeof store.role_ai === 'object';
+        const hasStoredBackground = store.background_ai && typeof store.background_ai === 'object' && Object.keys(store.background_ai).length > 0;
+        const hasStoredRole = store.role_ai && typeof store.role_ai === 'object' && Object.keys(store.role_ai).length > 0;
         const backgroundAI = this._normalizeBackgroundAISettings(hasStoredBackground ? store.background_ai : configState.background_ai);
         const roleAI = this._normalizeRoleAISettings(hasStoredRole ? store.role_ai : configState.role_ai);
 
@@ -807,7 +816,7 @@ export class DataManager {
         store.background_ai = backgroundAI;
         store.role_ai = roleAI;
         if (!hasStoredBackground || !hasStoredRole) {
-            await this.dependencies.st.saveSettingsDebounced?.();
+            await this._savePersistentExtensionSettings();
         }
         const changed = JSON.stringify(configState.background_ai) !== JSON.stringify(backgroundAI)
             || JSON.stringify(configState.role_ai) !== JSON.stringify(roleAI);

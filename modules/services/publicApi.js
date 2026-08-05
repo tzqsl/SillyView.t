@@ -196,7 +196,7 @@ function buildNewsSnapshot(data, config, activeOnly = false) {
 
 export function createSillyViewPublicAPI({ data, app = null, roleDecision, config, togglePanel = null }) {
     const api = {
-        version: '2.6.0',
+        version: '2.7.0',
         readonly: false,
         async togglePanel() {
             if (typeof togglePanel !== 'function') return { visible: false, error: 'panel_unavailable' };
@@ -310,6 +310,16 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
         async placePendingOrder(params = {}) { return app?.placePendingOrder?.(params) ?? false; },
         async placeOcoOrders(specs = []) { return app?.placeOcoOrders?.(specs) ?? false; },
         async cancelPendingOrder(orderId) { return app?.cancelPendingOrder?.(orderId) ?? false; },
+        async commitAndAdvance() {
+            if (!app?.commitAndAdvance) return { ok: false, error: 'turn_advance_unavailable' };
+            try {
+                const advanced = await app.commitAndAdvance({ source: 'mobile' });
+                if (advanced === false) return { ok: false, error: 'turn_advance_busy' };
+                return { ok: true };
+            } catch (error) {
+                return { ok: false, error: error?.message || String(error) };
+            }
+        },
         async updatePositionRisk(params = {}) {
             const result = await data.updatePositionRiskControls?.(params.assetCode, params.riskControls || {}, params.mode || 'leveraged');
             if (!result) return false;
@@ -318,15 +328,25 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             return true;
         },
         async getAISettings() {
+            const configState = data.getState(config.world_book_keys.config) || {};
+            const persistentBackground = data.getPersistentAISettings?.('background_ai') || {};
+            const persistentRole = data.getPersistentAISettings?.('role_ai') || {};
             return {
-                background_ai: data.getPersistentAISettings?.('background_ai') || {},
-                role_ai: data.getPersistentAISettings?.('role_ai') || {},
+                background_ai: { ...(configState.background_ai || {}), ...persistentBackground },
+                role_ai: { ...(configState.role_ai || {}), ...persistentRole },
                 chart_indicators: data.getChartIndicatorSettings?.() || { average: true, ma5: false, ma10: false, ma20: false },
             };
         },
         async saveAISettings(settings = {}) {
-            if (settings.background_ai) await data.persistAISettings('background_ai', settings.background_ai);
-            if (settings.role_ai) await data.persistAISettings('role_ai', settings.role_ai);
+            if (settings.background_ai || settings.role_ai) {
+                await data.updateState(config.world_book_keys.config, current => ({
+                    ...(current || {}),
+                    ...(settings.background_ai ? { background_ai: { ...((current || {}).background_ai || {}), ...settings.background_ai } } : {}),
+                    ...(settings.role_ai ? { role_ai: { ...((current || {}).role_ai || {}), ...settings.role_ai } } : {}),
+                }));
+            }
+            if (settings.background_ai) await data.persistAISettings('background_ai', data.getState(config.world_book_keys.config)?.background_ai || settings.background_ai);
+            if (settings.role_ai) await data.persistAISettings('role_ai', data.getState(config.world_book_keys.config)?.role_ai || settings.role_ai);
             if (settings.chart_indicators) await data.persistChartIndicatorSettings?.(settings.chart_indicators);
             return api.getAISettings();
         },

@@ -28,6 +28,27 @@ test('AI settings are persisted in extension settings', async () => {
     assert.equal(saves, 2);
 });
 
+test('AI and chart settings use the current SillyTavern context store', async () => {
+    let saves = 0;
+    const extensionSettings = {};
+    const manager = Object.create(DataManager.prototype);
+    manager.config = {
+        extension_name: 'SillyView',
+        extension_settings_key: 'SillyView',
+        background_ai_defaults: { enabled: false, model: '' },
+        role_ai_defaults: { enabled: false, model: '' },
+    };
+    manager.dependencies = {
+        st: { getContext: () => ({ extensionSettings, saveSettingsDebounced: async () => { saves += 1; } }) },
+        win: { CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init.detail; } }, dispatchEvent: () => {} },
+    };
+    await manager.persistAISettings('background_ai', { enabled: true, model: 'context-model' });
+    await manager.persistChartIndicatorSettings({ ma5: true, ma10: true });
+    assert.equal(extensionSettings.SillyView.ai_settings.background_ai.model, 'context-model');
+    assert.deepEqual(manager.getChartIndicatorSettings(), { average: true, ma5: true, ma10: true, ma20: false });
+    assert.equal(saves, 2);
+});
+
 test('persisted AI settings are restored after reload', async () => {
     const manager = Object.create(DataManager.prototype);
     const states = new Map([['sv_config', {

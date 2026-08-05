@@ -1205,7 +1205,7 @@ export class SillyViewApp {
 
     async commitAndAdvance(options = {}) {
         if (options.source !== 'auto') this.resetAutoAdvanceTimer('manual_end_turn');
-        if (this.ui.isAnimating) return;
+        if (this.ui.isAnimating) return false;
         
         const isQuickMode = this.data.isQuickModeEnabled();
 

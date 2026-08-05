@@ -672,13 +672,17 @@ export class EventHandler {
         const sidebar = this.parentDoc.querySelector('.sv-right-sidebar');
         
         // Time & Asset Controls
-        if (endTurnBtn) endTurnBtn.addEventListener('click', async () => await this.app.commitAndAdvance());
+        const confirmEndTurn = () => this.modals.showConfirmation(
+            '<h3 style="font-size:1.25rem;font-weight:600;margin-bottom:1rem;">确认结束回合？</h3><p>市场将推进到下一回合，并可能调用后台市场 AI。执行期间请勿重复操作。</p>',
+            async () => await this.app.commitAndAdvance()
+        );
+        if (endTurnBtn) endTurnBtn.addEventListener('click', confirmEndTurn);
         if (syncBtn) syncBtn.addEventListener('click', async () => await this.app.syncQuickModeWithAI());
         if (next5mBtn) next5mBtn.addEventListener('click', () => this.app.advanceQuickModeMinutes(5));
         if (next15mBtn) next15mBtn.addEventListener('click', () => this.app.advanceQuickModeMinutes(15));
         if (next30mBtn) next30mBtn.addEventListener('click', () => this.app.advanceQuickModeMinutes(30));
         if (nextHourBtn) nextHourBtn.addEventListener('click', () => this.app.advanceQuickModeHour());
-        if (advanceDayBtn) advanceDayBtn.addEventListener('click', () => this.app.commitAndAdvance()); // Correctly calls commitAndAdvance
+        if (advanceDayBtn) advanceDayBtn.addEventListener('click', confirmEndTurn);
         if (quickModeToggle) quickModeToggle.addEventListener('change', (event) => this.app.onQuickModeToggled(event.target.checked));
         if (minuteBtn) minuteBtn.addEventListener('click', () => this.ui.setTimeframe('MINUTE'));
         if (hourlyBtn) hourlyBtn.addEventListener('click', () => this.ui.setTimeframe('HOURLY'));
