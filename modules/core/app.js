@@ -173,6 +173,37 @@ export class SillyViewApp {
         });
     }
 
+    _parseWorldDatetime(value) {
+        const match = String(value || '').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})\D+(\d{1,2}):(\d{2})/);
+        if (!match) return null;
+        const [, year, month, day, hour, minute] = match;
+        const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    async _advanceWorldTimeByMinutes(minutes) {
+        const elapsedMinutes = Math.max(0, Math.floor(Number(minutes) || 0));
+        if (elapsedMinutes === 0) return false;
+
+        const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+        const periods = ['凌晨', '凌晨', '凌晨', '凌晨', '凌晨', '凌晨', '上午', '上午', '上午', '上午', '上午', '上午', '下午', '下午', '下午', '下午', '下午', '下午', '晚上', '晚上', '晚上', '晚上', '晚上', '晚上'];
+        const seasons = ['冬季', '冬季', '春季', '春季', '春季', '夏季', '夏季', '夏季', '秋季', '秋季', '秋季', '冬季'];
+        let advanced = false;
+
+        await this.data.updateState(SillyViewConfig.world_book_keys.global_market, market => {
+            const date = this._parseWorldDatetime(market.current_datetime);
+            if (!date) return market;
+            date.setMinutes(date.getMinutes() + elapsedMinutes);
+            const pad = value => String(value).padStart(2, '0');
+            market.current_datetime = `${date.getFullYear()}年${pad(date.getMonth() + 1)}月${pad(date.getDate())}日-${weekdays[date.getDay()]}-${pad(date.getHours())}:${pad(date.getMinutes())}`;
+            market.current_period = periods[date.getHours()];
+            market.current_season = seasons[date.getMonth()];
+            advanced = true;
+            return market;
+        });
+        return advanced;
+    }
+
     async runAutoHourlyReview() {
         if (this.longTargetExpiryTurnRunning) return;
         const config = this.data.getState(SillyViewConfig.world_book_keys.config) || {};
@@ -426,6 +457,7 @@ export class SillyViewApp {
             const prompt = await this.aiDirector.buildAdvanceTurnPrompt([], activeAssetsForAI, activeAssetCode, 'HOURLY', {
                 expiredLongTargets: expiredTargets,
                 autoTriggerReason: 'long_target_expired',
+                elapsedHours: options.elapsedHours,
             });
             const marketResponse = await this.backgroundAI.generateMarketResponse(prompt);
 
@@ -1292,6 +1324,7 @@ export class SillyViewApp {
             m.minute_time_index = Math.max(m.minute_time_index || 0, m.current_time_index * 60);
             return m;
         });
+        await this._advanceWorldTimeByMinutes(60);
 
         const activeAssetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${activeAssetCode}`);
         const candlesToAnimate = this.ui.currentTimeframe === 'MINUTE'
@@ -1303,7 +1336,7 @@ export class SillyViewApp {
         await this.data.accrueFundingFees(1);
         await this.data.accrueManagedAccountFundingFees(1);
         await this.data.recordAssetHistory();
-        if (await this.triggerLongTargetExpiryTurnIfNeeded()) return;
+        if (await this.triggerLongTargetExpiryTurnIfNeeded({ elapsedHours: 1 })) return;
         await this.data.updateAIContext();
         await this.data.saveAllEntries();
         
@@ -1355,12 +1388,14 @@ export class SillyViewApp {
                     m.minute_time_index = Math.max(m.minute_time_index || 0, m.current_time_index * 60);
                     return m;
                 });
+                await this._advanceWorldTimeByMinutes(hoursToAdvance * 60);
                 this.data.clearActionsThisTurn();
                 await this.data.accrueFundingFees(hoursToAdvance);
                 await this.data.accrueManagedAccountFundingFees(hoursToAdvance);
                 await this.data.recordAssetHistory();
-                if (await this.triggerLongTargetExpiryTurnIfNeeded()) return;
+                if (await this.triggerLongTargetExpiryTurnIfNeeded({ elapsedHours: hoursToAdvance })) return;
                 await this.data.updateAIContext();
+                await this.data.saveAllEntries();
                 this.ui.renderAll();
             }
             return;
@@ -1635,7 +1670,7 @@ export class SillyViewApp {
         if (!this.data.isQuickModeEnabled() || this.ui.isAnimating) return;
         const barsToAdvance = Math.max(1, Math.floor(Number(minutes) || 1));
         Logger.log(`快速模式: 推进 ${barsToAdvance} 分钟...`);
-        await this.advanceMarketMinutes(barsToAdvance, { render: true });
+        await this.advanceMarketMinutes(barsToAdvance, { render: true, advanceWorldTime: true });
         Logger.log(`快速模式: 推进 ${barsToAdvance} 分钟完成。`);
     }
 
@@ -1660,6 +1695,7 @@ export class SillyViewApp {
                 market.current_time_index = Math.max(market.current_time_index || 0, Math.floor(maxMinuteTime / 60));
                 return market;
             });
+            if (options.advanceWorldTime) await this._advanceWorldTimeByMinutes(barsToAdvance);
 
             await this._checkLiquidations();
             if (await this.triggerLongTargetExpiryTurnIfNeeded()) {
