@@ -225,6 +225,7 @@ function normalizeMemoTasks(data, config, accounts, market) {
                 : '未设置截止时间',
             required_amount: required,
             current_balance: balance,
+            remaining_amount: Math.max(0, required - balance),
             account_id: account?.account_id || null,
             status,
             complete_prompt: String(task.complete_prompt || task.success_prompt || ''),

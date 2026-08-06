@@ -172,6 +172,7 @@ test('mobile memo tasks use market time, account balance, and send completion pr
     assert.equal(snapshot.memo_tasks[0].status, 'active');
     assert.equal(snapshot.memo_tasks[0].remaining_label, '2天 0小时');
     assert.equal(snapshot.memo_tasks[0].current_balance, 6000);
+    assert.equal(snapshot.memo_tasks[0].remaining_amount, 0);
 
     const result = await api.completeMemoTask('rent');
     assert.equal(result.ok, true);
