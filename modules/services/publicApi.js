@@ -202,8 +202,11 @@ function normalizeMemoTasks(data, config, accounts, market) {
     const now = parseMemoDate(market.current_datetime) || Date.now();
     return source.map((task, index) => {
         const required = finiteNumber(task.required_amount ?? task.required_cash ?? task.amount);
-        const account = task.account_id ? accounts.find(item => item.account_id === task.account_id) : null;
-        const balance = account ? account.cash : accounts.reduce((sum, item) => sum + item.cash, 0);
+        const requestedAccountId = String(task.account_id || '').trim();
+        const usePlayerAccount = !requestedAccountId || ['player', 'user', 'default', 'optional_account_id'].includes(requestedAccountId.toLowerCase());
+        const account = usePlayerAccount ? null : accounts.find(item => item.account_id === requestedAccountId);
+        const playerPortfolio = data.getState(config.world_book_keys.player_portfolio) || {};
+        const balance = account ? account.cash : finiteNumber(playerPortfolio.cash);
         const deadline = parseMemoDate(task.deadline ?? task.deadline_at);
         const remainingMs = Number.isFinite(deadline) ? deadline - now : Infinity;
         const completed = Boolean(task.completed || task.status === 'completed');
@@ -222,7 +225,7 @@ function normalizeMemoTasks(data, config, accounts, market) {
                 : '未设置截止时间',
             required_amount: required,
             current_balance: balance,
-            account_id: task.account_id ? String(task.account_id) : null,
+            account_id: account?.account_id || null,
             status,
             complete_prompt: String(task.complete_prompt || task.success_prompt || ''),
             failed_prompt: String(task.failed_prompt || task.failure_prompt || ''),
@@ -244,6 +247,26 @@ function parseMemoDate(value) {
         .replace(/^(\d{4}-\d{1,2}-\d{1,2})-(\d{1,2}:\d{2})$/, '$1 $2');
     const timestamp = Date.parse(normalized);
     return Number.isFinite(timestamp) ? timestamp : Date.parse(raw);
+}
+
+async function resolveMemoSource(data) {
+    const keys = ['sv_memo_tasks', 'memo_tasks', 'SillyView_memo_tasks'];
+    for (const key of keys) {
+        const value = data.getState(key);
+        if (Array.isArray(value) || Array.isArray(value?.tasks)) return { key, value, external: false };
+    }
+    const helper = data.th;
+    if (!helper?.getCharWorldbookNames || !helper?.getWorldbook) return { key: 'sv_memo_tasks', value: null, external: false };
+    const books = await helper.getCharWorldbookNames('current');
+    for (const book of [books?.primary, ...(books?.additional || [])].filter(Boolean)) {
+        const entries = await helper.getWorldbook(book);
+        const entry = (entries || []).find(item => keys.includes(String(item.name || item.comment || '').trim()));
+        if (!entry) continue;
+        let value = entry.content;
+        try { value = JSON.parse(String(value).replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '').trim()); } catch { /* leave invalid content for empty-state handling */ }
+        if (Array.isArray(value) || Array.isArray(value?.tasks)) return { key: entry.name || entry.comment, value, external: true, book };
+    }
+    return { key: 'sv_memo_tasks', value: null, external: false };
 }
 
 export function createSillyViewPublicAPI({ data, app = null, roleDecision, config, togglePanel = null }) {
@@ -294,7 +317,8 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
                 accounts: states.map(state => buildAccountSnapshot(data, state)),
                 news: buildNewsSnapshot(data, config),
             };
-            snapshot.memo_tasks = normalizeMemoTasks(data, config, snapshot.accounts, market);
+            const memoSource = await resolveMemoSource(data);
+            snapshot.memo_tasks = normalizeMemoTasks({ ...data, getState: key => key === 'sv_memo_tasks' ? memoSource.value : data.getState(key) }, config, snapshot.accounts, market);
             return snapshot;
         },
         async getPortfolio() {
@@ -328,12 +352,15 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
 
             const memoKey = ['sv_memo_tasks', 'memo_tasks', 'SillyView_memo_tasks']
                 .find(key => { const value = data.getState(key); return Array.isArray(value) || Array.isArray(value?.tasks); }) || 'sv_memo_tasks';
-            const raw = data.getState(memoKey) || [];
+            const source = await resolveMemoSource(data);
+            const raw = source.value || [];
             const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.tasks) ? raw.tasks : []);
             const updated = list.map((item, index) => String(item.id || `memo_${index + 1}`) === task.id
                 ? { ...item, completed: true, status: 'completed', completed_at: Date.now() }
                 : item);
-            await data.updateState(memoKey, current => Array.isArray(current)
+            if (source.external && data.th?.updateWorldbookWith) {
+                await data.th.updateWorldbookWith(source.book, entries => entries.map(entry => (String(entry.name || entry.comment || '').trim() === memoKey ? { ...entry, content: JSON.stringify(Array.isArray(source.value) ? updated : { ...(source.value || {}), tasks: updated }, null, 2) } : entry)));
+            } else await data.updateState(memoKey, current => Array.isArray(current)
                 ? updated
                 : { ...(current || {}), tasks: updated });
             if (task.complete_prompt && app?.sendMemoPrompt) await app.sendMemoPrompt(task.complete_prompt);
