@@ -1523,14 +1523,37 @@ export class SillyViewApp {
         if (!this.turnStateSnapshots) this.turnStateSnapshots = new Map();
         const roleMemory = this.data.getRoleDecisionMemory ? await this.data.getRoleDecisionMemory() : null;
         const managedAccounts = this.data.getManagedAccountStates ? await this.data.getManagedAccountStates() : null;
+        const memoTasks = await this._captureMemoTaskState();
         this.turnStateSnapshots.set(numericMessageId, {
             state: this.data.createSnapshot(),
             role_memory: roleMemory,
             managed_accounts: managedAccounts,
+            memo_tasks: memoTasks,
         });
         while (this.turnStateSnapshots.size > 50) {
             this.turnStateSnapshots.delete(this.turnStateSnapshots.keys().next().value);
         }
+    }
+
+    async _captureMemoTaskState() {
+        const helper = this.th;
+        if (!helper?.getCharWorldbookNames || !helper?.getWorldbook) return null;
+        const books = await helper.getCharWorldbookNames('current');
+        for (const book of [books?.primary, ...(books?.additional || [])].filter(Boolean)) {
+            const entries = await helper.getWorldbook(book);
+            const entry = (entries || []).find(item => ['sv_memo_tasks', 'memo_tasks', 'SillyView_memo_tasks'].includes(String(item.name || item.comment || '').trim()));
+            if (entry) return { book, key: String(entry.name || entry.comment).trim(), content: String(entry.content || '') };
+        }
+        return null;
+    }
+
+    async _restoreMemoTaskState(snapshot) {
+        if (!snapshot?.book || !snapshot.key || !this.th?.updateWorldbookWith) return;
+        await this.th.updateWorldbookWith(snapshot.book, entries => entries.map(entry => (
+            String(entry.name || entry.comment || '').trim() === snapshot.key
+                ? { ...entry, content: snapshot.content }
+                : entry
+        )));
     }
 
     async rollbackStateForDeletedMessage(messageId) {
@@ -1576,6 +1599,7 @@ export class SillyViewApp {
             if (Array.isArray(turnSnapshot?.managed_accounts) && this.data.restoreManagedAccountStates) {
                 await this.data.restoreManagedAccountStates(turnSnapshot.managed_accounts);
             }
+            await this._restoreMemoTaskState(turnSnapshot?.memo_tasks);
             this.previousStateSnapshot = null;
             this.lastMinuteAdvanceMessageId = null;
             this.pendingRoleTurnContext = null;
