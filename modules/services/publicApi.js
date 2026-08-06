@@ -344,7 +344,9 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             const states = await data.getManagedAccountStates();
             const accounts = states.map(state => buildAccountSnapshot(data, state));
             const market = data.getState(config.world_book_keys.global_market) || {};
-            const tasks = normalizeMemoTasks(data, config, accounts, market);
+            const source = await resolveMemoSource(data);
+            const memoData = { ...data, getState: key => key === 'sv_memo_tasks' ? source.value : data.getState(key) };
+            const tasks = normalizeMemoTasks(memoData, config, accounts, market);
             const task = tasks.find(item => item.id === String(taskId));
             if (!task) return { ok: false, status: 'missing', message: '任务不存在。' };
             if (task.status === 'completed') return { ok: false, status: 'completed', message: '任务已经完成。' };
@@ -354,9 +356,7 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             }
             if (task.status === 'insufficient') return { ok: false, status: 'insufficient', prompt: task.failed_prompt, message: '当前余额未达到任务要求。' };
 
-            const memoKey = ['sv_memo_tasks', 'memo_tasks', 'SillyView_memo_tasks']
-                .find(key => { const value = data.getState(key); return Array.isArray(value) || Array.isArray(value?.tasks); }) || 'sv_memo_tasks';
-            const source = await resolveMemoSource(data);
+            const memoKey = source.key || 'sv_memo_tasks';
             const raw = source.value || [];
             const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.tasks) ? raw.tasks : []);
             const updated = list.map((item, index) => String(item.id || `memo_${index + 1}`) === task.id

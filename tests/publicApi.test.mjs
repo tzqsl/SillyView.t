@@ -213,6 +213,23 @@ test('expired mobile memo task sends its failure prompt when acknowledged', asyn
     assert.deepEqual(prompts, ['任务已经失败。']);
 });
 
+test('completing a memo task loaded from the character worldbook updates and sends it', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    let entries = [{ name: 'sv_memo_tasks', content: JSON.stringify({ tasks: [{ id: 'external', deadline: '2099-01-01 00:00', required_amount: 1, complete_prompt: '外部任务完成。' }] }) }];
+    data.th = {
+        getCharWorldbookNames: async () => ({ primary: 'character_book', additional: [] }),
+        getWorldbook: async () => structuredClone(entries),
+        updateWorldbookWith: async (_book, updater) => { entries = updater(structuredClone(entries)); },
+    };
+    const prompts = [];
+    const api = createSillyViewPublicAPI({ data, app: { sendMemoPrompt: async prompt => prompts.push(prompt) }, roleDecision: null, config });
+
+    const result = await api.completeMemoTask('external');
+    assert.equal(result.ok, true);
+    assert.equal(JSON.parse(entries[0].content).tasks[0].completed, true);
+    assert.deepEqual(prompts, ['外部任务完成。']);
+});
+
 test('mobile AI settings merge current config and persist partial updates', async () => {
     let configState = { background_ai: { enabled: true, apiurl: 'https://example.test', key: 'secret', model: 'old' }, role_ai: { enabled: true } };
     const persisted = {};
