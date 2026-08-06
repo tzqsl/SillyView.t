@@ -209,7 +209,7 @@ function normalizeMemoTasks(data, config, accounts, market) {
         const balance = account ? account.cash : finiteNumber(playerPortfolio.cash);
         const deadline = parseMemoDate(task.deadline ?? task.deadline_at);
         const remainingMs = Number.isFinite(deadline) ? deadline - now : Infinity;
-        const completed = Boolean(task.completed || task.status === 'completed');
+        const completed = Boolean(task.completed || task.status === 'completed' || Number.isFinite(Number(task.completed_at)));
         let status = completed ? 'completed' : 'active';
         if (!completed && Number.isFinite(deadline) && remainingMs < 0) status = 'failed';
         else if (!completed && balance <= required) status = 'insufficient';

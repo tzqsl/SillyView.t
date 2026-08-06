@@ -230,6 +230,16 @@ test('completing a memo task loaded from the character worldbook updates and sen
     assert.deepEqual(prompts, ['外部任务完成。']);
 });
 
+test('memo task with completed_at is treated as completed', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    data.getState = key => key === 'sv_memo_tasks'
+        ? { tasks: [{ id: 'timestamped', deadline: '2020-01-01 00:00', required_amount: 999999, completed_at: 123 }] }
+        : null;
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
+    const snapshot = await api.getSnapshot();
+    assert.equal(snapshot.memo_tasks[0].status, 'completed');
+});
+
 test('mobile AI settings merge current config and persist partial updates', async () => {
     let configState = { background_ai: { enabled: true, apiurl: 'https://example.test', key: 'secret', model: 'old' }, role_ai: { enabled: true } };
     const persisted = {};
