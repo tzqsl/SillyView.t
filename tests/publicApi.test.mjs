@@ -57,7 +57,7 @@ test('mobile market change uses the close from 24 hours ago', async () => {
     const data = createData({ current_price: 1.04, kline_hourly: hourly });
     const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
     const snapshot = await api.getSnapshot();
-    assert.equal(snapshot.api_version, '2.7.0');
+    assert.equal(snapshot.api_version, '2.7.1');
     assert.equal(snapshot.market.assets[0].change_pct, 3.4826);
 });
 
@@ -134,7 +134,7 @@ test('mobile API delegates panel toggling and exposes mobile actions', async () 
         togglePanel: async () => ({ visible: true }),
     });
 
-    assert.equal(api.version, '2.7.0');
+    assert.equal(api.version, '2.7.1');
     assert.equal(api.readonly, false);
     assert.deepEqual(await api.togglePanel(), { visible: true });
     assert.deepEqual(await api.commitAndAdvance(), { ok: true });

@@ -272,7 +272,7 @@ async function resolveMemoSource(data) {
 
 export function createSillyViewPublicAPI({ data, app = null, roleDecision, config, togglePanel = null }) {
     const api = {
-        version: '2.7.0',
+        version: '2.7.1',
         readonly: false,
         async togglePanel() {
             if (typeof togglePanel !== 'function') return { visible: false, error: 'panel_unavailable' };
