@@ -197,6 +197,22 @@ test('mobile memo task is disabled when balance is not above required amount', a
     assert.equal(snapshot.memo_tasks[0].status, 'insufficient');
 });
 
+test('expired mobile memo task sends its failure prompt when acknowledged', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    const originalGetState = data.getState;
+    data.getState = key => {
+        if (key === 'market') return { current_datetime: '2026-08-06 12:00' };
+        if (key === 'sv_memo_tasks') return { tasks: [{ id: 'expired', deadline: '2026-08-05 12:00', required_amount: 1, failed_prompt: '任务已经失败。' }] };
+        return originalGetState(key);
+    };
+    const prompts = [];
+    const api = createSillyViewPublicAPI({ data, app: { sendMemoPrompt: async prompt => prompts.push(prompt) }, roleDecision: null, config });
+
+    const result = await api.completeMemoTask('expired');
+    assert.equal(result.status, 'failed');
+    assert.deepEqual(prompts, ['任务已经失败。']);
+});
+
 test('mobile AI settings merge current config and persist partial updates', async () => {
     let configState = { background_ai: { enabled: true, apiurl: 'https://example.test', key: 'secret', model: 'old' }, role_ai: { enabled: true } };
     const persisted = {};

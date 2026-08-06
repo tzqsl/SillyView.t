@@ -348,7 +348,10 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             const task = tasks.find(item => item.id === String(taskId));
             if (!task) return { ok: false, status: 'missing', message: '任务不存在。' };
             if (task.status === 'completed') return { ok: false, status: 'completed', message: '任务已经完成。' };
-            if (task.status === 'failed') return { ok: false, status: 'failed', prompt: task.failed_prompt, message: '任务已超出截止时间。' };
+            if (task.status === 'failed') {
+                if (task.failed_prompt && app?.sendMemoPrompt) await app.sendMemoPrompt(task.failed_prompt);
+                return { ok: false, status: 'failed', prompt: task.failed_prompt, message: '任务已超出截止时间，失败提示已发送。' };
+            }
             if (task.status === 'insufficient') return { ok: false, status: 'insufficient', prompt: task.failed_prompt, message: '当前余额未达到任务要求。' };
 
             const memoKey = ['sv_memo_tasks', 'memo_tasks', 'SillyView_memo_tasks']

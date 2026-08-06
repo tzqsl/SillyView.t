@@ -504,10 +504,10 @@ export class SillyViewApp {
     async sendMemoPrompt(prompt) {
         const text = String(prompt || '').trim();
         if (!text) return false;
-        if (this.th?.triggerSlash) await this.th.triggerSlash(`/setinput ${JSON.stringify(text)}`);
-        const sendButton = this.parentWin?.document?.querySelector?.('#send_but');
-        sendButton?.click?.();
-        return Boolean(sendButton);
+        if (!this.th?.createChatMessages || !this.th?.triggerSlash) return false;
+        await this.th.createChatMessages([{ role: 'user', message: text }]);
+        await this.th.triggerSlash('/trigger');
+        return true;
     }
 
     async processSingleMessage(msgId, expectedChatKey = this._getCurrentChatKey()) {
