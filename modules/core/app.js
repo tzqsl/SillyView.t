@@ -506,8 +506,19 @@ export class SillyViewApp {
         if (!text) return false;
         if (!this.th?.createChatMessages || !this.th?.triggerSlash) return false;
         await this.th.createChatMessages([{ role: 'user', message: text }]);
+        const messageId = Number(await this.th.getLastMessageId?.());
+        if (Number.isFinite(messageId)) {
+            await this._rememberTurnStateSnapshot(messageId);
+            const snapshot = this.turnStateSnapshots?.get(messageId);
+            if (snapshot && this.pendingMemoTaskRollback) snapshot.memo_tasks = this.pendingMemoTaskRollback;
+            this.pendingMemoTaskRollback = null;
+        }
         await this.th.triggerSlash('/trigger');
         return true;
+    }
+
+    prepareMemoTaskRollback(snapshot) {
+        this.pendingMemoTaskRollback = snapshot || null;
     }
 
     async processSingleMessage(msgId, expectedChatKey = this._getCurrentChatKey()) {

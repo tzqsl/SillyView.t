@@ -362,6 +362,11 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             const updated = list.map((item, index) => String(item.id || `memo_${index + 1}`) === task.id
                 ? { ...item, completed: true, status: 'completed', completed_at: Date.now() }
                 : item);
+            if (app?.prepareMemoTaskRollback && source.external) {
+                const entries = await data.th.getWorldbook(source.book);
+                const entry = (entries || []).find(item => String(item.name || item.comment || '').trim() === memoKey);
+                if (entry) app.prepareMemoTaskRollback({ book: source.book, key: memoKey, content: String(entry.content || '') });
+            }
             if (source.external && data.th?.updateWorldbookWith) {
                 await data.th.updateWorldbookWith(source.book, entries => entries.map(entry => (String(entry.name || entry.comment || '').trim() === memoKey ? { ...entry, content: JSON.stringify(Array.isArray(source.value) ? updated : { ...(source.value || {}), tasks: updated }, null, 2) } : entry)));
             } else await data.updateState(memoKey, current => Array.isArray(current)
