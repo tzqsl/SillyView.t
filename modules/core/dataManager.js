@@ -2033,8 +2033,10 @@ export class DataManager {
         const cutoff = Number(messageId);
         if (!Number.isFinite(cutoff)) return false;
         const memory = await this.getRoleDecisionMemory();
+        // The cutoff is the user message that produced the deleted assistant
+        // reply. Its `managed_accounts_before` snapshot is the state to restore.
         const affectedRun = (Array.isArray(memory.history) ? memory.history : [])
-            .filter(run => Number(run?.context?.user_message_id) > cutoff && Array.isArray(run?.managed_accounts_before))
+            .filter(run => Number(run?.context?.user_message_id) >= cutoff && Array.isArray(run?.managed_accounts_before))
             .sort((a, b) => Number(a.context.user_message_id) - Number(b.context.user_message_id))[0];
         if (!affectedRun) return false;
         await this.restoreManagedAccountStates(affectedRun.managed_accounts_before);

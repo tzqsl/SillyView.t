@@ -719,6 +719,30 @@ test('persisted role history restores the earliest account snapshot after a dele
     assert.equal(restored, beforeFirst);
 });
 
+test('persisted account and event snapshots restore the deleted assistant turn', async () => {
+    const before = [{
+        account_id: 'fx-a',
+        portfolio: { cash: 10000, assets: {} },
+        recent_major_events: [{ id: 'old', content: 'before' }],
+    }];
+    const after = [{
+        account_id: 'fx-a',
+        portfolio: { cash: 8000, assets: { EURUSD: { leveraged: { trades: [{ amount: 100 }] } } } },
+        recent_major_events: [{ id: 'old', content: 'before' }, { id: 'new', content: 'trade' }],
+    }];
+    let restored = null;
+    const manager = Object.create(DataManager.prototype);
+    Object.assign(manager, {
+        getRoleDecisionMemory: async () => ({
+            history: [{ context: { user_message_id: 7 }, managed_accounts_before: before }, { context: { user_message_id: 9 }, managed_accounts_before: after }],
+        }),
+        restoreManagedAccountStates: async states => { restored = states; },
+    });
+
+    assert.equal(await manager.restoreManagedAccountStatesBeforeMessage(7), true);
+    assert.deepEqual(restored, before);
+});
+
 test('plain Enter on the chat textarea starts role capture but newline shortcuts do not', async () => {
     let captureCount = 0;
     const app = Object.create(SillyViewApp.prototype);
