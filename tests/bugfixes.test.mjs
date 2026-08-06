@@ -1115,3 +1115,28 @@ test('trade submission lock prevents overlap and is released after failure', asy
     assert.equal(renderer.isSubmittingTrade, false);
     assert.deepEqual(errors, ['save failed']);
 });
+
+test('quick mode advances the formatted world time across day and season boundaries', async () => {
+    const market = {
+        current_datetime: '2026年08月31日-星期一-23:30',
+        current_period: '晚上',
+        current_season: '夏季',
+    };
+    const app = Object.create(SillyViewApp.prototype);
+    app.data = {
+        updateState: async (_key, updater) => updater(market),
+    };
+
+    assert.equal(await app._advanceWorldTimeByMinutes(90), true);
+    assert.equal(market.current_datetime, '2026年09月01日-星期二-01:00');
+    assert.equal(market.current_period, '凌晨');
+    assert.equal(market.current_season, '秋季');
+});
+
+test('long-target expiry prompt receives the elapsed quick-mode duration', async () => {
+    const appSource = await readFile(new URL('../modules/core/app.js', import.meta.url), 'utf8');
+    const directorSource = await readFile(new URL('../modules/services/aiDirector.js', import.meta.url), 'utf8');
+
+    assert.match(appSource, /elapsedHours:\s*hoursToAdvance/);
+    assert.match(directorSource, /时间过去了\$\{displayHours\}小时/);
+});

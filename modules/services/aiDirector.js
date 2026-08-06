@@ -21,8 +21,12 @@ export class AIDirector {
             : '请独立推进市场；不要读取、推断或迎合玩家账户、持仓与盈亏。';
 
 
+        const elapsedHours = Number(options.elapsedHours);
         let promptPrefix = '';
-        if (currentTimeframe === 'HOURLY') {
+        if (Number.isFinite(elapsedHours) && elapsedHours > 0) {
+            const displayHours = Number.isInteger(elapsedHours) ? elapsedHours : elapsedHours.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+            promptPrefix = `时间过去了${displayHours}小时，`;
+        } else if (currentTimeframe === 'HOURLY') {
             promptPrefix = '时间过去了一小时，';
         } else if (currentTimeframe === 'DAILY') {
             promptPrefix = '时间过去了一天，';
