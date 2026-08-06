@@ -25,6 +25,7 @@ export class DataManager {
         this.hasGameBook = false;
         this.contextEntriesEnsuredFor = null;
         this.activeManagedObservationSession = null;
+        this.managedCharacterScope = null;
     }
 
     _ensureAssetDataShape(assetData) {
@@ -391,6 +392,29 @@ export class DataManager {
         return (!charName || charName === '{{char}}') ? 'current' : charName;
     }
 
+    async prepareCharacterScope() {
+        const characterName = await this._getCharacterName();
+        const liveContext = this.dependencies.win?.SillyTavern?.getContext?.()
+            || this.dependencies.st_context
+            || {};
+        const characterId = liveContext.characterId ?? liveContext.character_id ?? '';
+        const avatar = liveContext.characters?.[characterId]?.avatar
+            || liveContext.character?.avatar
+            || '';
+        const identity = `${characterName}|${avatar || characterId}`;
+        const suffix = this._sanitizeName(characterName).slice(0, 36);
+        const controlName = `SillyView_accounts_${suffix}_${this._hashString(identity).slice(0, 8)}`;
+
+        if (this.managedCharacterScope?.controlName !== controlName) {
+            this.activeManagedObservationSession = null;
+            this.managedCharacterScope = { characterName, identity, controlName };
+        }
+        // Account state, role memory and events must follow the active card.
+        // Other services share this config object and pick up the same scope.
+        this.config.multi_account.control_worldbook_name = controlName;
+        return this.managedCharacterScope;
+    }
+
     _sanitizeName(value) {
         return String(value || 'account')
             .trim()
@@ -419,6 +443,7 @@ export class DataManager {
     }
 
     async _loadInitialState() {
+        await this.prepareCharacterScope();
         this.logger.log("正在加载初始状态...");
         this.ui.renderInitializationProgress({
             step: '准备',
@@ -831,6 +856,7 @@ export class DataManager {
     }
 
     async createInitialWorldState(options = {}) {
+        await this.prepareCharacterScope();
         const lorebookName = await this._getLorebookName();
         if (!lorebookName) {
             this.logger.error("无法创建世界书：未选择角色。");

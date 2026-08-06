@@ -962,6 +962,49 @@ test('stale missing worldbook bindings are removed before adding SillyView accou
         binding: { primary: 'FX战士久留美', additional: ['SillyView_accounts'] },
     }]);
 });
+test('managed account worldbooks are isolated by character identity', async () => {
+    const sharedConfig = { multi_account: { control_worldbook_name: 'SillyView_accounts' } };
+    let current = { characterId: 5, characters: { 5: { avatar: 'fx.png' } } };
+    let characterName = 'FX';
+    const manager = Object.create(DataManager.prototype);
+    Object.assign(manager, {
+        config: sharedConfig,
+        dependencies: { win: { SillyTavern: { getContext: () => current } } },
+        th: { substitudeMacros: async () => characterName },
+        activeManagedObservationSession: { id: 'old-session' },
+        managedCharacterScope: null,
+    });
+
+    const fxScope = await manager.prepareCharacterScope();
+    assert.match(fxScope.controlName, /^SillyView_accounts_FX_/);
+    assert.equal(sharedConfig.multi_account.control_worldbook_name, fxScope.controlName);
+    assert.equal(manager.activeManagedObservationSession, null);
+
+    characterName = 'Another Role';
+    current = { characterId: 8, characters: { 8: { avatar: 'another.png' } } };
+    const otherScope = await manager.prepareCharacterScope();
+    assert.match(otherScope.controlName, /^SillyView_accounts_Another_Role_/);
+    assert.notEqual(otherScope.controlName, fxScope.controlName);
+    assert.equal(sharedConfig.multi_account.control_worldbook_name, otherScope.controlName);
+});
+
+test('same-name character cards use different managed account worldbooks', async () => {
+    const config = { multi_account: { control_worldbook_name: 'SillyView_accounts' } };
+    let avatar = 'first.png';
+    const manager = Object.create(DataManager.prototype);
+    Object.assign(manager, {
+        config,
+        dependencies: { win: { SillyTavern: { getContext: () => ({ characterId: 1, characters: { 1: { avatar } } }) } } },
+        th: { substitudeMacros: async () => 'Duplicate Name' },
+        managedCharacterScope: null,
+    });
+
+    const first = await manager.prepareCharacterScope();
+    avatar = 'second.png';
+    const second = await manager.prepareCharacterScope();
+    assert.notEqual(first.controlName, second.controlName);
+});
+
 test('persistent background AI settings are readable before world creation', () => {
     const manager = Object.create(DataManager.prototype);
     manager.config = { extension_settings_key: 'SillyView', extension_name: 'SillyView' };

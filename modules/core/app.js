@@ -1753,7 +1753,7 @@ export class SillyViewApp {
             eventSource.on(eventTypes.MESSAGE_DELETED, this._messageDeletedHandler);
         };
         this._moveDeletionHandlerToEnd();
-        eventSource.on(eventTypes.CHAT_CHANGED, (chatId) => {
+        eventSource.on(eventTypes.CHAT_CHANGED, async (chatId) => {
             setTimeout(() => this._moveDeletionHandlerToEnd?.(), 500);
             this.chatSessionGeneration += 1;
             this._clearRoleWaitingToast();
@@ -1771,11 +1771,16 @@ export class SillyViewApp {
                 this.chatChangeSnapshotCleanupTimer = null;
             }, 250);
             this.pendingRoleTurnContext = null;
-        this.pendingRoleKeyboardDraft = null;
+            this.pendingRoleKeyboardDraft = null;
             this.lastRoleDispatchStatus = null;
             this.lastCapturedRoleMessageId = null;
             this._clearAllRoleCaptureRetries();
             this.stopAutoAdvanceTimer();
+            try {
+                await this.data.prepareCharacterScope?.();
+            } catch (error) {
+                this.logger.warn('Failed to switch the managed account character scope:', error);
+            }
             if (this.ui.isPanelVisible) {
                 this.data.loadInitialState();
             }
