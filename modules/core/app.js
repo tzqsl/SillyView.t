@@ -501,6 +501,15 @@ export class SillyViewApp {
         }, 350);
     }
 
+    async sendMemoPrompt(prompt) {
+        const text = String(prompt || '').trim();
+        if (!text) return false;
+        if (this.th?.triggerSlash) await this.th.triggerSlash(`/setinput ${JSON.stringify(text)}`);
+        const sendButton = this.parentWin?.document?.querySelector?.('#send_but');
+        sendButton?.click?.();
+        return Boolean(sendButton);
+    }
+
     async processSingleMessage(msgId, expectedChatKey = this._getCurrentChatKey()) {
         if (expectedChatKey !== this._getCurrentChatKey()) return;
         const messages = this.th.getChatMessages(msgId);

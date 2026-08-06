@@ -141,6 +141,61 @@ test('mobile API delegates panel toggling and exposes mobile actions', async () 
     assert.equal(advanced, true);
 });
 
+test('mobile memo tasks use market time, account balance, and send completion prompts', async () => {
+    const managedStates = [{
+        account_id: 'acct_role',
+        owner_name: '测试角色',
+        portfolio: { cash: 6000, debt: 0, starting_cash: 6000, assets: {}, pending_orders: [], order_history: [] },
+    }];
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] }, managedStates);
+    const originalGetState = data.getState;
+    let memoState = { tasks: [{
+        id: 'rent',
+        name: '支付房租',
+        content: '在期限前准备房租。',
+        deadline: '2026年08月08日-星期六-12:00',
+        required_amount: 5000,
+        account_id: 'acct_role',
+        complete_prompt: '房租任务已经完成。',
+        failed_prompt: '房租任务失败。',
+    }] };
+    data.getState = key => {
+        if (key === 'market') return { current_datetime: '2026年08月06日-星期四-12:00' };
+        if (key === 'sv_memo_tasks') return structuredClone(memoState);
+        return originalGetState(key);
+    };
+    data.updateState = async (_key, updater) => { memoState = updater(structuredClone(memoState)); };
+    const prompts = [];
+    const api = createSillyViewPublicAPI({ data, app: { sendMemoPrompt: async prompt => prompts.push(prompt) }, roleDecision: null, config });
+
+    const snapshot = await api.getSnapshot();
+    assert.equal(snapshot.memo_tasks[0].status, 'active');
+    assert.equal(snapshot.memo_tasks[0].remaining_label, '2天 0小时');
+    assert.equal(snapshot.memo_tasks[0].current_balance, 6000);
+
+    const result = await api.completeMemoTask('rent');
+    assert.equal(result.ok, true);
+    assert.equal(memoState.tasks[0].completed, true);
+    assert.deepEqual(prompts, ['房租任务已经完成。']);
+});
+
+test('mobile memo task is disabled when balance is not above required amount', async () => {
+    const managedStates = [{
+        account_id: 'acct_role',
+        owner_name: '测试角色',
+        portfolio: { cash: 5000, debt: 0, starting_cash: 5000, assets: {}, pending_orders: [], order_history: [] },
+    }];
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] }, managedStates);
+    const originalGetState = data.getState;
+    data.getState = key => key === 'sv_memo_tasks'
+        ? { tasks: [{ id: 'equal', deadline: '2099-01-01 00:00', required_amount: 5000, account_id: 'acct_role' }] }
+        : originalGetState(key);
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
+
+    const snapshot = await api.getSnapshot();
+    assert.equal(snapshot.memo_tasks[0].status, 'insufficient');
+});
+
 test('mobile AI settings merge current config and persist partial updates', async () => {
     let configState = { background_ai: { enabled: true, apiurl: 'https://example.test', key: 'secret', model: 'old' }, role_ai: { enabled: true } };
     const persisted = {};
