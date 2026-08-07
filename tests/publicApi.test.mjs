@@ -244,21 +244,25 @@ test('series memo tasks expose only the current step and advance progress', asyn
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
     let memoProgress = null;
     const memoState = { tasks: [{ id: 'series', type: 'series', name: '系列', steps: [
-        { id: 'one', name: '第一步', deadline: '2099-01-01 00:00', complete_prompt: '第一步完成。' },
-        { id: 'two', name: '第二步', deadline: '2099-01-01 00:00', complete_prompt: '第二步完成。' },
+        { id: 'one', name: '第一步', deadline: '2099-01-01 00:00', required_amount: 100, complete_prompt: '第一步完成。' },
+        { id: 'two', name: '第二步', deadline: '2099-01-01 00:00', required_amount: 200, complete_prompt: '第二步完成。' },
     ] }] };
-    data.getState = key => key === 'sv_memo_tasks' ? structuredClone(memoState) : key === 'sv_memo_progress' ? structuredClone(memoProgress) : null;
+    data.getState = key => key === 'sv_memo_tasks' ? structuredClone(memoState) : key === 'sv_memo_progress' ? structuredClone(memoProgress) : key === 'portfolio' ? { cash: 1000 } : null;
     data.updateState = async (key, updater) => { if (key === 'sv_memo_progress') memoProgress = updater(structuredClone(memoProgress)); else Object.assign(memoState, updater(structuredClone(memoState))); };
     const prompts = [];
     const api = createSillyViewPublicAPI({ data, app: { sendMemoPrompt: async prompt => prompts.push(prompt) }, roleDecision: null, config });
     let snapshot = await api.getSnapshot();
     assert.equal(snapshot.memo_tasks[0].type, 'series');
     assert.equal(snapshot.memo_tasks[0].current_step_id, 'one');
+    assert.equal(snapshot.memo_tasks[0].series_total_required_amount, 300);
+    assert.equal(snapshot.memo_tasks[0].series_remaining_required_amount, 300);
     const result = await api.completeMemoTask('series');
     assert.equal(result.status, 'step_completed');
     assert.deepEqual(prompts, ['第一步完成。']);
     snapshot = await api.getSnapshot();
     assert.equal(snapshot.memo_tasks[0].current_step_id, 'two');
+    assert.equal(snapshot.memo_tasks[0].series_total_required_amount, 300);
+    assert.equal(snapshot.memo_tasks[0].series_remaining_required_amount, 200);
 });
 
 test('charge memo task debits and rewards the player account', async () => {

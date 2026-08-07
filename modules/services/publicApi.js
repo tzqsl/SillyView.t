@@ -265,6 +265,10 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
         const failed = Boolean(seriesRuntime.failed || steps.some(step => step.status === 'failed'));
         const completed = steps.length > 0 && steps.every(step => step.status === 'completed');
         const visibleStep = steps[currentIndex] || steps[0];
+        const seriesTotalRequiredAmount = steps.reduce((sum, step) => sum + Math.max(0, finiteNumber(step.required_amount)), 0);
+        const seriesRemainingRequiredAmount = steps.reduce((sum, step) => step.status === 'completed'
+            ? sum
+            : sum + Math.max(0, finiteNumber(step.required_amount)), 0);
         return {
             ...visibleStep,
             id,
@@ -276,6 +280,8 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
             current_step_index: currentIndex,
             completed_steps: steps.filter(step => step.status === 'completed').length,
             total_steps: steps.length,
+            series_total_required_amount: seriesTotalRequiredAmount,
+            series_remaining_required_amount: seriesRemainingRequiredAmount,
             steps,
             complete_prompt: String(task.complete_prompt || ''),
             reward_amount: Math.max(0, finiteNumber(task.reward_amount ?? task.reward)),
