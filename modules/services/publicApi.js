@@ -289,6 +289,7 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
     else if (!completed && !failed && normalizeCompletionMode(task) === 'charge_and_prompt' && balance < chargeAmount) status = 'insufficient';
     else if (!completed && !failed && conditions.some(condition => !condition.met)) status = 'insufficient';
     const taskCategory = normalizeMemoTaskCategory(task, false);
+    const taskSubcategory = normalizeMemoTaskSubcategory(task, taskCategory);
     return {
         id: String(task.id || `memo_${index + 1}`),
         name: String(task.name || task.title || `任务 ${index + 1}`),
@@ -312,8 +313,11 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
         reward_account_id: String(task.reward_account_id || '').trim() || null,
         conditions,
         task_category: taskCategory,
-        task_subcategory: normalizeMemoTaskSubcategory(task, taskCategory),
+        task_subcategory: taskSubcategory,
         character_group: String(task.character_group || task.character || '').trim() || null,
+        category: taskCategory,
+        subcategory: taskSubcategory,
+        character: String(task.character_group || task.character || '').trim() || null,
     };
 }
 
@@ -343,6 +347,8 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
             ? sum
             : sum + Math.max(0, finiteNumber(step.required_amount)), 0);
         const taskCategory = normalizeMemoTaskCategory(task, true);
+        const taskSubcategory = normalizeMemoTaskSubcategory(task, taskCategory);
+        const characterGroup = String(task.character_group || task.character || '').trim() || null;
         return {
             ...visibleStep,
             id,
@@ -357,8 +363,11 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
             series_total_required_amount: seriesTotalRequiredAmount,
             series_remaining_required_amount: seriesRemainingRequiredAmount,
             task_category: taskCategory,
-            task_subcategory: normalizeMemoTaskSubcategory(task, taskCategory),
-            character_group: String(task.character_group || task.character || '').trim() || null,
+            task_subcategory: taskSubcategory,
+            character_group: characterGroup,
+            category: taskCategory,
+            subcategory: taskSubcategory,
+            character: characterGroup,
             steps,
             complete_prompt: String(task.complete_prompt || ''),
             reward_amount: Math.max(0, finiteNumber(task.reward_amount ?? task.reward)),
