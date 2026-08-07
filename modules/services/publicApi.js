@@ -194,42 +194,91 @@ function buildNewsSnapshot(data, config, activeOnly = false) {
     }));
 }
 
-function normalizeMemoTasks(data, config, accounts, market) {
+const MEMO_PROGRESS_ENTRY = 'sv_memo_progress';
+
+function normalizeCompletionMode(task = {}) {
+    return String(task.completion_mode || task.mode || 'prompt').toLowerCase() === 'charge_and_prompt'
+        ? 'charge_and_prompt'
+        : 'prompt';
+}
+
+function normalizeSingleMemoTask(data, config, accounts, market, task, index, runtime = {}) {
+    const required = finiteNumber(task.required_amount ?? task.required_cash ?? task.amount);
+    const chargeAmount = Math.max(0, finiteNumber(task.charge_amount));
+    const rewardAmount = Math.max(0, finiteNumber(task.reward_amount ?? task.reward));
+    const requestedAccountId = String(task.account_id || '').trim();
+    const usePlayerAccount = !requestedAccountId || ['player', 'user', 'default', 'optional_account_id'].includes(requestedAccountId.toLowerCase());
+    const account = usePlayerAccount ? null : accounts.find(item => item.account_id === requestedAccountId);
+    const playerPortfolio = data.getState(config.world_book_keys.player_portfolio) || {};
+    const balance = account ? account.cash : finiteNumber(playerPortfolio.cash);
+    const deadline = parseMemoDate(task.deadline ?? task.deadline_at);
+    const now = parseMemoDate(market.current_datetime) || Date.now();
+    const remainingMs = Number.isFinite(deadline) ? deadline - now : Infinity;
+    const completed = Boolean(runtime.completed || task.completed || task.status === 'completed' || Number.isFinite(Number(task.completed_at)));
+    const failed = Boolean(runtime.failed || task.status === 'failed');
+    let status = completed ? 'completed' : failed ? 'failed' : 'active';
+    if (!completed && !failed && Number.isFinite(deadline) && remainingMs < 0) status = 'failed';
+    else if (!completed && !failed && required > 0 && balance <= required) status = 'insufficient';
+    else if (!completed && !failed && normalizeCompletionMode(task) === 'charge_and_prompt' && balance < chargeAmount) status = 'insufficient';
+    return {
+        id: String(task.id || `memo_${index + 1}`),
+        name: String(task.name || task.title || `任务 ${index + 1}`),
+        content: String(task.content || task.description || ''),
+        deadline: String(task.deadline || task.deadline_at || ''),
+        deadline_at: Number.isFinite(deadline) ? deadline : null,
+        remaining_ms: Number.isFinite(remainingMs) ? remainingMs : null,
+        remaining_label: Number.isFinite(remainingMs)
+            ? (remainingMs < 0 ? '已超时' : `${Math.floor(remainingMs / 86400000)}天 ${Math.floor((remainingMs % 86400000) / 3600000)}小时`)
+            : '未设置截止时间',
+        required_amount: required,
+        charge_amount: chargeAmount,
+        reward_amount: rewardAmount,
+        completion_mode: normalizeCompletionMode(task),
+        current_balance: balance,
+        remaining_amount: Math.max(0, required - balance),
+        account_id: account?.account_id || null,
+        status,
+        complete_prompt: String(task.complete_prompt || task.success_prompt || ''),
+        failed_prompt: String(task.failed_prompt || task.failure_prompt || ''),
+        reward_account_id: String(task.reward_account_id || '').trim() || null,
+    };
+}
+
+function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
     const raw = ['sv_memo_tasks', 'memo_tasks', 'SillyView_memo_tasks']
         .map(key => data.getState(key))
         .find(value => Array.isArray(value) || Array.isArray(value?.tasks)) || null;
     const source = Array.isArray(raw) ? raw : (Array.isArray(raw?.tasks) ? raw.tasks : []);
-    const now = parseMemoDate(market.current_datetime) || Date.now();
     return source.map((task, index) => {
-        const required = finiteNumber(task.required_amount ?? task.required_cash ?? task.amount);
-        const requestedAccountId = String(task.account_id || '').trim();
-        const usePlayerAccount = !requestedAccountId || ['player', 'user', 'default', 'optional_account_id'].includes(requestedAccountId.toLowerCase());
-        const account = usePlayerAccount ? null : accounts.find(item => item.account_id === requestedAccountId);
-        const playerPortfolio = data.getState(config.world_book_keys.player_portfolio) || {};
-        const balance = account ? account.cash : finiteNumber(playerPortfolio.cash);
-        const deadline = parseMemoDate(task.deadline ?? task.deadline_at);
-        const remainingMs = Number.isFinite(deadline) ? deadline - now : Infinity;
-        const completed = Boolean(task.completed || task.status === 'completed' || Number.isFinite(Number(task.completed_at)));
-        let status = completed ? 'completed' : 'active';
-        if (!completed && Number.isFinite(deadline) && remainingMs < 0) status = 'failed';
-        else if (!completed && balance <= required) status = 'insufficient';
+        const id = String(task.id || `memo_${index + 1}`);
+        if (task.type !== 'series' && !Array.isArray(task.steps)) {
+            return normalizeSingleMemoTask(data, config, accounts, market, task, index, runtime[id] || {});
+        }
+        const seriesRuntime = runtime[id] || {};
+        const steps = (Array.isArray(task.steps) ? task.steps : []).map((step, stepIndex) => normalizeSingleMemoTask(
+            data, config, accounts, market,
+            { ...task, ...step, id: String(step.id || `${id}_${stepIndex + 1}`), account_id: step.account_id ?? task.account_id },
+            stepIndex,
+            seriesRuntime.steps?.[String(step.id || `${id}_${stepIndex + 1}`)] || {},
+        ));
+        const currentIndex = Math.max(0, Math.min(Number(seriesRuntime.current_index || 0), Math.max(steps.length - 1, 0)));
+        const failed = Boolean(seriesRuntime.failed || steps.some(step => step.status === 'failed'));
+        const completed = steps.length > 0 && steps.every(step => step.status === 'completed');
+        const visibleStep = steps[currentIndex] || steps[0];
         return {
-            id: String(task.id || `memo_${index + 1}`),
-            name: String(task.name || task.title || `任务 ${index + 1}`),
-            content: String(task.content || task.description || ''),
-            deadline: String(task.deadline || task.deadline_at || ''),
-            deadline_at: Number.isFinite(deadline) ? deadline : null,
-            remaining_ms: Number.isFinite(remainingMs) ? remainingMs : null,
-            remaining_label: Number.isFinite(remainingMs)
-                ? (remainingMs < 0 ? '已超时' : `${Math.floor(remainingMs / 86400000)}天 ${Math.floor((remainingMs % 86400000) / 3600000)}小时`)
-                : '未设置截止时间',
-            required_amount: required,
-            current_balance: balance,
-            remaining_amount: Math.max(0, required - balance),
-            account_id: account?.account_id || null,
-            status,
-            complete_prompt: String(task.complete_prompt || task.success_prompt || ''),
-            failed_prompt: String(task.failed_prompt || task.failure_prompt || ''),
+            ...visibleStep,
+            id,
+            type: 'series',
+            name: String(task.name || id),
+            content: String(task.content || visibleStep?.content || ''),
+            status: completed ? 'completed' : failed ? 'failed' : visibleStep?.status || 'active',
+            current_step_id: visibleStep?.id || null,
+            current_step_index: currentIndex,
+            completed_steps: steps.filter(step => step.status === 'completed').length,
+            total_steps: steps.length,
+            steps,
+            complete_prompt: String(task.complete_prompt || ''),
+            reward_amount: Math.max(0, finiteNumber(task.reward_amount ?? task.reward)),
         };
     });
 }
@@ -263,11 +312,61 @@ async function resolveMemoSource(data) {
         const entries = await helper.getWorldbook(book);
         const entry = (entries || []).find(item => keys.includes(String(item.name || item.comment || '').trim()));
         if (!entry) continue;
-        let value = entry.content;
-        try { value = JSON.parse(String(value).replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '').trim()); } catch { /* leave invalid content for empty-state handling */ }
-        if (Array.isArray(value) || Array.isArray(value?.tasks)) return { key: entry.name || entry.comment, value, external: true, book };
+        let content = String(entry.content || '');
+        let templateError = null;
+        if (/<%[=_-]?/.test(content)) {
+            const template = data.dependencies?.win?.EjsTemplate || data.dependencies?.win?.parent?.EjsTemplate || globalThis.EjsTemplate;
+            if (!template?.prepareContext || !template?.evalTemplate) templateError = '需要安装 ST-Prompt-Template 插件。';
+            else {
+                try {
+                    const context = await template.prepareContext();
+                    content = await template.evalTemplate(content, context, { logging: false });
+                } catch (error) {
+                    templateError = `任务模板解析失败：${error.message || error}`;
+                }
+            }
+        }
+        let value = null;
+        if (!templateError) {
+            try { value = JSON.parse(content.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '').trim()); } catch (error) { templateError = `任务 JSON 解析失败：${error.message || error}`; }
+        }
+        if (Array.isArray(value) || Array.isArray(value?.tasks)) return { key: entry.name || entry.comment, value, external: true, book, templated: /<%[=_-]?/.test(String(entry.content || '')), templateError };
+        if (templateError) return { key: entry.name || entry.comment, value: null, external: true, book, templated: true, templateError };
     }
     return { key: 'sv_memo_tasks', value: null, external: false };
+}
+
+async function readMemoProgress(data, config) {
+    const book = config.multi_account?.control_worldbook_name;
+    if (!book || !data.th?.getWorldbook) {
+        const local = data.getState?.(MEMO_PROGRESS_ENTRY);
+        return local && typeof local === 'object' ? local : { version: 1, entries: {} };
+    }
+    try {
+        const entry = (await data.th.getWorldbook(book) || []).find(item => item.name === MEMO_PROGRESS_ENTRY);
+        const parsed = entry?.content ? JSON.parse(entry.content) : null;
+        return parsed && typeof parsed === 'object' ? { version: 1, entries: parsed.entries || {} } : { version: 1, entries: {} };
+    } catch { return { version: 1, entries: {} }; }
+}
+
+async function writeMemoProgress(data, config, progress) {
+    const book = config.multi_account?.control_worldbook_name;
+    if (!book || !data.th?.updateWorldbookWith) {
+        if (data.updateState) await data.updateState(MEMO_PROGRESS_ENTRY, () => progress);
+        return true;
+    }
+    await data.th.updateWorldbookWith(book, entries => {
+        const content = JSON.stringify(progress, null, 2);
+        const existing = entries.find(item => item.name === MEMO_PROGRESS_ENTRY);
+        if (existing) { existing.enabled = false; existing.content = content; }
+        else entries.push({ name: MEMO_PROGRESS_ENTRY, enabled: false, content });
+        return entries;
+    });
+    return true;
+}
+
+function memoSourceScope(source) {
+    return `${source.book || 'internal'}::${source.key || 'sv_memo_tasks'}`;
 }
 
 export function createSillyViewPublicAPI({ data, app = null, roleDecision, config, togglePanel = null }) {
@@ -319,7 +418,30 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
                 news: buildNewsSnapshot(data, config),
             };
             const memoSource = await resolveMemoSource(data);
-            snapshot.memo_tasks = normalizeMemoTasks({ ...data, getState: key => key === 'sv_memo_tasks' ? memoSource.value : data.getState(key) }, config, snapshot.accounts, market);
+            const progress = await readMemoProgress(data, config);
+            const scope = memoSourceScope(memoSource);
+            const scopeProgress = progress.entries[scope] || { tasks: {} };
+            if (memoSource.templated && memoSource.value) {
+                const rendered = Array.isArray(memoSource.value) ? memoSource.value : memoSource.value.tasks;
+                const merged = { ...scopeProgress.tasks };
+                for (const task of rendered || []) {
+                    const id = String(task.id || '');
+                    if (!id) continue;
+                    merged[id] = { ...(merged[id] || {}), definition: task };
+                }
+                const published = Object.values(merged).map(item => item.definition).filter(Boolean);
+                const nextValue = Array.isArray(memoSource.value) ? published : { ...(memoSource.value || {}), tasks: published };
+                memoSource.value = nextValue;
+                if (JSON.stringify(merged) !== JSON.stringify(scopeProgress.tasks)) {
+                    progress.entries[scope] = { ...scopeProgress, tasks: merged };
+                    await writeMemoProgress(data, config, progress);
+                }
+            } else if (memoSource.templated && !memoSource.value && Object.keys(scopeProgress.tasks || {}).length > 0) {
+                memoSource.value = { tasks: Object.values(scopeProgress.tasks).map(item => item.definition).filter(Boolean) };
+            }
+            const runtimeTasks = Object.fromEntries(Object.entries(scopeProgress.tasks || {}).map(([id, item]) => [id, item]));
+            snapshot.memo_meta = { template_error: memoSource.templateError || null, templated: Boolean(memoSource.templated) };
+            snapshot.memo_tasks = normalizeMemoTasks({ ...data, getState: key => key === 'sv_memo_tasks' ? memoSource.value : data.getState(key) }, config, snapshot.accounts, market, runtimeTasks);
             return snapshot;
         },
         async getPortfolio() {
@@ -345,8 +467,11 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             const accounts = states.map(state => buildAccountSnapshot(data, state));
             const market = data.getState(config.world_book_keys.global_market) || {};
             const source = await resolveMemoSource(data);
+            const progress = await readMemoProgress(data, config);
+            const scope = memoSourceScope(source);
+            const scopeProgress = progress.entries[scope] || { tasks: {} };
             const memoData = { ...data, getState: key => key === 'sv_memo_tasks' ? source.value : data.getState(key) };
-            const tasks = normalizeMemoTasks(memoData, config, accounts, market);
+            const tasks = normalizeMemoTasks(memoData, config, accounts, market, scopeProgress.tasks || {});
             const task = tasks.find(item => item.id === String(taskId));
             if (!task) return { ok: false, status: 'missing', message: '任务不存在。' };
             if (task.status === 'completed') return { ok: false, status: 'completed', message: '任务已经完成。' };
@@ -355,6 +480,54 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
                 return { ok: false, status: 'failed', prompt: task.failed_prompt, message: '任务已超出截止时间，失败提示已发送。' };
             }
             if (task.status === 'insufficient') return { ok: false, status: 'insufficient', prompt: task.failed_prompt, message: '当前余额未达到任务要求。' };
+
+            const step = task.type === 'series' ? task.steps.find(item => item.id === task.current_step_id) : task;
+            if (!step) return { ok: false, status: 'missing_step', message: '系列任务当前步骤不存在。' };
+            const chargeAmount = Math.max(0, finiteNumber(step.charge_amount));
+            const rewardAmount = Math.max(0, finiteNumber(step.reward_amount)) + (task.type === 'series' && step.id === task.steps[task.steps.length - 1]?.id ? Math.max(0, finiteNumber(task.reward_amount)) : 0);
+            const sourceAccountId = step.account_id || task.account_id || null;
+            const rewardAccountId = step.reward_account_id || task.reward_account_id || sourceAccountId;
+            const account = sourceAccountId ? accounts.find(item => item.account_id === sourceAccountId) : null;
+            const currentBalance = account ? account.cash : finiteNumber((data.getState(config.world_book_keys.player_portfolio) || {}).cash);
+            const managed = await data.getManagedAccountStates();
+            if (sourceAccountId && !managed.some(item => item.account_id === sourceAccountId)) return { ok: false, status: 'account_missing', message: '任务账户不存在。' };
+            if (rewardAmount > 0 && rewardAccountId && !sourceAccountId && !managed.some(item => item.account_id === rewardAccountId)) return { ok: false, status: 'reward_account_missing', message: '奖励账户不存在。' };
+            if (step.completion_mode === 'charge_and_prompt' && currentBalance < chargeAmount) {
+                return { ok: false, status: 'insufficient', message: '当前余额不足以完成扣款。' };
+            }
+            if (app?.prepareMemoTaskRollback) app.prepareMemoTaskRollback({ memo_progress: structuredClone(progress), state: data.createSnapshot?.(), managed_accounts: await data.getManagedAccountStates?.() });
+
+            const updatePortfolio = (portfolio, debit = chargeAmount, credit = rewardAmount) => {
+                const before = Number(portfolio.cash || 0);
+                portfolio.cash = before - debit;
+                if (debit > 0) {
+                    if (!Array.isArray(portfolio.transaction_log)) portfolio.transaction_log = [];
+                    portfolio.transaction_log.unshift({ time: Number(market.current_time_index || 0), description: `备忘任务扣款: ${step.name}`, amount: -debit });
+                }
+                if (credit > 0) {
+                    portfolio.cash += credit;
+                    if (!Array.isArray(portfolio.transaction_log)) portfolio.transaction_log = [];
+                    portfolio.transaction_log.unshift({ time: Number(market.current_time_index || 0), description: `备忘任务奖励: ${step.name}`, amount: credit });
+                }
+                return portfolio;
+            };
+            if (chargeAmount > 0 || rewardAmount > 0) {
+                if (sourceAccountId || rewardAccountId) {
+                    if (sourceAccountId) {
+                        const target = managed.find(item => item.account_id === sourceAccountId);
+                        if (!target) return { ok: false, status: 'account_missing', message: '任务账户不存在。' };
+                        updatePortfolio(target.portfolio, chargeAmount, rewardAccountId === sourceAccountId ? rewardAmount : 0);
+                    } else if (chargeAmount > 0) await data.updateState(config.world_book_keys.player_portfolio, portfolio => updatePortfolio(portfolio, chargeAmount, 0));
+                    if (rewardAmount > 0 && rewardAccountId) {
+                        const rewardTarget = managed.find(item => item.account_id === rewardAccountId);
+                        if (!rewardTarget) return { ok: false, status: 'reward_account_missing', message: '奖励账户不存在。' };
+                        if (rewardAccountId !== sourceAccountId) updatePortfolio(rewardTarget.portfolio, 0, rewardAmount);
+                    }
+                    await data.restoreManagedAccountStates(managed);
+                } else {
+                    await data.updateState(config.world_book_keys.player_portfolio, updatePortfolio);
+                }
+            }
 
             const memoKey = source.key || 'sv_memo_tasks';
             const raw = source.value || [];
@@ -367,13 +540,24 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
                 const entry = (entries || []).find(item => String(item.name || item.comment || '').trim() === memoKey);
                 if (entry) app.prepareMemoTaskRollback({ book: source.book, key: memoKey, content: String(entry.content || '') });
             }
-            if (source.external && data.th?.updateWorldbookWith) {
+            if (source.templated || task.type === 'series') {
+                const entry = { ...(scopeProgress || {}), tasks: { ...(scopeProgress.tasks || {}) } };
+                const state = entry.tasks[task.id] || {};
+                if (task.type === 'series') {
+                    const steps = { ...(state.steps || {}) };
+                    steps[step.id] = { ...(steps[step.id] || {}), completed: true, completed_at: Date.now() };
+                    entry.tasks[task.id] = { ...state, steps, current_index: task.current_step_index + 1, completed: task.current_step_index + 1 >= task.total_steps };
+                } else entry.tasks[task.id] = { ...state, completed: true, completed_at: Date.now() };
+                progress.entries[scope] = entry;
+                await writeMemoProgress(data, config, progress);
+            } else if (source.external && data.th?.updateWorldbookWith) {
                 await data.th.updateWorldbookWith(source.book, entries => entries.map(entry => (String(entry.name || entry.comment || '').trim() === memoKey ? { ...entry, content: JSON.stringify(Array.isArray(source.value) ? updated : { ...(source.value || {}), tasks: updated }, null, 2) } : entry)));
             } else await data.updateState(memoKey, current => Array.isArray(current)
                 ? updated
                 : { ...(current || {}), tasks: updated });
-            if (task.complete_prompt && app?.sendMemoPrompt) await app.sendMemoPrompt(task.complete_prompt);
-            return { ok: true, status: 'completed', prompt: task.complete_prompt, message: '任务已完成。' };
+            const prompt = step.complete_prompt || (task.type === 'series' && task.current_step_index + 1 >= task.total_steps ? task.complete_prompt : '');
+            if (prompt && app?.sendMemoPrompt) await app.sendMemoPrompt(prompt);
+            return { ok: true, status: task.type === 'series' && task.current_step_index + 1 < task.total_steps ? 'step_completed' : 'completed', prompt, message: '任务已完成。' };
         },
         async getOrders(options = {}) {
             const portfolio = data.getState(config.world_book_keys.player_portfolio) || {};

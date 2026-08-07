@@ -542,7 +542,11 @@ export class SillyViewApp {
         if (Number.isFinite(messageId)) {
             await this._rememberTurnStateSnapshot(messageId);
             const snapshot = this.turnStateSnapshots?.get(messageId);
-            if (snapshot && this.pendingMemoTaskRollback) snapshot.memo_tasks = this.pendingMemoTaskRollback;
+            if (snapshot && this.pendingMemoTaskRollback) {
+                if (this.pendingMemoTaskRollback.memo_progress) snapshot.memo_progress = this.pendingMemoTaskRollback.memo_progress;
+                if (this.pendingMemoTaskRollback.state) snapshot.state = this.pendingMemoTaskRollback.state;
+                if (this.pendingMemoTaskRollback.managed_accounts) snapshot.managed_accounts = this.pendingMemoTaskRollback.managed_accounts;
+            }
             this.pendingMemoTaskRollback = null;
         }
         await this.th.triggerSlash('/trigger');
@@ -550,7 +554,9 @@ export class SillyViewApp {
     }
 
     prepareMemoTaskRollback(snapshot) {
-        this.pendingMemoTaskRollback = snapshot || null;
+        this.pendingMemoTaskRollback = snapshot
+            ? { ...(this.pendingMemoTaskRollback || {}), ...snapshot }
+            : null;
     }
 
     async processSingleMessage(msgId, expectedChatKey = this._getCurrentChatKey()) {
@@ -1575,6 +1581,7 @@ export class SillyViewApp {
             role_memory: roleMemory,
             managed_accounts: managedAccounts,
             memo_tasks: memoTasks,
+            memo_progress: await this._captureMemoProgressState(),
         });
         while (this.turnStateSnapshots.size > 50) {
             this.turnStateSnapshots.delete(this.turnStateSnapshots.keys().next().value);
@@ -1600,6 +1607,20 @@ export class SillyViewApp {
                 ? { ...entry, content: snapshot.content }
                 : entry
         )));
+    }
+
+    async _captureMemoProgressState() {
+        const book = this.data?.config?.multi_account?.control_worldbook_name;
+        if (!book || !this.th?.getWorldbook) return null;
+        const entry = (await this.th.getWorldbook(book) || []).find(item => item.name === 'sv_memo_progress');
+        return { book, key: 'sv_memo_progress', content: entry ? String(entry.content || '') : null };
+    }
+
+    async _restoreMemoProgressState(snapshot) {
+        if (!snapshot?.book || !this.th?.updateWorldbookWith) return;
+        await this.th.updateWorldbookWith(snapshot.book, entries => snapshot.content === null
+            ? entries.filter(entry => entry.name !== snapshot.key)
+            : entries.map(entry => entry.name === snapshot.key ? { ...entry, content: snapshot.content, enabled: false } : entry));
     }
 
     async rollbackStateForDeletedMessage(messageId) {
@@ -1646,6 +1667,7 @@ export class SillyViewApp {
                 await this.data.restoreManagedAccountStates(turnSnapshot.managed_accounts);
             }
             await this._restoreMemoTaskState(turnSnapshot?.memo_tasks);
+            await this._restoreMemoProgressState(turnSnapshot?.memo_progress);
             this.previousStateSnapshot = null;
             this.lastMinuteAdvanceMessageId = null;
             this.pendingRoleTurnContext = null;

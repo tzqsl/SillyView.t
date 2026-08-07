@@ -240,6 +240,39 @@ test('memo task with completed_at is treated as completed', async () => {
     assert.equal(snapshot.memo_tasks[0].status, 'completed');
 });
 
+test('series memo tasks expose only the current step and advance progress', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    let memoProgress = null;
+    const memoState = { tasks: [{ id: 'series', type: 'series', name: '系列', steps: [
+        { id: 'one', name: '第一步', deadline: '2099-01-01 00:00', complete_prompt: '第一步完成。' },
+        { id: 'two', name: '第二步', deadline: '2099-01-01 00:00', complete_prompt: '第二步完成。' },
+    ] }] };
+    data.getState = key => key === 'sv_memo_tasks' ? structuredClone(memoState) : key === 'sv_memo_progress' ? structuredClone(memoProgress) : null;
+    data.updateState = async (key, updater) => { if (key === 'sv_memo_progress') memoProgress = updater(structuredClone(memoProgress)); else Object.assign(memoState, updater(structuredClone(memoState))); };
+    const prompts = [];
+    const api = createSillyViewPublicAPI({ data, app: { sendMemoPrompt: async prompt => prompts.push(prompt) }, roleDecision: null, config });
+    let snapshot = await api.getSnapshot();
+    assert.equal(snapshot.memo_tasks[0].type, 'series');
+    assert.equal(snapshot.memo_tasks[0].current_step_id, 'one');
+    const result = await api.completeMemoTask('series');
+    assert.equal(result.status, 'step_completed');
+    assert.deepEqual(prompts, ['第一步完成。']);
+    snapshot = await api.getSnapshot();
+    assert.equal(snapshot.memo_tasks[0].current_step_id, 'two');
+});
+
+test('charge memo task debits and rewards the player account', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    const portfolio = { cash: 1000, debt: 0, starting_cash: 1000, assets: {}, pending_orders: [], order_history: [], transaction_log: [] };
+    data.getState = key => key === 'sv_memo_tasks' ? { tasks: [{ id: 'charge', deadline: '2099-01-01 00:00', completion_mode: 'charge_and_prompt', charge_amount: 300, reward_amount: 50, complete_prompt: '扣款完成。' }] } : key === 'portfolio' ? portfolio : null;
+    data.updateState = async (key, updater) => { if (key === 'portfolio') Object.assign(portfolio, updater(structuredClone(portfolio))); };
+    const api = createSillyViewPublicAPI({ data, app: { sendMemoPrompt: async () => {} }, roleDecision: null, config });
+    const result = await api.completeMemoTask('charge');
+    assert.equal(result.ok, true);
+    assert.equal(portfolio.cash, 750);
+    assert.deepEqual(portfolio.transaction_log.map(item => item.amount), [50, -300]);
+});
+
 test('mobile AI settings merge current config and persist partial updates', async () => {
     let configState = { background_ai: { enabled: true, apiurl: 'https://example.test', key: 'secret', model: 'old' }, role_ai: { enabled: true } };
     const persisted = {};
