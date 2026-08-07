@@ -248,7 +248,8 @@ function evaluateMemoConditions(data, config, account, task) {
 
 function normalizeMemoTaskCategory(task = {}, isSeries = false) {
     const raw = String(task.task_category || task.category || '').trim().toLowerCase();
-    if (raw === 'character_main' || raw === 'main' || raw === 'mainline') return 'main';
+    if (raw === 'character_main' || raw === 'character_mainline') return 'character';
+    if (raw === 'main' || raw === 'mainline') return 'main';
     if (raw === 'affection' || raw === 'character' || raw === 'character_task' || raw === 'character_side' || raw === 'character_mainline') return 'character';
     return raw === 'side' || raw === 'general_side' || raw === 'general' || !raw
         ? 'side'

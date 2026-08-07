@@ -259,6 +259,25 @@ test('series memo tasks with no unlocked steps remain locked', async () => {
     });
 });
 
+test('character memo task kinds share the character category and keep subcategories', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    data.getState = key => key === 'sv_memo_tasks' ? { tasks: [
+        { id: 'role_main', task_category: 'character_main', character_group: '角色甲' },
+        { id: 'role_affection', task_category: 'affection', character_group: '角色甲' },
+        { id: 'role_side', task_category: 'character_side', character_group: '角色甲' },
+        { id: 'general_main', task_category: 'main' },
+    ] } : null;
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
+
+    const tasks = (await api.getSnapshot()).memo_tasks;
+    assert.deepEqual(tasks.map(task => [task.id, task.task_category, task.task_subcategory]), [
+        ['role_main', 'character', 'main'],
+        ['role_affection', 'character', 'affection'],
+        ['role_side', 'character', 'side'],
+        ['general_main', 'main', 'main'],
+    ]);
+});
+
 test('series memo tasks expose only the current step and advance progress', async () => {
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
     let memoProgress = null;

@@ -177,7 +177,8 @@ const tasks = [
 // 手机页只按 main / character / side 建立顶层折叠；角色内部再按子类型展示。
 for (const task of tasks) {
   if (task.task_category === 'character_main') {
-    task.task_category = 'main';
+    task.task_category = 'character';
+    task.task_subcategory = 'main';
   } else if (task.task_category === 'affection') {
     task.task_category = 'character';
     task.task_subcategory = 'affection';
