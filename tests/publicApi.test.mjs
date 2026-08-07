@@ -278,6 +278,17 @@ test('character memo task kinds share the character category and keep subcategor
     ]);
 });
 
+test('memo character groups populate role directory when no role decision exists', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    data.getState = key => key === 'sv_memo_tasks' ? { tasks: [
+        { id: 'role_task', task_category: 'character_side', character_group: '角色甲' },
+    ] } : null;
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
+
+    const snapshot = await api.getSnapshot();
+    assert.deepEqual(snapshot.roles, [{ role_name: '角色甲', thought: '', outline: '' }]);
+});
+
 test('series memo tasks expose only the current step and advance progress', async () => {
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
     let memoProgress = null;

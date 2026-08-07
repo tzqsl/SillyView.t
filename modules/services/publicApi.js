@@ -537,6 +537,16 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             const runtimeTasks = Object.fromEntries(Object.entries(scopeProgress.tasks || {}).map(([id, item]) => [id, item]));
             snapshot.memo_meta = { template_error: memoSource.templateError || null, templated: Boolean(memoSource.templated) };
             snapshot.memo_tasks = normalizeMemoTasks({ ...data, getState: key => key === 'sv_memo_tasks' ? memoSource.value : data.getState(key) }, config, snapshot.accounts, market, runtimeTasks);
+            if (snapshot.roles.length === 0) {
+                const taskRoleNames = snapshot.memo_tasks
+                    .map(task => String(task.character_group || '').trim())
+                    .filter(Boolean);
+                const accountRoleNames = snapshot.accounts
+                    .map(account => String(account.owner_name || '').trim())
+                    .filter(Boolean);
+                const roleNames = [...new Set([...taskRoleNames, ...accountRoleNames])];
+                snapshot.roles = roleNames.map(role_name => ({ role_name, thought: '', outline: '' }));
+            }
             return snapshot;
         },
         async getPortfolio() {
