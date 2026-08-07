@@ -218,7 +218,15 @@ function evaluateMemoConditions(data, config, account, task) {
     const portfolio = account
         ? (data.getManagedAccountStates ? null : {})
         : (data.getState(config.world_book_keys.player_portfolio) || {});
-    const history = account?.recent_order_history || portfolio.trade_history || portfolio.order_history || source.recent_order_history || [];
+    const legacyTrades = (portfolio.transaction_log || [])
+        .filter(item => /(买入|卖出|开多|加仓多|开空|加仓空|平多仓|平空仓)/.test(String(item.description || '')))
+        .map((item, index) => ({ id: `legacy-${index}`, amount: Math.abs(finiteNumber(item.amount)) }));
+    const history = account?.recent_order_history
+        || (portfolio.trade_history?.length ? portfolio.trade_history : null)
+        || (legacyTrades.length ? legacyTrades : null)
+        || portfolio.order_history
+        || source.recent_order_history
+        || [];
     const filledHistory = history.filter(order => !order.status || order.status === 'filled');
     const positions = account?.positions || [];
     const pnl = Number.isFinite(Number(source.net_worth)) && Number.isFinite(Number(source.starting_cash))
