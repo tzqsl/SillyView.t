@@ -218,13 +218,13 @@ function evaluateMemoConditions(data, config, account, task) {
     const portfolio = account
         ? (data.getManagedAccountStates ? null : {})
         : (data.getState(config.world_book_keys.player_portfolio) || {});
-    const legacyTrades = (portfolio.transaction_log || [])
+    const legacyTrades = (portfolio?.transaction_log || [])
         .filter(item => /(买入|卖出|开多|加仓多|开空|加仓空|平多仓|平空仓)/.test(String(item.description || '')))
         .map((item, index) => ({ id: `legacy-${index}`, amount: Math.abs(finiteNumber(item.amount)) }));
     const history = account?.recent_order_history
-        || (portfolio.trade_history?.length ? portfolio.trade_history : null)
+        || (portfolio?.trade_history?.length ? portfolio.trade_history : null)
         || (legacyTrades.length ? legacyTrades : null)
-        || portfolio.order_history
+        || portfolio?.order_history
         || source.recent_order_history
         || [];
     const filledHistory = history.filter(order => !order.status || order.status === 'filled');
@@ -486,6 +486,12 @@ function memoSourceScope(source) {
     return `${source.book || 'internal'}::${source.key || 'sv_memo_tasks'}`;
 }
 
+function withMemoSource(data, value) {
+    const memoData = Object.create(data);
+    memoData.getState = key => key === 'sv_memo_tasks' ? value : data.getState(key);
+    return memoData;
+}
+
 export function createSillyViewPublicAPI({ data, app = null, roleDecision, config, togglePanel = null }) {
     const api = {
         version: '2.7.1',
@@ -560,7 +566,7 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             }
             const runtimeTasks = Object.fromEntries(Object.entries(scopeProgress.tasks || {}).map(([id, item]) => [id, item]));
             snapshot.memo_meta = { template_error: memoSource.templateError || null, templated: Boolean(memoSource.templated) };
-            snapshot.memo_tasks = normalizeMemoTasks({ ...data, getState: key => key === 'sv_memo_tasks' ? memoSource.value : data.getState(key) }, config, snapshot.accounts, market, runtimeTasks);
+            snapshot.memo_tasks = normalizeMemoTasks(withMemoSource(data, memoSource.value), config, snapshot.accounts, market, runtimeTasks);
             if (snapshot.roles.length === 0) {
                 const taskRoleNames = snapshot.memo_tasks
                     .map(task => String(task.character_group || '').trim())
@@ -599,7 +605,7 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             const progress = await readMemoProgress(data, config);
             const scope = memoSourceScope(source);
             const scopeProgress = progress.entries[scope] || { tasks: {} };
-            const memoData = { ...data, getState: key => key === 'sv_memo_tasks' ? source.value : data.getState(key) };
+            const memoData = withMemoSource(data, source.value);
             const tasks = normalizeMemoTasks(memoData, config, accounts, market, scopeProgress.tasks || {});
             const task = tasks.find(item => item.id === String(taskId));
             if (!task) return { ok: false, status: 'missing', message: '任务不存在。' };
