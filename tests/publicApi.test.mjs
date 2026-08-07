@@ -180,7 +180,7 @@ test('mobile memo tasks use market time, account balance, and send completion pr
     assert.deepEqual(prompts, ['房租任务已经完成。']);
 });
 
-test('mobile memo task is disabled when balance is not above required amount', async () => {
+test('mobile memo task is disabled when balance is below required amount', async () => {
     const managedStates = [{
         account_id: 'acct_role',
         owner_name: '测试角色',
@@ -189,7 +189,7 @@ test('mobile memo task is disabled when balance is not above required amount', a
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] }, managedStates);
     const originalGetState = data.getState;
     data.getState = key => key === 'sv_memo_tasks'
-        ? { tasks: [{ id: 'equal', deadline: '2099-01-01 00:00', required_amount: 5000, account_id: 'acct_role' }] }
+        ? { tasks: [{ id: 'below', deadline: '2099-01-01 00:00', required_amount: 5001, account_id: 'acct_role' }] }
         : originalGetState(key);
     const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
 

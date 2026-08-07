@@ -321,7 +321,7 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
     let status = completed ? 'completed' : failed ? 'failed' : 'active';
     if (!completed && !failed && Number.isFinite(deadline) && remainingMs < 0) status = 'failed';
     else if (!completed && !failed && locked) status = 'locked';
-    else if (!completed && !failed && required > 0 && balance <= required) status = 'insufficient';
+    else if (!completed && !failed && required > 0 && balance < required) status = 'insufficient';
     else if (!completed && !failed && normalizeCompletionMode(task) === 'charge_and_prompt' && balance < chargeAmount) status = 'insufficient';
     else if (!completed && !failed && conditions.some(condition => !condition.met)) status = 'insufficient';
     const taskCategory = normalizeMemoTaskCategory(task, false);
