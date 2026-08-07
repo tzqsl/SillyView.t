@@ -168,14 +168,17 @@ function buildAccountSnapshot(data, state) {
 
 function buildPortfolioSnapshot(data, config) {
     const portfolio = data.getState(config.world_book_keys.player_portfolio) || {};
-    const totalAssets = finiteNumber(data._calculatePortfolioMarkedValue?.(portfolio));
+    const netWorth = finiteNumber(data._calculatePortfolioMarkedValue?.(portfolio));
+    const debt = finiteNumber(portfolio.debt);
+    const totalAssets = netWorth + debt;
     const startingCash = finiteNumber(portfolio.starting_cash);
     return {
         cash: finiteNumber(portfolio.cash),
-        debt: finiteNumber(portfolio.debt),
+        debt,
         starting_cash: startingCash,
         total_assets: totalAssets,
-        total_pnl: totalAssets - startingCash,
+        net_worth: netWorth,
+        total_pnl: netWorth - startingCash + debt,
         pending_orders: (portfolio.pending_orders || []).map(buildOrderSnapshot),
         recent_order_history: (portfolio.order_history || []).slice(0, 20).map(buildOrderSnapshot),
         updated_at: portfolio.updated_at || 0,
