@@ -218,7 +218,8 @@ function evaluateMemoConditions(data, config, account, task) {
     const portfolio = account
         ? (data.getManagedAccountStates ? null : {})
         : (data.getState(config.world_book_keys.player_portfolio) || {});
-    const history = account?.recent_order_history || portfolio.order_history || source.recent_order_history || [];
+    const history = account?.recent_order_history || portfolio.trade_history || portfolio.order_history || source.recent_order_history || [];
+    const filledHistory = history.filter(order => !order.status || order.status === 'filled');
     const positions = account?.positions || [];
     const metrics = {
         balance: finiteNumber(source.cash),
@@ -228,9 +229,9 @@ function evaluateMemoConditions(data, config, account, task) {
         total_pnl: finiteNumber(source.total_pnl),
         profit: Math.max(0, finiteNumber(source.total_pnl)),
         loss: Math.max(0, -finiteNumber(source.total_pnl)),
-        single_trade_amount: history.reduce((max, order) => Math.max(max, Math.abs(finiteNumber(order.amount))), 0),
-        total_trade_amount: history.reduce((sum, order) => sum + Math.abs(finiteNumber(order.amount)), 0),
-        trade_count: history.length,
+        single_trade_amount: filledHistory.reduce((max, order) => Math.max(max, Math.abs(finiteNumber(order.notional_amount ?? order.amount))), 0),
+        total_trade_amount: filledHistory.reduce((sum, order) => sum + Math.abs(finiteNumber(order.notional_amount ?? order.amount)), 0),
+        trade_count: filledHistory.length,
         max_position_amount: positions.reduce((max, position) => Math.max(max, Math.abs(finiteNumber(position.amount))), 0),
         debt: finiteNumber(source.debt),
     };

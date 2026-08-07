@@ -3473,6 +3473,19 @@ export class DataManager {
             mode: normalizedMode,
             assetCode: assetCode,
         });
+        if (!Array.isArray(portfolio.trade_history)) portfolio.trade_history = [];
+        portfolio.trade_history.unshift({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            time: lastCandle.time,
+            asset_code: assetCode,
+            intent,
+            mode: normalizedMode,
+            amount: Number(amount) || 0,
+            notional_amount: Number(totalPositionValue) || 0,
+            leverage: normalizedLeverage,
+            price,
+        });
+        if (portfolio.trade_history.length > 500) portfolio.trade_history.length = 500;
 
         this._stateCache.set(portfolioKey, portfolio);
         return true;
