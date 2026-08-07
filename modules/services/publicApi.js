@@ -288,6 +288,8 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
         failed_prompt: String(task.failed_prompt || task.failure_prompt || ''),
         reward_account_id: String(task.reward_account_id || '').trim() || null,
         conditions,
+        task_category: String(task.task_category || task.category || 'side'),
+        character_group: String(task.character_group || task.character || '').trim() || null,
     };
 }
 
@@ -329,6 +331,8 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
             total_steps: steps.length,
             series_total_required_amount: seriesTotalRequiredAmount,
             series_remaining_required_amount: seriesRemainingRequiredAmount,
+            task_category: String(task.task_category || task.category || 'character'),
+            character_group: String(task.character_group || task.character || '').trim() || null,
             steps,
             complete_prompt: String(task.complete_prompt || ''),
             reward_amount: Math.max(0, finiteNumber(task.reward_amount ?? task.reward)),
