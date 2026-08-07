@@ -540,6 +540,14 @@ export class SillyViewApp {
         await this.th.createChatMessages([{ role: 'user', message: text }]);
         const messageId = Number(await this.th.getLastMessageId?.());
         if (Number.isFinite(messageId)) {
+            // This message is created programmatically, so it does not pass through
+            // the keyboard/rendered-message capture path reliably. Capture and run
+            // the role decision before /trigger can classify the generation as
+            // automatic and clear the pending context.
+            this.captureRoleTurnForUserMessage(messageId);
+            await this.prepareFrontendRoleInjection('normal', {
+                __sillyview_role_processed: true,
+            }, false);
             await this._rememberTurnStateSnapshot(messageId);
             const snapshot = this.turnStateSnapshots?.get(messageId);
             if (snapshot && this.pendingMemoTaskRollback) {
