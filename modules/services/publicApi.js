@@ -348,7 +348,7 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
             type: 'series',
             name: String(task.name || id),
             content: String(task.content || visibleStep?.content || ''),
-            status: completed ? 'completed' : failed ? 'failed' : visibleStep?.status || 'active',
+            status: completed ? 'completed' : failed ? 'failed' : steps.length === 0 ? 'locked' : visibleStep?.status || 'active',
             current_step_id: visibleStep?.id || null,
             current_step_index: currentIndex,
             completed_steps: steps.filter(step => step.status === 'completed').length,
@@ -569,6 +569,7 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             const task = tasks.find(item => item.id === String(taskId));
             if (!task) return { ok: false, status: 'missing', message: '任务不存在。' };
             if (task.status === 'completed') return { ok: false, status: 'completed', message: '任务已经完成。' };
+            if (task.status === 'locked') return { ok: false, status: 'locked', message: '该任务尚未达到解锁所需的好感度。' };
             if (task.status === 'failed') {
                 if (task.failed_prompt && app?.sendMemoPrompt) await app.sendMemoPrompt(task.failed_prompt);
                 return { ok: false, status: 'failed', prompt: task.failed_prompt, message: '任务已超出截止时间，失败提示已发送。' };

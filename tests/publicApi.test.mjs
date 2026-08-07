@@ -240,6 +240,25 @@ test('memo task with completed_at is treated as completed', async () => {
     assert.equal(snapshot.memo_tasks[0].status, 'completed');
 });
 
+test('series memo tasks with no unlocked steps remain locked', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    data.getState = key => key === 'sv_memo_tasks'
+        ? { tasks: [{ id: 'affection_locked', type: 'series', name: '好感任务', steps: [] }] }
+        : null;
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
+
+    const snapshot = await api.getSnapshot();
+    assert.equal(snapshot.memo_tasks[0].status, 'locked');
+    assert.equal(snapshot.memo_tasks[0].current_step_id, null);
+
+    const result = await api.completeMemoTask('affection_locked');
+    assert.deepEqual(result, {
+        ok: false,
+        status: 'locked',
+        message: '该任务尚未达到解锁所需的好感度。',
+    });
+});
+
 test('series memo tasks expose only the current step and advance progress', async () => {
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
     let memoProgress = null;
