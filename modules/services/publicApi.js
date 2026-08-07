@@ -221,14 +221,17 @@ function evaluateMemoConditions(data, config, account, task) {
     const history = account?.recent_order_history || portfolio.trade_history || portfolio.order_history || source.recent_order_history || [];
     const filledHistory = history.filter(order => !order.status || order.status === 'filled');
     const positions = account?.positions || [];
+    const pnl = Number.isFinite(Number(source.net_worth)) && Number.isFinite(Number(source.starting_cash))
+        ? finiteNumber(source.net_worth) - finiteNumber(source.starting_cash)
+        : finiteNumber(source.total_pnl);
     const metrics = {
         balance: finiteNumber(source.cash),
         cash: finiteNumber(source.cash),
         total_assets: finiteNumber(source.total_assets ?? source.net_worth),
         net_worth: finiteNumber(source.net_worth ?? source.total_assets),
-        total_pnl: finiteNumber(source.total_pnl),
-        profit: Math.max(0, finiteNumber(source.total_pnl)),
-        loss: Math.max(0, -finiteNumber(source.total_pnl)),
+        total_pnl: pnl,
+        profit: Math.max(0, pnl),
+        loss: Math.max(0, -pnl),
         single_trade_amount: filledHistory.reduce((max, order) => Math.max(max, Math.abs(finiteNumber(order.notional_amount ?? order.amount))), 0),
         total_trade_amount: filledHistory.reduce((sum, order) => sum + Math.abs(finiteNumber(order.notional_amount ?? order.amount)), 0),
         trade_count: filledHistory.length,
