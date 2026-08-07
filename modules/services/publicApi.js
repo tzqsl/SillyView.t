@@ -202,6 +202,50 @@ function normalizeCompletionMode(task = {}) {
         : 'prompt';
 }
 
+function compareMemoCondition(current, operator, target) {
+    if (operator === 'gt') return current > target;
+    if (operator === 'lte') return current <= target;
+    if (operator === 'lt') return current < target;
+    if (operator === 'eq') return current === target;
+    return current >= target;
+}
+
+function evaluateMemoConditions(data, config, account, task) {
+    const source = account || buildPortfolioSnapshot(data, config);
+    const portfolio = account
+        ? (data.getManagedAccountStates ? null : {})
+        : (data.getState(config.world_book_keys.player_portfolio) || {});
+    const history = account?.recent_order_history || portfolio.order_history || source.recent_order_history || [];
+    const positions = account?.positions || [];
+    const metrics = {
+        balance: finiteNumber(source.cash),
+        cash: finiteNumber(source.cash),
+        total_assets: finiteNumber(source.total_assets ?? source.net_worth),
+        net_worth: finiteNumber(source.net_worth ?? source.total_assets),
+        total_pnl: finiteNumber(source.total_pnl),
+        profit: Math.max(0, finiteNumber(source.total_pnl)),
+        loss: Math.max(0, -finiteNumber(source.total_pnl)),
+        single_trade_amount: history.reduce((max, order) => Math.max(max, Math.abs(finiteNumber(order.amount))), 0),
+        total_trade_amount: history.reduce((sum, order) => sum + Math.abs(finiteNumber(order.amount)), 0),
+        trade_count: history.length,
+        max_position_amount: positions.reduce((max, position) => Math.max(max, Math.abs(finiteNumber(position.amount))), 0),
+        debt: finiteNumber(source.debt),
+    };
+    const labels = {
+        balance: '现金余额', cash: '现金余额', total_assets: '总资产', net_worth: '账户净值', total_pnl: '累计盈亏',
+        profit: '累计盈利', loss: '累计亏损', single_trade_amount: '单笔最大成交额', total_trade_amount: '累计成交额',
+        trade_count: '成交次数', max_position_amount: '最大持仓金额', debt: '负债',
+    };
+    const raw = Array.isArray(task.conditions) ? task.conditions : (Array.isArray(task.requirements) ? task.requirements : []);
+    return raw.map(condition => {
+        const type = String(condition.type || condition.metric || '').trim();
+        const operator = String(condition.operator || condition.op || 'gte').toLowerCase();
+        const target = finiteNumber(condition.value ?? condition.target ?? condition.amount);
+        const current = finiteNumber(metrics[type]);
+        return { type, operator, target, current, met: type in metrics && compareMemoCondition(current, operator, target), label: String(condition.label || labels[type] || type) };
+    });
+}
+
 function normalizeSingleMemoTask(data, config, accounts, market, task, index, runtime = {}) {
     const required = finiteNumber(task.required_amount ?? task.required_cash ?? task.amount);
     const chargeAmount = Math.max(0, finiteNumber(task.charge_amount));
@@ -211,6 +255,7 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
     const account = usePlayerAccount ? null : accounts.find(item => item.account_id === requestedAccountId);
     const playerPortfolio = data.getState(config.world_book_keys.player_portfolio) || {};
     const balance = account ? account.cash : finiteNumber(playerPortfolio.cash);
+    const conditions = evaluateMemoConditions(data, config, account, task);
     const deadline = parseMemoDate(task.deadline ?? task.deadline_at);
     const now = parseMemoDate(market.current_datetime) || Date.now();
     const remainingMs = Number.isFinite(deadline) ? deadline - now : Infinity;
@@ -220,6 +265,7 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
     if (!completed && !failed && Number.isFinite(deadline) && remainingMs < 0) status = 'failed';
     else if (!completed && !failed && required > 0 && balance <= required) status = 'insufficient';
     else if (!completed && !failed && normalizeCompletionMode(task) === 'charge_and_prompt' && balance < chargeAmount) status = 'insufficient';
+    else if (!completed && !failed && conditions.some(condition => !condition.met)) status = 'insufficient';
     return {
         id: String(task.id || `memo_${index + 1}`),
         name: String(task.name || task.title || `任务 ${index + 1}`),
@@ -241,6 +287,7 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
         complete_prompt: String(task.complete_prompt || task.success_prompt || ''),
         failed_prompt: String(task.failed_prompt || task.failure_prompt || ''),
         reward_account_id: String(task.reward_account_id || '').trim() || null,
+        conditions,
     };
 }
 

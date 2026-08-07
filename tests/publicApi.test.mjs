@@ -277,6 +277,21 @@ test('charge memo task debits and rewards the player account', async () => {
     assert.deepEqual(portfolio.transaction_log.map(item => item.amount), [50, -300]);
 });
 
+test('memo tasks support profit and trade amount conditions', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    const portfolio = { cash: 1200, debt: 0, starting_cash: 1000, assets: {}, pending_orders: [], order_history: [{ id: 'trade', amount: 600 }] };
+    data._calculatePortfolioMarkedValue = () => 1200;
+    data.getState = key => key === 'sv_memo_tasks' ? { tasks: [{ id: 'conditional', deadline: '2099-01-01 00:00', conditions: [
+        { type: 'profit', value: 200 },
+        { type: 'single_trade_amount', value: 500 },
+        { type: 'trade_count', value: 1 },
+    ] }] } : key === 'portfolio' ? portfolio : null;
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
+    const task = (await api.getSnapshot()).memo_tasks[0];
+    assert.equal(task.status, 'active');
+    assert.deepEqual(task.conditions.map(item => [item.current, item.met]), [[200, true], [600, true], [1, true]]);
+});
+
 test('mobile AI settings merge current config and persist partial updates', async () => {
     let configState = { background_ai: { enabled: true, apiurl: 'https://example.test', key: 'secret', model: 'old' }, role_ai: { enabled: true } };
     const persisted = {};
