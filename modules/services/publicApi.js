@@ -246,6 +246,27 @@ function evaluateMemoConditions(data, config, account, task) {
     });
 }
 
+function normalizeMemoTaskCategory(task = {}, isSeries = false) {
+    const raw = String(task.task_category || task.category || '').trim().toLowerCase();
+    if (raw === 'character_main' || raw === 'main' || raw === 'mainline') return 'main';
+    if (raw === 'affection' || raw === 'character' || raw === 'character_task' || raw === 'character_side' || raw === 'character_mainline') return 'character';
+    return raw === 'side' || raw === 'general_side' || raw === 'general' || !raw
+        ? 'side'
+        : (isSeries ? 'character' : raw);
+}
+
+function normalizeMemoTaskSubcategory(task = {}, category = '') {
+    const explicit = String(task.task_subcategory || task.subcategory || '').trim().toLowerCase();
+    if (explicit === 'main' || explicit === 'mainline') return 'main';
+    if (explicit === 'affection' || explicit === 'favor' || explicit === 'relationship') return 'affection';
+    if (explicit === 'side' || explicit === 'character_side') return 'side';
+    const raw = String(task.task_category || task.category || '').trim().toLowerCase();
+    if (raw === 'character_main' || raw === 'character_mainline' || category === 'main') return 'main';
+    if (raw === 'affection') return 'affection';
+    if (raw === 'character_side') return 'side';
+    return null;
+}
+
 function normalizeSingleMemoTask(data, config, accounts, market, task, index, runtime = {}) {
     const required = finiteNumber(task.required_amount ?? task.required_cash ?? task.amount);
     const chargeAmount = Math.max(0, finiteNumber(task.charge_amount));
@@ -266,6 +287,7 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
     else if (!completed && !failed && required > 0 && balance <= required) status = 'insufficient';
     else if (!completed && !failed && normalizeCompletionMode(task) === 'charge_and_prompt' && balance < chargeAmount) status = 'insufficient';
     else if (!completed && !failed && conditions.some(condition => !condition.met)) status = 'insufficient';
+    const taskCategory = normalizeMemoTaskCategory(task, false);
     return {
         id: String(task.id || `memo_${index + 1}`),
         name: String(task.name || task.title || `任务 ${index + 1}`),
@@ -288,7 +310,8 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
         failed_prompt: String(task.failed_prompt || task.failure_prompt || ''),
         reward_account_id: String(task.reward_account_id || '').trim() || null,
         conditions,
-        task_category: String(task.task_category || task.category || 'side'),
+        task_category: taskCategory,
+        task_subcategory: normalizeMemoTaskSubcategory(task, taskCategory),
         character_group: String(task.character_group || task.character || '').trim() || null,
     };
 }
@@ -318,6 +341,7 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
         const seriesRemainingRequiredAmount = steps.reduce((sum, step) => step.status === 'completed'
             ? sum
             : sum + Math.max(0, finiteNumber(step.required_amount)), 0);
+        const taskCategory = normalizeMemoTaskCategory(task, true);
         return {
             ...visibleStep,
             id,
@@ -331,7 +355,8 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
             total_steps: steps.length,
             series_total_required_amount: seriesTotalRequiredAmount,
             series_remaining_required_amount: seriesRemainingRequiredAmount,
-            task_category: String(task.task_category || task.category || 'character'),
+            task_category: taskCategory,
+            task_subcategory: normalizeMemoTaskSubcategory(task, taskCategory),
             character_group: String(task.character_group || task.character || '').trim() || null,
             steps,
             complete_prompt: String(task.complete_prompt || ''),
