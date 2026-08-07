@@ -283,7 +283,22 @@ function normalizeMemoTaskSubcategory(task = {}, category = '') {
     return null;
 }
 
-function normalizeSingleMemoTask(data, config, accounts, market, task, index, runtime = {}) {
+function normalizeMemoPrerequisites(task = {}, runtime = {}, taskNames = {}) {
+    const raw = task.prerequisite_task_ids ?? task.prerequisites ?? task.requires_tasks ?? [];
+    const ids = (Array.isArray(raw) ? raw : [raw])
+        .map(id => String(id || '').trim())
+        .filter(Boolean);
+    return [...new Set(ids)].map(id => {
+        const state = runtime[id] || {};
+        return {
+            id,
+            name: String(taskNames[id] || id),
+            completed: Boolean(state.completed || state.status === 'completed' || Number.isFinite(Number(state.completed_at))),
+        };
+    });
+}
+
+function normalizeSingleMemoTask(data, config, accounts, market, task, index, runtime = {}, allRuntime = {}, taskNames = {}) {
     const required = finiteNumber(task.required_amount ?? task.required_cash ?? task.amount);
     const chargeAmount = Math.max(0, finiteNumber(task.charge_amount));
     const rewardAmount = Math.max(0, finiteNumber(task.reward_amount ?? task.reward));
@@ -298,8 +313,14 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
     const remainingMs = Number.isFinite(deadline) ? deadline - now : Infinity;
     const completed = Boolean(runtime.completed || task.completed || task.status === 'completed' || Number.isFinite(Number(task.completed_at)));
     const failed = Boolean(runtime.failed || task.status === 'failed');
+    const unlockAffection = Math.max(0, finiteNumber(task.unlock_affection));
+    const currentAffection = Math.max(0, finiteNumber(task.unlock_affection_current));
+    const prerequisites = normalizeMemoPrerequisites(task, allRuntime, taskNames);
+    const locked = (unlockAffection > 0 && currentAffection < unlockAffection)
+        || prerequisites.some(item => !item.completed);
     let status = completed ? 'completed' : failed ? 'failed' : 'active';
     if (!completed && !failed && Number.isFinite(deadline) && remainingMs < 0) status = 'failed';
+    else if (!completed && !failed && locked) status = 'locked';
     else if (!completed && !failed && required > 0 && balance <= required) status = 'insufficient';
     else if (!completed && !failed && normalizeCompletionMode(task) === 'charge_and_prompt' && balance < chargeAmount) status = 'insufficient';
     else if (!completed && !failed && conditions.some(condition => !condition.met)) status = 'insufficient';
@@ -327,6 +348,14 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
         failed_prompt: String(task.failed_prompt || task.failure_prompt || ''),
         reward_account_id: String(task.reward_account_id || '').trim() || null,
         conditions,
+        prerequisites,
+        unlock_affection: unlockAffection || null,
+        unlock_affection_current: currentAffection,
+        lock_reason: unlockAffection > 0 && currentAffection < unlockAffection
+            ? `好感度达到 ${unlockAffection} 后解锁。`
+            : prerequisites.some(item => !item.completed)
+                ? `需先完成：${prerequisites.filter(item => !item.completed).map(item => item.name).join('、')}`
+                : '',
         task_category: taskCategory,
         task_subcategory: taskSubcategory,
         character_group: String(task.character_group || task.character || '').trim() || null,
@@ -341,10 +370,18 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
         .map(key => data.getState(key))
         .find(value => Array.isArray(value) || Array.isArray(value?.tasks)) || null;
     const source = Array.isArray(raw) ? raw : (Array.isArray(raw?.tasks) ? raw.tasks : []);
+    const taskNames = Object.fromEntries(source.map((task, index) => [
+        String(task.id || `memo_${index + 1}`),
+        String(task.name || task.title || task.id || `任务 ${index + 1}`),
+    ]));
+    const prerequisiteRuntime = Object.fromEntries(source.map((task, index) => {
+        const id = String(task.id || `memo_${index + 1}`);
+        return [id, { ...task, ...(runtime[id] || {}) }];
+    }));
     return source.map((task, index) => {
         const id = String(task.id || `memo_${index + 1}`);
         if (task.type !== 'series' && !Array.isArray(task.steps)) {
-            return normalizeSingleMemoTask(data, config, accounts, market, task, index, runtime[id] || {});
+            return normalizeSingleMemoTask(data, config, accounts, market, task, index, runtime[id] || {}, prerequisiteRuntime, taskNames);
         }
         const seriesRuntime = runtime[id] || {};
         const steps = (Array.isArray(task.steps) ? task.steps : []).map((step, stepIndex) => normalizeSingleMemoTask(
@@ -352,6 +389,8 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
             { ...task, ...step, id: String(step.id || `${id}_${stepIndex + 1}`), account_id: step.account_id ?? task.account_id },
             stepIndex,
             seriesRuntime.steps?.[String(step.id || `${id}_${stepIndex + 1}`)] || {},
+            prerequisiteRuntime,
+            taskNames,
         ));
         const currentIndex = Math.max(0, Math.min(Number(seriesRuntime.current_index || 0), Math.max(steps.length - 1, 0)));
         const failed = Boolean(seriesRuntime.failed || steps.some(step => step.status === 'failed'));
@@ -610,7 +649,7 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             const task = tasks.find(item => item.id === String(taskId));
             if (!task) return { ok: false, status: 'missing', message: '任务不存在。' };
             if (task.status === 'completed') return { ok: false, status: 'completed', message: '任务已经完成。' };
-            if (task.status === 'locked') return { ok: false, status: 'locked', message: '该任务尚未达到解锁所需的好感度。' };
+            if (task.status === 'locked') return { ok: false, status: 'locked', message: task.lock_reason || '该任务尚未达到解锁所需的好感度。' };
             if (task.status === 'failed') {
                 if (task.failed_prompt && app?.sendMemoPrompt) await app.sendMemoPrompt(task.failed_prompt);
                 return { ok: false, status: 'failed', prompt: task.failed_prompt, message: '任务已超出截止时间，失败提示已发送。' };

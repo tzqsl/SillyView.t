@@ -314,6 +314,51 @@ test('series memo tasks expose only the current step and advance progress', asyn
     assert.equal(snapshot.memo_tasks[0].series_remaining_required_amount, 200);
 });
 
+test('memo tasks enforce affection gates and prerequisite side tasks', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    let affection = 44;
+    let memoProgress = null;
+    let memoState = { tasks: [
+        {
+            id: 'affection_series', type: 'series', name: '好感系列', steps: [
+                { id: 'stage_one', name: '第一阶段' },
+                { id: 'stage_two', name: '第二阶段', prerequisite_task_ids: ['intimate_side'] },
+            ],
+        },
+        {
+            id: 'intimate_side', name: '亲密前置支线', unlock_affection: 45,
+            unlock_affection_current: affection, complete_prompt: '前置完成。',
+        },
+    ] };
+    data.getState = key => key === 'sv_memo_tasks'
+        ? { ...structuredClone(memoState), tasks: memoState.tasks.map(task => task.id === 'intimate_side' ? { ...structuredClone(task), unlock_affection_current: affection } : structuredClone(task)) }
+        : key === 'sv_memo_progress'
+            ? structuredClone(memoProgress)
+            : key === 'portfolio' ? { cash: 1000 } : null;
+    data.updateState = async (key, updater) => {
+        if (key === 'sv_memo_progress') memoProgress = updater(structuredClone(memoProgress));
+        if (key === 'sv_memo_tasks') memoState = updater(structuredClone(memoState));
+    };
+    const api = createSillyViewPublicAPI({ data, app: { sendMemoPrompt: async () => {} }, roleDecision: null, config });
+
+    let snapshot = await api.getSnapshot();
+    assert.equal(snapshot.memo_tasks.find(task => task.id === 'intimate_side').status, 'locked');
+    assert.equal((await api.completeMemoTask('intimate_side')).status, 'locked');
+
+    affection = 45;
+    assert.equal((await api.getSnapshot()).memo_tasks.find(task => task.id === 'intimate_side').status, 'active');
+    await api.completeMemoTask('affection_series');
+    snapshot = await api.getSnapshot();
+    const lockedSeries = snapshot.memo_tasks.find(task => task.id === 'affection_series');
+    assert.equal(lockedSeries.current_step_id, 'stage_two');
+    assert.equal(lockedSeries.status, 'locked');
+    assert.equal(lockedSeries.lock_reason, '需先完成：亲密前置支线');
+
+    await api.completeMemoTask('intimate_side');
+    snapshot = await api.getSnapshot();
+    assert.equal(snapshot.memo_tasks.find(task => task.id === 'affection_series').status, 'active');
+});
+
 test('charge memo task debits and rewards the player account', async () => {
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
     const portfolio = { cash: 1000, debt: 0, starting_cash: 1000, assets: {}, pending_orders: [], order_history: [], transaction_log: [] };
