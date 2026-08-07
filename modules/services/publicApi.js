@@ -299,6 +299,15 @@ function parseMemoDate(value) {
     return Number.isFinite(timestamp) ? timestamp : Date.parse(raw);
 }
 
+function memoTemplateRevision(content) {
+    let hash = 2166136261;
+    for (const character of String(content || '')) {
+        hash ^= character.charCodeAt(0);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `v${(hash >>> 0).toString(16)}`;
+}
+
 async function resolveMemoSource(data) {
     const keys = ['sv_memo_tasks', 'memo_tasks', 'SillyView_memo_tasks'];
     for (const key of keys) {
@@ -312,7 +321,8 @@ async function resolveMemoSource(data) {
         const entries = await helper.getWorldbook(book);
         const entry = (entries || []).find(item => keys.includes(String(item.name || item.comment || '').trim()));
         if (!entry) continue;
-        let content = String(entry.content || '');
+        const sourceContent = String(entry.content || '');
+        let content = sourceContent;
         let templateError = null;
         if (/<%[=_-]?/.test(content)) {
             const template = data.dependencies?.win?.EjsTemplate || data.dependencies?.win?.parent?.EjsTemplate || globalThis.EjsTemplate;
@@ -330,8 +340,8 @@ async function resolveMemoSource(data) {
         if (!templateError) {
             try { value = JSON.parse(content.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '').trim()); } catch (error) { templateError = `任务 JSON 解析失败：${error.message || error}`; }
         }
-        if (Array.isArray(value) || Array.isArray(value?.tasks)) return { key: entry.name || entry.comment, value, external: true, book, templated: /<%[=_-]?/.test(String(entry.content || '')), templateError };
-        if (templateError) return { key: entry.name || entry.comment, value: null, external: true, book, templated: true, templateError };
+        if (Array.isArray(value) || Array.isArray(value?.tasks)) return { key: entry.name || entry.comment, value, external: true, book, templated: /<%[=_-]?/.test(sourceContent), templateError, template_revision: memoTemplateRevision(sourceContent) };
+        if (templateError) return { key: entry.name || entry.comment, value: null, external: true, book, templated: true, templateError, template_revision: memoTemplateRevision(sourceContent) };
     }
     return { key: 'sv_memo_tasks', value: null, external: false };
 }
@@ -420,20 +430,22 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
             const memoSource = await resolveMemoSource(data);
             const progress = await readMemoProgress(data, config);
             const scope = memoSourceScope(memoSource);
-            const scopeProgress = progress.entries[scope] || { tasks: {} };
+            let scopeProgress = progress.entries[scope] || { tasks: {} };
             if (memoSource.templated && memoSource.value) {
                 const rendered = Array.isArray(memoSource.value) ? memoSource.value : memoSource.value.tasks;
-                const merged = { ...scopeProgress.tasks };
+                const sourceChanged = scopeProgress.template_revision !== memoSource.template_revision;
+                const merged = sourceChanged ? {} : { ...scopeProgress.tasks };
                 for (const task of rendered || []) {
                     const id = String(task.id || '');
                     if (!id) continue;
-                    merged[id] = { ...(merged[id] || {}), definition: task };
+                    merged[id] = { ...(scopeProgress.tasks?.[id] || {}), definition: task };
                 }
                 const published = Object.values(merged).map(item => item.definition).filter(Boolean);
                 const nextValue = Array.isArray(memoSource.value) ? published : { ...(memoSource.value || {}), tasks: published };
                 memoSource.value = nextValue;
-                if (JSON.stringify(merged) !== JSON.stringify(scopeProgress.tasks)) {
-                    progress.entries[scope] = { ...scopeProgress, tasks: merged };
+                if (sourceChanged || JSON.stringify(merged) !== JSON.stringify(scopeProgress.tasks)) {
+                    scopeProgress = { ...scopeProgress, template_revision: memoSource.template_revision, tasks: merged };
+                    progress.entries[scope] = scopeProgress;
                     await writeMemoProgress(data, config, progress);
                 }
             } else if (memoSource.templated && !memoSource.value && Object.keys(scopeProgress.tasks || {}).length > 0) {
