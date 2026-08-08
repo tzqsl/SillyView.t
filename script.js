@@ -117,6 +117,7 @@ async function mainInitialize() {
             data,
             app,
             roleDecision,
+            modelProvider: baseDependencies.th,
             config: SillyViewConfig,
             togglePanel: () => {
                 const entryButton = parentWin.document.getElementById('sillyview-entry-button');

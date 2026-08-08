@@ -561,7 +561,34 @@ function withMemoSource(data, value) {
     return memoData;
 }
 
-export function createSillyViewPublicAPI({ data, app = null, roleDecision, config, togglePanel = null }) {
+export function createSillyViewPublicAPI({ data, app = null, roleDecision, modelProvider = null, config, togglePanel = null }) {
+    const normalizeModelEndpoint = (apiurl, source) => {
+        const trimmed = String(apiurl || '').trim().replace(/\/+$/, '');
+        if (/\/models(?:\?.*)?$/i.test(trimmed)) return trimmed;
+        if (source === 'google') {
+            if (/generativelanguage\.googleapis\.com/i.test(trimmed)) {
+                return `${trimmed.replace(/\/v1beta$/i, '').replace(/\/v1$/i, '')}/v1beta/models`;
+            }
+            return `${trimmed}/v1beta/models`;
+        }
+        const base = trimmed
+            .replace(/\/chat\/completions$/i, '')
+            .replace(/\/messages$/i, '')
+            .replace(/\/completions$/i, '');
+        return /\/v\d+(?:beta)?$/i.test(base) ? `${base}/models` : `${base}/v1/models`;
+    };
+
+    const parseModels = (payload, source) => {
+        const candidates = [];
+        if (Array.isArray(payload?.data)) candidates.push(...payload.data.map(item => item?.id || item?.name || item));
+        if (Array.isArray(payload?.models)) candidates.push(...payload.models.map(item => item?.name || item?.id || item));
+        if (Array.isArray(payload)) candidates.push(...payload.map(item => item?.id || item?.name || item));
+        return [...new Set(candidates
+            .filter(item => typeof item === 'string' && item.trim())
+            .map(item => source === 'google' ? item.replace(/^models\//, '') : item.trim()))]
+            .sort((a, b) => a.localeCompare(b));
+    };
+
     const api = {
         version: '2.7.1',
         readonly: false,
@@ -838,6 +865,42 @@ export function createSillyViewPublicAPI({ data, app = null, roleDecision, confi
                 role_ai: { ...(configState.role_ai || {}), ...persistentRole },
                 chart_indicators: data.getChartIndicatorSettings?.() || { average: true, ma5: false, ma10: false, ma20: false },
             };
+        },
+        async fetchAIModels(settings = {}) {
+            const apiurl = String(settings.apiurl || '').trim();
+            const key = String(settings.key || '').trim();
+            const source = String(settings.source || 'openai').trim();
+            if (!apiurl) throw new Error('请先填写 API 地址。');
+
+            let helperError = null;
+            try {
+                const models = await modelProvider?.getModelList?.({ apiurl, key: key || undefined });
+                if (Array.isArray(models) && models.length > 0) return parseModels(models, source);
+            } catch (error) {
+                helperError = error;
+            }
+
+            try {
+                let endpoint = normalizeModelEndpoint(apiurl, source);
+                if (source === 'google' && key && !/[?&]key=/.test(endpoint)) {
+                    endpoint += `${endpoint.includes('?') ? '&' : '?'}key=${encodeURIComponent(key)}`;
+                }
+                const headers = { Accept: 'application/json' };
+                if (key && source === 'claude') {
+                    headers['x-api-key'] = key;
+                    headers['anthropic-version'] = '2023-06-01';
+                } else if (key && source !== 'google') {
+                    headers.Authorization = `Bearer ${key}`;
+                }
+                const response = await fetch(endpoint, { method: 'GET', headers });
+                if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+                const models = parseModels(await response.json(), source);
+                if (models.length > 0) return models;
+                throw new Error('接口未返回模型列表。');
+            } catch (directError) {
+                const reason = directError?.message || helperError?.message || String(directError);
+                throw new Error(`获取模型失败：${reason}`);
+            }
         },
         async saveAISettings(settings = {}) {
             if (settings.background_ai || settings.role_ai) {

@@ -441,6 +441,22 @@ test('mobile AI settings merge current config and persist partial updates', asyn
     assert.equal(saved.background_ai.model, 'new');
 });
 
+test('mobile AI settings can fetch and normalize model lists through TavernHelper', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    const requests = [];
+    const modelProvider = {
+        getModelList: async request => {
+            requests.push(request);
+            return ['models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/gemini-2.5-flash'];
+        },
+    };
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, modelProvider, config });
+
+    const models = await api.fetchAIModels({ source: 'google', apiurl: 'https://example.test', key: 'secret' });
+    assert.deepEqual(requests, [{ apiurl: 'https://example.test', key: 'secret' }]);
+    assert.deepEqual(models, ['gemini-2.5-flash', 'gemini-2.5-pro']);
+});
+
 test('mobile trading snapshot exposes intraday average and moving averages', async () => {
     const candles = Array.from({ length: 20 }, (_, time) => ({ time, open: 1 + time * 0.01, high: 1.02 + time * 0.01, low: 0.99 + time * 0.01, close: 1.01 + time * 0.01, volume: time + 1 }));
     const data = createData({ current_price: 1.2, kline_minute: candles, kline_hourly: candles });
