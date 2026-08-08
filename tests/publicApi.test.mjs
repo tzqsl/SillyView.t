@@ -383,6 +383,20 @@ test('memo task prerequisites can target completed series steps and use explicit
     assert.deepEqual(task.conditions.map(item => [item.current, item.target, item.met]), [[100, 100, true]]);
 });
 
+test('memo tasks stay hidden until their visibility prerequisite step is completed', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    let memoProgress = { version: 1, entries: { 'internal::sv_memo_tasks': { tasks: {} } } };
+    data.getState = key => key === 'sv_memo_tasks' ? { tasks: [
+        { id: 'affection', type: 'series', steps: [{ id: 'affection_30', name: '第一阶段' }] },
+        { id: 'stage_two_side', name: '二阶段前置支线', visibility_prerequisite_task_ids: ['affection_30'] },
+    ] } : key === 'sv_memo_progress' ? structuredClone(memoProgress) : null;
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
+
+    assert.equal((await api.getSnapshot()).memo_tasks.some(task => task.id === 'stage_two_side'), false);
+    memoProgress.entries['internal::sv_memo_tasks'].tasks.affection = { steps: { affection_30: { completed: true } } };
+    assert.equal((await api.getSnapshot()).memo_tasks.some(task => task.id === 'stage_two_side'), true);
+});
+
 test('charge memo task debits and rewards the player account', async () => {
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
     const portfolio = { cash: 1000, debt: 0, starting_cash: 1000, assets: {}, pending_orders: [], order_history: [], transaction_log: [] };

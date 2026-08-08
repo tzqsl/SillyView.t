@@ -277,6 +277,24 @@ for (const task of tasks) {
   for (const [from, to] of goal.promptReplacements) task.complete_prompt = task.complete_prompt.replace(from, to);
 }
 
+// 好感阶段的前置支线只在上一阶段好感任务完成后显示，未满足时不进入任务列表。
+const affectionSideVisibility = {
+  kurumi_side_cooking: 'kurumi_affection_30',
+  kurumi_side_boundary: 'kurumi_affection_60',
+  mochiko_side_cute: 'mochiko_affection_30',
+  mochiko_side_review: 'mochiko_affection_60',
+  mebuki_side_job: 'mebuki_affection_30',
+  mebuki_side_first_profit: 'mebuki_affection_60',
+  yasuko_side_blog: 'yasuko_affection_30',
+  yasuko_side_debt_free: 'yasuko_affection_60',
+  saya_side_game: 'saya_affection_30',
+  saya_side_reserve: 'saya_affection_60',
+};
+for (const task of tasks) {
+  const prerequisiteId = affectionSideVisibility[task.id];
+  if (prerequisiteId) task.visibility_prerequisite_task_ids = [prerequisiteId];
+}
+
 // 手机页只按 main / character / side 建立顶层折叠；角色内部再按子类型展示。
 for (const task of tasks) {
   if (task.task_category === 'character_main') {

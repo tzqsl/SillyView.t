@@ -390,7 +390,15 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
             prerequisiteRuntime[stepId] = { ...step, ...(runtime[id]?.steps?.[stepId] || {}) };
         });
     });
-    return source.map((task, index) => {
+    const visibleSource = source.filter(task => {
+        const raw = task.visibility_prerequisite_task_ids ?? task.visible_after_task_ids ?? [];
+        const ids = (Array.isArray(raw) ? raw : [raw]).map(id => String(id || '').trim()).filter(Boolean);
+        return ids.length === 0 || ids.every(id => {
+            const state = prerequisiteRuntime[id] || {};
+            return Boolean(state.completed || state.status === 'completed' || Number.isFinite(Number(state.completed_at)));
+        });
+    });
+    return visibleSource.map((task, index) => {
         const id = String(task.id || `memo_${index + 1}`);
         if (task.type !== 'series' && !Array.isArray(task.steps)) {
             return normalizeSingleMemoTask(data, config, accounts, market, task, index, runtime[id] || {}, prerequisiteRuntime, taskNames);
