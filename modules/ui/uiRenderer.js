@@ -168,7 +168,10 @@ export class UIRenderer {
                              </label>
                          </div>
                     </div>
-                    <div><span style="font-size: 0.875rem; color: var(--text-gray-300);">总资产: <span id="sillyview-total-assets">--</span> 信用点</span></div>
+                    <div class="sv-header-assets">
+                        <span>可用资产: <span id="sillyview-available-assets">--</span> 信用点</span>
+                        <small>总资产: <span id="sillyview-total-assets">--</span> 信用点</small>
+                    </div>
                 </header>
                 <main class="sv-main-content">
                     <div class="sv-left-panel">
@@ -710,8 +713,11 @@ export class UIRenderer {
         const portfolio = this.data.getState(SillyViewConfig.world_book_keys.player_portfolio);
         if (!portfolio) return;
         
-        const totalValue = this.assetsView.calculateTotalAssetValue(portfolio) + portfolio.cash - (portfolio.debt || 0);
+        const availableAssets = Number(portfolio.cash || 0);
+        const totalValue = this.assetsView.calculateTotalAssetValue(portfolio) + availableAssets;
+        const availableAssetsEl = this.parentDoc.getElementById('sillyview-available-assets');
         const totalAssetsEl = this.parentDoc.getElementById('sillyview-total-assets');
+        if (availableAssetsEl) availableAssetsEl.textContent = availableAssets.toFixed(2);
         if (totalAssetsEl) totalAssetsEl.textContent = totalValue.toFixed(2);
     }
 

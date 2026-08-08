@@ -1212,3 +1212,19 @@ test('long-target expiry prompt receives the elapsed quick-mode duration', async
     assert.match(directorSource, /时间过去了\$\{displayHours\}小时/);
     assert.match(appSource, /async advanceQuickModeMinutes\(minutes = 5\)[\s\S]*?advanceWorldTime: true/);
 });
+
+test('header separates available cash from total assets without subtracting debt', () => {
+    const elements = {
+        'sillyview-available-assets': { textContent: '' },
+        'sillyview-total-assets': { textContent: '' },
+    };
+    const renderer = Object.create(UIRenderer.prototype);
+    renderer.data = { getState: () => ({ cash: 15000, debt: 50000 }) };
+    renderer.assetsView = { calculateTotalAssetValue: () => 8000 };
+    renderer.parentDoc = { getElementById: id => elements[id] || null };
+
+    renderer.renderTotalAssets();
+
+    assert.equal(elements['sillyview-available-assets'].textContent, '15000.00');
+    assert.equal(elements['sillyview-total-assets'].textContent, '23000.00');
+});
