@@ -43,7 +43,7 @@ const tasks = [
     content: '初始时间以 2025-09-23 为准。医院通知纱夜需要在三个月内完成二次介入手术；第一阶段须在一个月内缴纳 2500000 定金，第二阶段须在三个月内凑齐剩余 87000000。每阶段完成时会从{{user}}账户扣除对应金额；任务页显示当前余额、所需金额和还差金额。',
     steps: [
       { id: 'saya_surgery_fund_deposit', name: '先交定金，保住手术档期', deadline: '2025-10-23', required_amount: 2500000, completion_mode: 'charge_and_prompt', charge_amount: 2500000, conditions: [condition('cash', 'gte', 2500000, '现金余额 2500000')], complete_prompt: '扩写缴纳定金后的剧情，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：医院财务窗口确认 2500000 日元定金已经到账，佐藤医生随后通知二次介入手术档期得以保留，并交给两人术前检查、用药调整和余款缴纳安排。纱夜先像往常一样笑着说终于不用担心，回到病房后却盯着付款凭证沉默下来；她意识到{{user}}真的为自己交出一笔巨款，害怕成为永远偿还不完的负担而试图用撒娇和装轻松掩饰。{{user}}没有用言语替她保证一切，只通过整理检查单、放好付款回执和留在床边的行动表示自己不会放弃纱夜，纱夜向{{user}}撒娇，表示自己对手术的担忧并要求{{user}}今晚陪她睡觉' },
-      { id: 'saya_surgery_fund_balance', name: '三个月内凑齐手术余款', deadline: '2025-12-23', required_amount: 87000000, completion_mode: 'charge_and_prompt', charge_amount: 87000000, conditions: [condition('cash', 'gte', 87000000, '现金余额 87000000')], complete_prompt: '扩写二次介入手术前的最终筹款剧情，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：距离 2025-12-23 的手术期限只剩最后准备时间，{{user}}在不牺牲必要生活与治疗安全的前提下，终于凑齐并缴清剩余 87000000 日元费用。佐藤医生再次说明手术是为修正初次手术遗留问题，成功与否关系到纱夜的长期预后；医院社工也确认贷款、慈善基金和付款资料均已核对。纱夜得知款项到账后先因愧疚崩溃，试图说自己不值得{{user}}承担这么多，随后在{{user}}持续而安静的陪伴下承认真正害怕的是手术后不再被需要。结尾她签下知情同意与康复计划，把“哥哥一个人承担”改成“我们一起接受结果”，在推进室门前主动握住{{user}}的手，请{{user}}等她回来。' }
+      { id: 'saya_surgery_fund_balance', name: '三个月内凑齐手术余款', deadline: '2025-12-23', required_amount: 8700000, completion_mode: 'charge_and_prompt', charge_amount: 8700000, conditions: [condition('cash', 'gte', 8700000, '现金余额 8700000')], complete_prompt: '扩写二次介入手术前的最终筹款剧情，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：距离 2025-12-23 的手术期限只剩最后准备时间，{{user}}在不牺牲必要生活与治疗安全的前提下，终于凑齐并缴清剩余 8700000 日元费用。佐藤医生再次说明手术是为修正初次手术遗留问题，成功与否关系到纱夜的长期预后；医院社工也确认贷款、慈善基金和付款资料均已核对。纱夜得知款项到账后先因愧疚崩溃，试图说自己不值得{{user}}承担这么多，随后在{{user}}持续而安静的陪伴下承认真正害怕的是手术后不再被需要。结尾她签下知情同意与康复计划，把“哥哥一个人承担”改成“我们一起接受结果”，在推进室门前主动握住{{user}}的手，请{{user}}等她回来。' }
     ]
   },
   {
@@ -227,6 +227,42 @@ for (const task of tasks) {
   task.unlock_affection = 10;
   task.unlock_affection_current = affection[setting[0]];
   task.conditions = [{ type: 'affection', operator: 'gte', value: 15, current: affection[setting[0]], label: `${setting[1]}${setting[2]}` }];
+}
+
+// 第三阶段前置支线采用组合目标，避免在好感度 73 解锁时被早期累计数据直接完成。
+const lateCharacterSideGoals = {
+  kurumi_side_boundary: {
+    content: '好感度达到 73 后解锁。累计完成 12 笔交易，且单笔最大成交额达到 300000；在复盘中尊重“盈亏自负”，也让久留美确信亲密不等于替彼此承担人生。',
+    conditions: [condition('trade_count', 'gte', 12, '累计交易 12 笔'), condition('single_trade_amount', 'gte', 300000, '单笔最大成交额 300000')],
+    promptReplacements: [['两笔交易', '十二笔交易与一笔三十万规模的成交']],
+  },
+  mochiko_side_review: {
+    content: '好感度达到 73 后解锁。累计成交额达到 3000000 且负债保持为 0；接受萌智子坦诚而有边界的复盘。',
+    conditions: [condition('total_trade_amount', 'gte', 3000000, '累计成交额 3000000'), condition('debt', 'eq', 0, '负债保持为 0')],
+    promptReplacements: [['五十万累计成交额', '三百万累计成交额与无负债账户']],
+  },
+  mebuki_side_first_profit: {
+    content: '好感度达到 73 后解锁。累计盈利达到 300000 且负债保持为 0；陪芽吹庆祝，也一起分清运气、努力与两人关系。',
+    conditions: [condition('profit', 'gte', 300000, '累计盈利 300000'), condition('debt', 'eq', 0, '负债保持为 0')],
+    promptReplacements: [['盈利庆祝', '累计盈利三十万且无负债后的庆祝']],
+  },
+  yasuko_side_debt_free: {
+    content: '好感度达到 73 后解锁。账户净值达到 800000 且负债保持为 0；与康子共享一顿不靠冒险换来的安心晚餐。',
+    conditions: [condition('net_worth', 'gte', 800000, '账户净值 800000'), condition('debt', 'eq', 0, '负债保持为 0')],
+    promptReplacements: [['账户债务归零后', '账户净值达到八十万且债务归零后']],
+  },
+  saya_side_reserve: {
+    content: '好感度达到 73 后解锁。总资产达到 1200000 且负债保持为 0；共同建立治疗与生活储备，并谈清依赖、健康和未来边界。',
+    conditions: [condition('total_assets', 'gte', 1200000, '总资产 1200000'), condition('debt', 'eq', 0, '负债保持为 0')],
+    promptReplacements: [['十万储备', '一百二十万总资产与无负债储备']],
+  },
+};
+for (const task of tasks) {
+  const goal = lateCharacterSideGoals[task.id];
+  if (!goal) continue;
+  task.content = goal.content;
+  task.conditions = goal.conditions;
+  for (const [from, to] of goal.promptReplacements) task.complete_prompt = task.complete_prompt.replace(from, to);
 }
 
 // 手机页只按 main / character / side 建立顶层折叠；角色内部再按子类型展示。
