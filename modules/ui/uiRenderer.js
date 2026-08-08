@@ -114,11 +114,12 @@ export class UIRenderer {
             .map(source => `<option value="${source}" ${bgAI.source === source ? 'selected' : ''}>${source}</option>`)
             .join('');
         wrapper.innerHTML = `
-            <div style="margin:auto; padding:1.5rem; max-width:38rem;">
+            <div class="sv-creation-screen">
+              <div class="sv-creation-form">
                 <h2 style="font-size:1.25rem; font-weight:700; margin-bottom:1rem;">欢迎来到 SillyView</h2>
                 <p style="margin-bottom:1.5rem; color:var(--text-gray-400);">当前角色尚未初始化交易世界。创建前可直接配置首轮生成使用的后台市场模型。</p>
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; margin-bottom:1rem; color:var(--text-gray-300);"><span>实时自动推进</span><span class="sv-toggle-switch"><input type="checkbox" id="sv-auto-advance-on-create"><span class="slider round"></span></span></label>
-                <section style="background-color:var(--bg-gray-900); padding:1rem; border:1px solid var(--bg-gray-700); border-radius:0.375rem; margin-bottom:1.25rem;">
+                <section class="sv-creation-settings" style="background-color:var(--bg-gray-900); padding:1rem; border:1px solid var(--bg-gray-700); border-radius:0.375rem; margin-bottom:1.25rem;">
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.75rem;"><span style="font-weight:600; color:var(--cyan-400);">使用自定义后台市场模型</span><span class="sv-toggle-switch"><input type="checkbox" id="sv-bg-ai-enabled" ${bgAI.enabled ? 'checked' : ''}><span class="slider round"></span></span></label>
                     <div class="sv-init-model-notice" style="margin-bottom:0.75rem; padding:0.75rem; border-left:3px solid var(--cyan-400); background-color:var(--bg-gray-800); color:var(--text-gray-300); font-size:0.75rem; line-height:1.65;">
                         <div>未启用或未配置自定义模型时，初始化及后续市场生成将使用酒馆当前选择的模型。</div>
@@ -134,7 +135,8 @@ export class UIRenderer {
                         <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.625rem;"><label style="font-size:0.75rem; color:var(--text-gray-400);">温度<input id="sv-bg-ai-temperature" type="number" min="0" max="2" step="0.1" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.temperature)}"></label><label style="font-size:0.75rem; color:var(--text-gray-400);">最大 Token<input id="sv-bg-ai-max-tokens" type="number" min="64" step="1" class="sv-input" style="width:100%; margin-top:0.25rem;" value="${this._escapeAttr(bgAI.max_tokens)}"></label></div>
                     </div>
                 </section>
-                <div style="display:flex; justify-content:center; gap:1rem;"><button id="sv-create-book-yes" class="sv-button sv-button-blue">是的，创建</button><button id="sv-create-book-no" class="sv-button" style="background-color:var(--bg-gray-600);">不了，谢谢</button></div>
+                <div class="sv-creation-actions" style="display:flex; justify-content:center; gap:1rem;"><button id="sv-create-book-yes" class="sv-button sv-button-blue">是的，创建</button><button id="sv-create-book-no" class="sv-button" style="background-color:var(--bg-gray-600);">不了，谢谢</button></div>
+              </div>
             </div>`;
         this.dependencies.events.bindCreationEvents();
     }

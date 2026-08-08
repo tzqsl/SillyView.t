@@ -56,6 +56,21 @@
     height: 100%;
 }
 
+.sv-creation-screen {
+    width: 100%; height: 100%; box-sizing: border-box; padding: 1rem;
+    display: flex; overflow: hidden;
+}
+.sv-creation-form {
+    width: min(38rem, 100%); min-height: 0; max-height: 100%;
+    margin: auto; display: flex; flex-direction: column;
+}
+.sv-creation-form > h2, .sv-creation-form > p, .sv-creation-form > label { flex: 0 0 auto; }
+.sv-creation-settings { min-height: 0; flex: 1 1 auto; overflow-y: auto; }
+.sv-creation-actions {
+    flex: 0 0 auto; padding: 0.75rem 0 0.25rem;
+    background: var(--bg-gray-800);
+}
+
 /* --- 滚动条样式 --- */
 #sillyview-panel ::-webkit-scrollbar { width: 8px; }
 #sillyview-panel ::-webkit-scrollbar-track { background: var(--bg-gray-800); }
