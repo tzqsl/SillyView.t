@@ -6,6 +6,7 @@ import { SillyViewApp } from '../modules/core/app.js';
 import { DataManager } from '../modules/core/dataManager.js';
 import { RoleDecisionService } from '../modules/services/roleDecisionService.js';
 import { UIRenderer } from '../modules/ui/uiRenderer.js';
+import { ChartManager } from '../modules/ui/chartManager.js';
 
 const cloneDeep = value => value == null ? value : structuredClone(value);
 
@@ -1251,4 +1252,12 @@ test('switching assets restores automatic price scaling after manual axis adjust
 
     assert.equal(renderer.currentAsset, 'USDJPY');
     assert.deepEqual(calls, ['render', 'reset']);
+});
+
+test('chart maps internal candle indexes to real timestamps instead of 1970', () => {
+    const manager = Object.create(ChartManager.prototype);
+    manager.setTimeContext(Date.UTC(2025, 8, 23, 9, 0, 0) / 1000, 3600);
+    const timestamp = manager.toChartTime(24);
+    assert.equal(new Date(timestamp * 1000).getUTCFullYear(), 2025);
+    assert.equal(manager.fromChartTime(timestamp), 24);
 });

@@ -19,6 +19,8 @@ export class ChartManager {
         this.indicatorSeries = {};
         this.resizeObserver = null;
         this.chartType = 'candlestick';
+        this.timeOriginSeconds = 0;
+        this.timeUnitSeconds = 3600;
     }
 
     isInitialized() {
@@ -118,7 +120,8 @@ export class ChartManager {
         const byTime = new Map();
         for (const item of data) {
             if (item && item.time !== undefined && item.time !== null) {
-                byTime.set(item.time, item);
+                const chartItem = { ...item, time: this.toChartTime(item.time) };
+                byTime.set(chartItem.time, chartItem);
             }
         }
 
@@ -128,6 +131,21 @@ export class ChartManager {
             }
             return String(a.time).localeCompare(String(b.time));
         });
+    }
+
+    setTimeContext(originSeconds, unitSeconds) {
+        this.timeOriginSeconds = Number.isFinite(Number(originSeconds)) ? Number(originSeconds) : 0;
+        this.timeUnitSeconds = Number.isFinite(Number(unitSeconds)) && Number(unitSeconds) > 0 ? Number(unitSeconds) : 3600;
+    }
+
+    toChartTime(index) {
+        if (typeof index !== 'number' || !Number.isFinite(index)) return index;
+        return Math.round(this.timeOriginSeconds + index * this.timeUnitSeconds);
+    }
+
+    fromChartTime(time) {
+        if (typeof time !== 'number' || !Number.isFinite(time)) return time;
+        return Math.round((time - this.timeOriginSeconds) / this.timeUnitSeconds);
     }
 
     _getForexPriceFormat(candles) {
@@ -172,10 +190,11 @@ export class ChartManager {
         if (!this.candlestickSeries || !this.lineSeries || !this.volumeSeries) return;
         try {
             if (candle) {
-                this.candlestickSeries.update(candle);
-                this.lineSeries.update({ time: candle.time, value: Number(candle.close) });
+                const chartCandle = { ...candle, time: this.toChartTime(candle.time) };
+                this.candlestickSeries.update(chartCandle);
+                this.lineSeries.update({ time: chartCandle.time, value: Number(candle.close) });
             }
-            if (volume) this.volumeSeries.update(volume);
+            if (volume) this.volumeSeries.update({ ...volume, time: this.toChartTime(volume.time) });
         } catch (error) {
             this.logger.warn('Chart realtime update skipped:', error);
         }

@@ -474,8 +474,11 @@ export class UIRenderer {
         
         this.chartManager.subscribeCrosshairMove(param => {
             const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.currentAsset}`);
-            const candleData = param.time !== undefined && param.time !== null
-                ? this._getKlineDataForTimeframe(assetData).find(candle => candle.time === param.time)
+            const rawTime = param.time !== undefined && param.time !== null
+                ? this.chartManager.fromChartTime(param.time)
+                : null;
+            const candleData = rawTime !== null
+                ? this._getKlineDataForTimeframe(assetData).find(candle => candle.time === rawTime)
                 : null;
             if (this.activeSidebarTab === 'trade') {
                 this._updateDataWindow(candleData);
@@ -516,6 +519,25 @@ export class UIRenderer {
         if (this.currentTimeframe === 'DAILY') return assetData.kline_daily || [];
         return assetData.kline_hourly || [];
     }
+
+    _getChartTimeContext() {
+        const market = this.data.getState(SillyViewConfig.world_book_keys.global_market) || {};
+        const match = String(market.current_datetime || '').match(/(\d{4})年(\d{1,2})月(\d{1,2})日-[^-]+-(\d{1,2}):(\d{2})/);
+        const currentDate = match
+            ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), 0)
+            : new Date(0);
+        const currentIndex = this.currentTimeframe === 'MINUTE'
+            ? Number(market.minute_time_index || 0)
+            : Number(market.current_time_index || 0);
+        const unitSeconds = this.currentTimeframe === 'MINUTE' ? 60 : this.currentTimeframe === 'DAILY' ? 86400 : 3600;
+        if (this.currentTimeframe === 'DAILY') {
+            currentDate.setHours(0, 0, 0, 0);
+            currentDate.setTime(currentDate.getTime() - Math.floor(Number(market.current_time_index || 0) / 24) * 86400000);
+        } else {
+            currentDate.setTime(currentDate.getTime() - currentIndex * unitSeconds * 1000);
+        }
+        return { originSeconds: Math.floor(currentDate.getTime() / 1000), unitSeconds };
+    }
     
     renderChartData() {
         // A timeframe switch replaces the whole series. Restoring the previous
@@ -524,6 +546,8 @@ export class UIRenderer {
         const assetData = this.data.getState(`${SillyViewConfig.world_book_keys.asset_prefix}${this.currentAsset}`);
         if (!assetData) return;
         const klineData = this._getKlineDataForTimeframe(assetData);
+        const chartTime = this._getChartTimeContext();
+        this.chartManager.setTimeContext(chartTime.originSeconds, chartTime.unitSeconds);
         
         if (klineData.length === 0) {
             this.chartManager.setData([], []);
