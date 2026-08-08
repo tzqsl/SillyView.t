@@ -4703,17 +4703,20 @@ export class DataManager {
     async aggregateHourlyToDaily(assetCode, hoursInDay) {
         const assetKey = `${this.config.world_book_keys.asset_prefix}${assetCode}`;
         await this.updateState(assetKey, assetData => {
-            if (!assetData.kline_hourly || assetData.kline_hourly.length < hoursInDay) return assetData;
-
-            const lastDayStartIndex = assetData.kline_hourly.length - hoursInDay;
-            if (lastDayStartIndex < 0) return assetData;
-            const lastHourlyCandles = assetData.kline_hourly.slice(lastDayStartIndex);
+            if (!assetData.kline_hourly || assetData.kline_hourly.length === 0) return assetData;
+            const normalizedHours = Math.max(1, Math.floor(Number(hoursInDay) || 24));
+            const lastHourlyCandle = assetData.kline_hourly.at(-1);
+            const dayIndex = Math.floor(Number(lastHourlyCandle.time || 0) / normalizedHours);
+            const lastHourlyCandles = assetData.kline_hourly.filter(candle =>
+                Math.floor(Number(candle.time || 0) / normalizedHours) === dayIndex
+            );
+            if (lastHourlyCandles.length === 0) return assetData;
 
             const firstCandle = lastHourlyCandles[0];
             const lastCandle = lastHourlyCandles[lastHourlyCandles.length - 1];
 
             const dailyCandle = {
-                time: Math.floor(firstCandle.time / hoursInDay),
+                time: dayIndex,
                 open: firstCandle.open,
                 high: Math.max(...lastHourlyCandles.map(c => c.high)),
                 low: Math.min(...lastHourlyCandles.map(c => c.low)),
@@ -4722,7 +4725,10 @@ export class DataManager {
             };
 
             if (!assetData.kline_daily) assetData.kline_daily = [];
-            assetData.kline_daily.push(dailyCandle);
+            const existingIndex = assetData.kline_daily.findIndex(candle => candle.time === dayIndex);
+            if (existingIndex >= 0) assetData.kline_daily[existingIndex] = dailyCandle;
+            else assetData.kline_daily.push(dailyCandle);
+            assetData.kline_daily.sort((a, b) => Number(a.time || 0) - Number(b.time || 0));
             this.logger.success(`Aggregated daily candle for ${assetCode} on day ${dailyCandle.time}.`);
             return assetData;
         });

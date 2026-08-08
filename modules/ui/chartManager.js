@@ -68,6 +68,10 @@ export class ChartManager {
                 ticksVisible: true,
                 timeVisible: true,
                 secondsVisible: false,
+                tickMarkFormatter: time => this._formatChartTime(time),
+            },
+            localization: {
+                timeFormatter: time => this._formatChartTime(time),
             },
         });
 
@@ -131,6 +135,13 @@ export class ChartManager {
             }
             return String(a.time).localeCompare(String(b.time));
         });
+    }
+
+    _formatChartTime(time) {
+        const date = new Date(Number(time) * 1000);
+        if (!Number.isFinite(date.getTime())) return '';
+        const pad = value => String(value).padStart(2, '0');
+        return `${date.getFullYear()}年${pad(date.getMonth() + 1)}月${pad(date.getDate())}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`;
     }
 
     setTimeContext(originSeconds, unitSeconds) {
