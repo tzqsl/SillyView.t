@@ -170,7 +170,8 @@ export class UIRenderer {
                     </div>
                     <div class="sv-header-assets">
                         <span>可用资产: <span id="sillyview-available-assets">--</span> 信用点</span>
-                        <small>总资产: <span id="sillyview-total-assets">--</span> 信用点</small>
+                        <span>总资产: <span id="sillyview-total-assets">--</span> 信用点</span>
+                        <small>累计资产: <span id="sillyview-cumulative-assets">--</span> 信用点</small>
                     </div>
                 </header>
                 <main class="sv-main-content">
@@ -715,10 +716,16 @@ export class UIRenderer {
         
         const availableAssets = Number(portfolio.cash || 0);
         const totalValue = this.assetsView.calculateTotalAssetValue(portfolio) + availableAssets;
+        const cumulativeValue = availableAssets - Number(portfolio.debt || 0);
         const availableAssetsEl = this.parentDoc.getElementById('sillyview-available-assets');
         const totalAssetsEl = this.parentDoc.getElementById('sillyview-total-assets');
+        const cumulativeAssetsEl = this.parentDoc.getElementById('sillyview-cumulative-assets');
         if (availableAssetsEl) availableAssetsEl.textContent = availableAssets.toFixed(2);
         if (totalAssetsEl) totalAssetsEl.textContent = totalValue.toFixed(2);
+        if (cumulativeAssetsEl) {
+            cumulativeAssetsEl.textContent = cumulativeValue.toFixed(2);
+            cumulativeAssetsEl.style.color = cumulativeValue >= 0 ? 'var(--green-400)' : 'var(--red-400)';
+        }
     }
 
     _readRiskControls(action, currentPrice) {

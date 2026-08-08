@@ -1217,6 +1217,7 @@ test('header separates available cash from total assets without subtracting debt
     const elements = {
         'sillyview-available-assets': { textContent: '' },
         'sillyview-total-assets': { textContent: '' },
+        'sillyview-cumulative-assets': { textContent: '', style: {} },
     };
     const renderer = Object.create(UIRenderer.prototype);
     renderer.data = { getState: () => ({ cash: 15000, debt: 50000 }) };
@@ -1227,4 +1228,6 @@ test('header separates available cash from total assets without subtracting debt
 
     assert.equal(elements['sillyview-available-assets'].textContent, '15000.00');
     assert.equal(elements['sillyview-total-assets'].textContent, '23000.00');
+    assert.equal(elements['sillyview-cumulative-assets'].textContent, '-35000.00');
+    assert.equal(elements['sillyview-cumulative-assets'].style.color, 'var(--red-400)');
 });
