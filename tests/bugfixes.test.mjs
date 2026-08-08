@@ -1260,4 +1260,5 @@ test('chart maps internal candle indexes to real timestamps instead of 1970', ()
     const timestamp = manager.toChartTime(24);
     assert.equal(new Date(timestamp * 1000).getUTCFullYear(), 2025);
     assert.equal(manager.fromChartTime(timestamp), 24);
+    assert.match(manager._formatChartTime(timestamp), /^25\.9\.2[34] \d{2}:00$/);
 });

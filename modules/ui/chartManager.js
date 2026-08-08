@@ -141,7 +141,8 @@ export class ChartManager {
         const date = new Date(Number(time) * 1000);
         if (!Number.isFinite(date.getTime())) return '';
         const pad = value => String(value).padStart(2, '0');
-        return `${date.getFullYear()}年${pad(date.getMonth() + 1)}月${pad(date.getDate())}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        const shortYear = String(date.getFullYear()).slice(-2);
+        return `${shortYear}.${date.getMonth() + 1}.${date.getDate()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
     }
 
     setTimeContext(originSeconds, unitSeconds) {
