@@ -317,6 +317,13 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
     const unlockAffection = Math.max(0, finiteNumber(task.unlock_affection));
     const currentAffection = Math.max(0, finiteNumber(task.unlock_affection_current));
     const prerequisites = normalizeMemoPrerequisites(task, allRuntime, taskNames);
+    const baseContent = String(task.content || task.description || '');
+    const prerequisiteText = prerequisites.length
+        ? `前置任务：${prerequisites.map(item => item.name).join('、')}。`
+        : '';
+    const content = prerequisiteText && !baseContent.includes('前置任务：')
+        ? `${baseContent}${baseContent ? ' ' : ''}${prerequisiteText}`
+        : baseContent;
     const locked = (unlockAffection > 0 && currentAffection < unlockAffection)
         || prerequisites.some(item => !item.completed);
     let status = completed ? 'completed' : failed ? 'failed' : 'active';
@@ -330,7 +337,7 @@ function normalizeSingleMemoTask(data, config, accounts, market, task, index, ru
     return {
         id: String(task.id || `memo_${index + 1}`),
         name: String(task.name || task.title || `任务 ${index + 1}`),
-        content: String(task.content || task.description || ''),
+        content,
         deadline: String(task.deadline || task.deadline_at || ''),
         deadline_at: Number.isFinite(deadline) ? deadline : null,
         remaining_ms: Number.isFinite(remainingMs) ? remainingMs : null,
@@ -413,7 +420,7 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
             id,
             type: 'series',
             name: String(task.name || id),
-            content: String(task.content || visibleStep?.content || ''),
+            content: String(visibleStep?.content || task.content || ''),
             status: completed ? 'completed' : failed ? 'failed' : steps.length === 0 ? 'locked' : visibleStep?.status || 'active',
             current_step_id: visibleStep?.id || null,
             current_step_index: currentIndex,

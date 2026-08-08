@@ -353,6 +353,7 @@ test('memo tasks enforce affection gates and prerequisite side tasks', async () 
     assert.equal(lockedSeries.current_step_id, 'stage_two');
     assert.equal(lockedSeries.status, 'locked');
     assert.equal(lockedSeries.lock_reason, '需先完成：亲密前置支线');
+    assert.equal(lockedSeries.content, '前置任务：亲密前置支线。');
 
     await api.completeMemoTask('intimate_side');
     snapshot = await api.getSnapshot();
@@ -376,6 +377,7 @@ test('memo task prerequisites can target completed series steps and use explicit
 
     assert.equal(task.status, 'active');
     assert.deepEqual(task.prerequisites, [{ id: 'role_affection_85', name: '三阶段好感', completed: true }]);
+    assert.equal(task.content, '前置任务：三阶段好感。');
     assert.deepEqual(task.conditions.map(item => [item.current, item.target, item.met]), [[100, 100, true]]);
 });
 

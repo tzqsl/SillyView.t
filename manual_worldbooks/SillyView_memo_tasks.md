@@ -194,7 +194,7 @@ const tasks = [
   ...(affection.saya >= 5 ? [{ id: 'saya_side_first_request', name: '纱夜支线·直接说想陪伴', task_category: 'character_side', character_group: '山吹纱夜', content: '好感度达到 5 后出现。', conditions: [condition('cash', 'gte', 50000, '现金余额 50000')], complete_prompt: '扩写纱夜第一次不装病、不撒谎而直接向{{user}}请求陪伴的日常：她因为一笔五万现金安全储备而安心，却又害怕{{user}}马上离开。{{user}}没有替她保证未来，只通过留下和共同整理账单回应；结尾纱夜承认“想见{{user}}”本身就是理由，并主动约好下一次复诊后的见面。' }] : []),
   ...(Object.values(affection).every(score => score > 85) ? [{
     id: 'hidden_affection_ending', name: '隐藏彩蛋·五人的共同答案', task_category: 'main',
-    content: '五名角色的好感度均高于 85 后显现。完成条件：福贺久留美、小金萌智子、山师芽吹、高根康子、山吹纱夜的好感度均达到 100，并完成五人各自的第三阶段好感度任务。',
+    content: '五名角色的好感度均高于 85 后显现。完成条件：福贺久留美、小金萌智子、山师芽吹、高根康子、山吹纱夜的好感度均达到 100，并完成五人各自的第三阶段好感度任务与第三阶段角色主线。',
     prerequisite_task_ids: ['kurumi_affection_85', 'mochiko_affection_85', 'mebuki_affection_85', 'yasuko_affection_85', 'saya_affection_85', 'kurumi_main_85', 'mochiko_main_85', 'mebuki_main_85', 'yasuko_main_85', 'saya_main_85'],
     conditions: [
       { type: 'affection', operator: 'gte', value: 100, current: affection.kurumi, label: '福贺久留美好感度 100' },
@@ -227,6 +227,9 @@ for (const task of tasks) {
   task.unlock_affection = 10;
   task.unlock_affection_current = affection[setting[0]];
   task.conditions = [{ type: 'affection', operator: 'gte', value: 15, current: affection[setting[0]], label: `${setting[1]}${setting[2]}` }];
+  task.content = String(task.content || '')
+    .replace(/^好感度达到 45 后解锁。/, '好感度达到 10 后解锁，达到 15 后可完成。')
+    .replace(/；无金融完成条件。$/, '。');
 }
 
 // 第三阶段前置支线采用组合目标，避免在好感度 73 解锁时被早期累计数据直接完成。
