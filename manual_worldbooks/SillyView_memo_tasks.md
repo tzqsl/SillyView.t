@@ -42,7 +42,7 @@ const tasks = [
     task_category: 'main',
     content: '初始时间以 2025-09-23 为准。医院通知纱夜需要在三个月内完成二次介入手术；第一阶段须在一个月内缴纳 2500000 定金，第二阶段须在三个月内凑齐剩余 87000000。每阶段完成时会从{{user}}账户扣除对应金额；任务页显示当前余额、所需金额和还差金额。',
     steps: [
-      { id: 'saya_surgery_fund_deposit', name: '先交定金，保住手术档期', deadline: '2025-10-23', required_amount: 2500000, completion_mode: 'charge_and_prompt', charge_amount: 2500000, conditions: [condition('cash', 'gte', 2500000, '现金余额 2500000')], complete_prompt: '扩写缴纳定金后的剧情，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：医院财务窗口确认 2500000 日元定金已经到账，佐藤医生随后通知二次介入手术档期得以保留，并交给两人术前检查、用药调整和余款缴纳安排。纱夜先像往常一样笑着说终于不用担心，回到病房后却盯着付款凭证沉默下来；她意识到{{user}}真的为自己交出一笔巨款，既松了一口气，又因害怕成为永远偿还不完的负担而试图用撒娇和装轻松掩饰。{{user}}没有用言语替她保证一切，只通过整理检查单、放好付款回执和留在床边的行动表示会继续面对现实。纱夜最终主动承认自己不仅怕手术失败，也怕治好以后失去被留下的理由；结尾她把余款期限写进两人共同使用的日历，在睡前紧紧抓住{{user}}的手，请{{user}}明天也陪她一起准备。' },
+      { id: 'saya_surgery_fund_deposit', name: '先交定金，保住手术档期', deadline: '2025-10-23', required_amount: 2500000, completion_mode: 'charge_and_prompt', charge_amount: 2500000, conditions: [condition('cash', 'gte', 2500000, '现金余额 2500000')], complete_prompt: '扩写缴纳定金后的剧情，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：医院财务窗口确认 2500000 日元定金已经到账，佐藤医生随后通知二次介入手术档期得以保留，并交给两人术前检查、用药调整和余款缴纳安排。纱夜先像往常一样笑着说终于不用担心，回到病房后却盯着付款凭证沉默下来；她意识到{{user}}真的为自己交出一笔巨款，害怕成为永远偿还不完的负担而试图用撒娇和装轻松掩饰。{{user}}没有用言语替她保证一切，只通过整理检查单、放好付款回执和留在床边的行动表示自己不会放弃纱夜，纱夜向{{user}}撒娇，表示自己对手术的担忧并要求{{user}}今晚陪她睡觉' },
       { id: 'saya_surgery_fund_balance', name: '三个月内凑齐手术余款', deadline: '2025-12-23', required_amount: 87000000, completion_mode: 'charge_and_prompt', charge_amount: 87000000, conditions: [condition('cash', 'gte', 87000000, '现金余额 87000000')], complete_prompt: '扩写二次介入手术前的最终筹款剧情，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：距离 2025-12-23 的手术期限只剩最后准备时间，{{user}}在不牺牲必要生活与治疗安全的前提下，终于凑齐并缴清剩余 87000000 日元费用。佐藤医生再次说明手术是为修正初次手术遗留问题，成功与否关系到纱夜的长期预后；医院社工也确认贷款、慈善基金和付款资料均已核对。纱夜得知款项到账后先因愧疚崩溃，试图说自己不值得{{user}}承担这么多，随后在{{user}}持续而安静的陪伴下承认真正害怕的是手术后不再被需要。结尾她签下知情同意与康复计划，把“哥哥一个人承担”改成“我们一起接受结果”，在推进室门前主动握住{{user}}的手，请{{user}}等她回来。' }
     ]
   },
@@ -187,10 +187,15 @@ const tasks = [
   { id: 'saya_side_reserve', name: '纱夜支线·把未来写成我们', task_category: 'character_side', character_group: '山吹纱夜', unlock_affection: 73, unlock_affection_current: affection.saya, content: '好感度达到 73 且现金余额达到 100000 后解锁剧情。共同建立治疗与生活储备，并谈清依赖、健康和未来边界。', conditions: [condition('cash', 'gte', 100000, '现金余额 100000')], complete_prompt: '扩写好感度七十三时的家庭预算夜，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：纱夜偷偷用过度节省伤害自己的方式减轻哥哥压力，被发现后终于承认她怕自己只是负担。哥哥拒绝她以健康换取被需要，也明确说明亲密不因她逐渐独立而消失。两人并肩重写十万储备的用途，她主动加入治疗、升学和各自空间；结尾纱夜把“哥哥一个人承担”改成“我们自愿一起商量”，请求一个不靠装可怜换来的拥抱。' },
   { id: 'saya_side_independent_plan', name: '纱夜支线·自己的四次选择', task_category: 'character_side', character_group: '山吹纱夜', content: '累计完成 4 笔交易，在哥哥不代替决定的前提下，由纱夜参与制定四项生活选择。', conditions: [condition('trade_count', 'gte', 4, '累计交易 4 笔')], complete_prompt: '扩写延伸出的生活规划，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：纱夜习惯性地让哥哥替她决定，却在每次询问后尝试说出自己的理由。两人把这种练习延伸到复诊安排、课程、休息和兴趣，她发现独立选择并不会让哥哥离开。结尾她完整提出一项自己的计划，也主动为可能的结果负责；哥哥陪伴但不接管，她笑着牵手说想继续这样。' },
 
+  ...(affection.kurumi >= 5 ? [{ id: 'kurumi_side_first_meal', name: '久留美支线·第一次认真做饭', task_category: 'character_side', character_group: '福贺久留美', content: '好感度达到 5 后出现。', conditions: [condition('trade_count', 'gte', 1, '累计交易 1 笔')], complete_prompt: '扩写久留美第一次认真为{{user}}准备晚餐的日常：她把做饭当成风险实验，认真记录每一步，却仍因紧张把味道做得古怪。{{user}}没有嘲笑，只陪她一起调整；结尾她把这次成功保留下来的菜谱命名为“和{{user}}的第一顿”，并约定下次不靠感觉加料。' }] : []),
+  ...(affection.mochiko >= 5 ? [{ id: 'mochiko_side_first_trust', name: '萌智子支线·不公开的偏爱', task_category: 'character_side', character_group: '小金萌智子', content: '好感度达到 5 后出现。', conditions: [condition('total_assets', 'gte', 300000, '总资产 300000')], complete_prompt: '扩写萌智子第一次向{{user}}展示私下收藏的可爱物件：她坚持这只是资产配置，却在{{user}}没有取笑后明显放松。她把一枚小挂件交给{{user}}保管，表面要求保密，实际是在试探这份偏爱能否只被{{user}}看见。' }] : []),
+  ...(affection.mebuki >= 5 ? [{ id: 'mebuki_side_first_shift', name: '芽吹支线·第一笔自己赚的钱', task_category: 'character_side', character_group: '山师芽吹', content: '好感度达到 5 后出现。', conditions: [condition('profit', 'gte', 10000, '累计盈利 10000')], complete_prompt: '扩写芽吹第一次用自己赚到的一万元请{{user}}喝饮料的剧情：她先夸张宣布这是暴富预告，随后在{{user}}提醒下承认其中也有运气。她仍旧吵闹，却把一部分钱认真存下，结尾把收据塞给{{user}}，说这是她不靠借钱也能靠近{{user}}的证明。' }] : []),
+  ...(affection.yasuko >= 5 ? [{ id: 'yasuko_side_first_budget', name: '康子支线·第一张安全预算', task_category: 'character_side', character_group: '高根康子', content: '好感度达到 5 后出现。', conditions: [condition('cash', 'gte', 80000, '现金余额 80000')], complete_prompt: '扩写康子和{{user}}第一次认真做生活预算的剧情：她一边嫌{{user}}粗心，一边把现金分成账单、医疗和创作三栏。确认{{user}}愿意保留安全垫后，她才承认自己其实很想被{{user}}依靠；结尾她把预算表折成小册子，约定每月一起复核。' }] : []),
+  ...(affection.saya >= 5 ? [{ id: 'saya_side_first_request', name: '纱夜支线·直接说想陪伴', task_category: 'character_side', character_group: '山吹纱夜', content: '好感度达到 5 后出现。', conditions: [condition('cash', 'gte', 50000, '现金余额 50000')], complete_prompt: '扩写纱夜第一次不装病、不撒谎而直接向{{user}}请求陪伴的日常：她因为一笔五万现金安全储备而安心，却又害怕{{user}}马上离开。{{user}}没有替她保证未来，只通过留下和共同整理账单回应；结尾纱夜承认“想见{{user}}”本身就是理由，并主动约好下一次复诊后的见面。' }] : []),
   ...(Object.values(affection).every(score => score > 85) ? [{
     id: 'hidden_affection_ending', name: '隐藏彩蛋·五人的共同答案', task_category: 'main',
     content: '五名角色的好感度均高于 85 后显现。完成条件：福贺久留美、小金萌智子、山师芽吹、高根康子、山吹纱夜的好感度均达到 100，并完成五人各自的第三阶段好感度任务。',
-    prerequisite_task_ids: ['kurumi_affection_85', 'mochiko_affection_85', 'mebuki_affection_85', 'yasuko_affection_85', 'saya_affection_85'],
+    prerequisite_task_ids: ['kurumi_affection_85', 'mochiko_affection_85', 'mebuki_affection_85', 'yasuko_affection_85', 'saya_affection_85', 'kurumi_main_85', 'mochiko_main_85', 'mebuki_main_85', 'yasuko_main_85', 'saya_main_85'],
     conditions: [
       { type: 'affection', operator: 'gte', value: 100, current: affection.kurumi, label: '福贺久留美好感度 100' },
       { type: 'affection', operator: 'gte', value: 100, current: affection.mochiko, label: '小金萌智子好感度 100' },
@@ -198,7 +203,7 @@ const tasks = [
       { type: 'affection', operator: 'gte', value: 100, current: affection.yasuko, label: '高根康子好感度 100' },
       { type: 'affection', operator: 'gte', value: 100, current: affection.saya, label: '山吹纱夜好感度 100' }
     ],
-    complete_prompt: '扩写隐藏彩蛋的开场梗概，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：五名少女在各自完成最亲密的约定后，因为一份写着{{user}}名字的共同邀请来到同一处安静的聚会。久留美带着坦率而紧张的期待，萌智子用优雅掩饰早已看穿局面的笑意，芽吹试图用热闹玩笑抢占{{user}}身边的位置，康子一边照顾所有人一边坚持划清现实边界，纱夜则没有装病或威胁，只直接表达自己不愿被忽略。她们逐渐发现彼此都与{{user}}建立了无法用普通朋友概括的关系，气氛从试探、吃醋和短暂冲突转为诚实说明各自的伤口、成长与选择。{{user}}不替任何人决定归属，也不以模糊承诺敷衍；结尾由五人共同提出必须认真面对这段复杂关系，聚会在尚未揭晓最终答案的位置停下，为后续剧情留下可以继续扩写的入口。'
+    complete_prompt: '扩写隐藏彩蛋的开场梗概，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：久留美、萌智子、芽吹、康子、纱夜五位少女罕见的先后来到{{user}}家，少女们互相调侃一番各自对{{user}}的小心思后，萌智子前去厨房做饭，久留美帮助其打下手，芽吹和康子以及纱夜围坐在客厅一起打游戏，片刻饭做完后，众人围坐在客厅一边吃饭一边聊天，期间发生些许争风吃醋的小插曲，众人互相炫耀着自身与{{user}}的独有经历，但最后逐渐演变成了各自诉说着对{{user}}的爱意，最后众人坦白，尽管都想要独占{{user}}，但作为被{{user}}救赎过的少女，也明白其他人的心情，因此不会自私，愿意与其他人一同分享{{user}}，但前提是{{user}}不能偏心，最后在几个角色以各自的方式轮流亲吻{{user}}作为契约的证明，在角色们的调侃中拉下帷幕。'
   }] : []),
 
   { id: 'side_first_trade', name: '插件支线·第一份成交记录', task_category: 'side', content: '完成至少 1 笔交易。目标：累计交易 1 笔；任务页会显示当前次数及差距。', conditions: [condition('trade_count', 'gte', 1, '累计交易 1 笔')], complete_prompt: '扩写一段简短的交易复盘剧情：{{user}}完成第一笔成交后，身边角色陪{{user}}查看成交记录、费用与仓位变化，提醒这只是熟悉工具而非证明投资天赋。剧情落点是{{user}}理解每次操作都会留下可复盘的数据。' },
@@ -207,6 +212,22 @@ const tasks = [
   { id: 'side_profit', name: '插件支线·第一次累计盈利', task_category: 'side', content: '累计盈利达到 100000。任务页会显示当前累计盈利及离 100000 还差多少。', conditions: [condition('profit', 'gte', 100000, '累计盈利 100000')], complete_prompt: '扩写累计盈利十万后的复盘剧情：角色允许{{user}}庆祝，但共同检查盈利来源、风险暴露与是否可重复，明确账面上的顺利不代表下一次必然成功。结尾由{{user}}主动保留部分成果并记录策略，而不是立刻加码。' },
   { id: 'side_debt_control', name: '插件支线·清理负债', task_category: 'side', content: '将负债降至 0。任务页会显示当前负债是否已达到目标。', conditions: [condition('debt', 'eq', 0, '负债保持为 0')], complete_prompt: '扩写债务归零后的安静庆祝：{{user}}与角色核对最后一笔还款和账户变化，回顾负债带来的压力以及曾经的错误冲动。庆祝保持朴素，剧情落点是重新建立预算和底线，不把无债状态当作再次借贷投机的资格。' }
 ];
+
+// 早期角色支线先建立熟悉感，再在好感度提升后确认完成；保留各角色原有剧情文案。
+const earlyCharacterSides = {
+  kurumi_side_cooking: ['kurumi', '福贺久留美', '好感度 15'],
+  mochiko_side_cute: ['mochiko', '小金萌智子', '好感度 15'],
+  mebuki_side_job: ['mebuki', '山师芽吹', '好感度 15'],
+  yasuko_side_blog: ['yasuko', '高根康子', '好感度 15'],
+  saya_side_game: ['saya', '山吹纱夜', '好感度 15'],
+};
+for (const task of tasks) {
+  const setting = earlyCharacterSides[task.id];
+  if (!setting) continue;
+  task.unlock_affection = 10;
+  task.unlock_affection_current = affection[setting[0]];
+  task.conditions = [{ type: 'affection', operator: 'gte', value: 15, current: affection[setting[0]], label: `${setting[1]}${setting[2]}` }];
+}
 
 // 手机页只按 main / character / side 建立顶层折叠；角色内部再按子类型展示。
 for (const task of tasks) {
