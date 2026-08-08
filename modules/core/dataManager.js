@@ -1960,8 +1960,10 @@ export class DataManager {
 
     async scanBoundPlayerInitialization() {
         const scanInfo = await this._getBankAccountScanTargets();
+        const currentLorebook = await this._getLorebookName();
+        const targetNames = [...new Set([currentLorebook, ...scanInfo.targets].filter(Boolean))];
         const matches = [];
-        for (const worldbookName of scanInfo.targets) {
+        for (const worldbookName of targetNames) {
             let entries = [];
             try {
                 entries = await this.th.getWorldbook(worldbookName);

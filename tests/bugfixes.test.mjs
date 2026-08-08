@@ -62,6 +62,24 @@ test('worldbook player initialization rejects negative balances', () => {
     assert.equal(warnings.length, 1);
 });
 
+test('player initialization scan includes the current SillyView worldbook', async () => {
+    const manager = Object.create(DataManager.prototype);
+    manager.config = {
+        multi_account: { player_init_command: 'SillyView.InitPlayer' },
+        asset_definitions: {},
+    };
+    manager.logger = { warn: () => {} };
+    manager._getBankAccountScanTargets = async () => ({ targets: ['attached-book'] });
+    manager._getLorebookName = async () => 'current-sillyview-book';
+    manager.th = {
+        getWorldbook: async name => name === 'current-sillyview-book'
+            ? [{ name: 'sv_config', content: '[SillyView.InitPlayer({"cash":12345})]' }]
+            : [],
+    };
+    const result = await manager.scanBoundPlayerInitialization();
+    assert.equal(result.cash, 12345);
+});
+
 test('AI settings are persisted in extension settings', async () => {
     let saves = 0;
     const manager = Object.create(DataManager.prototype);
