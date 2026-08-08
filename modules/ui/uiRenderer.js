@@ -933,6 +933,7 @@ export class UIRenderer {
         for (const line of this.auxiliaryPriceLines || []) this.chartManager.removePriceLine(line);
         this.auxiliaryPriceLines = [];
         this.renderAll();
+        this.chartManager.resetPriceScale();
     }
 
     setTimeframe(timeframe) {

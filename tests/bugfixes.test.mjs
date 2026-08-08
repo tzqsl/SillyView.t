@@ -1231,3 +1231,24 @@ test('header separates available cash from total assets without subtracting debt
     assert.equal(elements['sillyview-cumulative-assets'].textContent, '-35000.00');
     assert.equal(elements['sillyview-cumulative-assets'].style.color, 'var(--red-400)');
 });
+
+test('switching assets restores automatic price scaling after manual axis adjustment', () => {
+    const calls = [];
+    const renderer = Object.create(UIRenderer.prototype);
+    Object.assign(renderer, {
+        currentAsset: 'EURUSD',
+        avgCostLine: null,
+        liquidationLine: null,
+        auxiliaryPriceLines: [],
+        chartManager: {
+            removePriceLine: () => {},
+            resetPriceScale: () => calls.push('reset'),
+        },
+        renderAll: () => calls.push('render'),
+    });
+
+    renderer.switchAsset('USDJPY');
+
+    assert.equal(renderer.currentAsset, 'USDJPY');
+    assert.deepEqual(calls, ['render', 'reset']);
+});

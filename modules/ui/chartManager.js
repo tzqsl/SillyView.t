@@ -225,6 +225,11 @@ export class ChartManager {
         this.chart.applyOptions({ width, height });
     }
 
+    resetPriceScale() {
+        if (!this.chart) return;
+        this.chart.priceScale('right').applyOptions({ autoScale: true });
+    }
+
     getSeries() {
         return {
             candlestickSeries: this.candlestickSeries,
