@@ -74,6 +74,27 @@ AI 市场导演应在一个 `<command>...</command>` 块内输出指令，例如
 
 1. 创建或更新 `SillyView_accounts`，并绑定到角色卡附加世界书。
 2. 按开户行账户数量在 `SillyView_accounts` 内写入多个 `sv_account_state_*` 独立账号状态词条。
+
+### 初始化用户账户
+
+在当前角色绑定的任意普通世界书条目中加入以下命令，可在新建或重置 SillyView 数据时初始化 `{{user}}` 的主账户：
+
+```text
+[SillyView.InitPlayer({
+  "初始资金": 2500000,
+  "基准资金": 2500000,
+  "初始负债": 50000,
+  "初始时间": "2025年09月23日-星期二-09:00",
+  "时段": "上午",
+  "季节": "秋季",
+  "天气": "晴",
+  "自动推进": false,
+  "快速模式": false,
+  "可用资产": ["EURUSD", "GBPUSD", "BTCUSD"]
+})]
+```
+
+也支持英文字段 `cash`、`starting_cash`、`debt`、`current_datetime`、`period`、`season`、`weather`、`auto_advance`、`quick_mode` 和 `available_assets`。`基准资金` 默认等于初始资金，用于累计盈亏和收益率计算。金额必须为非负数，也可写成 `"250万"`。可用资产中的未知代码会被忽略。命令不会导入持仓、挂单或交易历史；多个绑定条目同时定义时只采用扫描到的第一条。
 3. 在 `SillyView_accounts` 写入始终启用的观察/交易指令和精简账户目录；实时账目、账户状态与唯一一份 `sv_kline_context` 默认关闭。
 
 角色 AI 判断角色确实会查看手机或账户时，可以在首轮回复中输出：

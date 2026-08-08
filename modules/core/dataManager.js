@@ -857,6 +857,7 @@ export class DataManager {
 
     async createInitialWorldState(options = {}) {
         await this.prepareCharacterScope();
+        const playerInitialization = await this.scanBoundPlayerInitialization();
         const lorebookName = await this._getLorebookName();
         if (!lorebookName) {
             this.logger.error("无法创建世界书：未选择角色。");
@@ -879,15 +880,40 @@ export class DataManager {
             auto_advance: {
                 ...defaults.config.auto_advance,
                 ...(options.autoAdvance || {}),
+                ...(playerInitialization?.auto_advance !== undefined
+                    ? { enabled: playerInitialization.auto_advance }
+                    : {}),
             },
+            ...(playerInitialization?.available_assets
+                ? { available_assets: playerInitialization.available_assets }
+                : {}),
         };
 
-        const initialGlobalMarket = { ...defaults.global_market };
+        const initialGlobalMarket = {
+            ...defaults.global_market,
+            ...(playerInitialization?.market || {}),
+        };
+        const initialPlayerPortfolio = this.dependencies.win._.cloneDeep(defaults.player_portfolio);
+        if (playerInitialization) {
+            initialPlayerPortfolio.cash = playerInitialization.cash;
+            initialPlayerPortfolio.starting_cash = playerInitialization.starting_cash;
+            initialPlayerPortfolio.debt = playerInitialization.debt;
+            initialPlayerPortfolio.isQuickModeEnabled = playerInitialization.quick_mode;
+            initialPlayerPortfolio.asset_history = [{
+                time: 0,
+                value: playerInitialization.cash - playerInitialization.debt,
+            }];
+            initialPlayerPortfolio.transaction_log = [{
+                time: 0,
+                description: '世界书初始化用户账户',
+                amount: playerInitialization.cash,
+            }];
+        }
 
         const entriesTemplate = [
             { name: keys.config, content: JSON.stringify(initialConfig, null, 2), enabled: false },
             { name: keys.global_market, content: JSON.stringify(initialGlobalMarket, null, 2), enabled: false },
-            { name: keys.player_portfolio, content: JSON.stringify(defaults.player_portfolio, null, 2), enabled: false },
+            { name: keys.player_portfolio, content: JSON.stringify(initialPlayerPortfolio, null, 2), enabled: false },
             { name: keys.ai_context, content: JSON.stringify(defaults.ai_context, null, 2), enabled: true },
             { name: keys.dialogue_context, content: JSON.stringify(defaults.dialogue_context, null, 2), enabled: true },
             { name: keys.market_overview, content: JSON.stringify(defaults.market_overview, null, 2), enabled: false },
@@ -1844,6 +1870,114 @@ export class DataManager {
         }
 
         return accounts;
+    }
+
+    _extractPlayerInitializationFromEntry(entry, worldbookName) {
+        const content = String(entry?.content || '');
+        const command = this.config.multi_account.player_init_command || 'SillyView.InitPlayer';
+        const prefix = `[${command}(`;
+        const start = content.indexOf(prefix);
+        if (start < 0) return null;
+
+        let quote = '';
+        let escaped = false;
+        let depth = 0;
+        let end = -1;
+        const payloadStart = start + prefix.length;
+        for (let index = payloadStart; index < content.length; index += 1) {
+            const char = content[index];
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (quote && char === '\\') {
+                escaped = true;
+                continue;
+            }
+            if (char === '"' || char === "'") {
+                if (!quote) quote = char;
+                else if (quote === char) quote = '';
+                continue;
+            }
+            if (quote) continue;
+            if (char === '{' || char === '[') depth += 1;
+            else if (char === '}' || char === ']') depth -= 1;
+            else if (char === ')' && depth === 0 && content[index + 1] === ']') {
+                end = index;
+                break;
+            }
+        }
+        if (end < 0) {
+            this.logger.warn(`用户账户初始化命令缺少结尾: ${worldbookName}/${entry?.name || 'unknown'}`);
+            return null;
+        }
+
+        let raw;
+        try {
+            raw = JSON.parse(content.slice(payloadStart, end).trim());
+        } catch (error) {
+            this.logger.warn(`用户账户初始化命令 JSON 无效: ${worldbookName}/${entry?.name || 'unknown'}`, error);
+            return null;
+        }
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+
+        const cash = this._parseAmount(raw.cash ?? raw.initial_cash ?? raw['初始资金'] ?? raw['现金'] ?? 10000);
+        const startingCash = this._parseAmount(raw.starting_cash ?? raw['基准资金'] ?? cash);
+        const debt = this._parseAmount(raw.debt ?? raw.initial_debt ?? raw['初始负债'] ?? raw['负债'] ?? 0);
+        if (![cash, startingCash, debt].every(Number.isFinite) || cash < 0 || startingCash < 0 || debt < 0) {
+            this.logger.warn(`用户账户初始化金额必须是非负数: ${worldbookName}/${entry?.name || 'unknown'}`);
+            return null;
+        }
+
+        const marketSource = raw.market && typeof raw.market === 'object' ? raw.market : raw;
+        const market = {};
+        const marketFields = {
+            current_datetime: marketSource.current_datetime ?? marketSource.datetime ?? marketSource['初始时间'],
+            current_period: marketSource.current_period ?? marketSource.period ?? marketSource['时段'],
+            current_season: marketSource.current_season ?? marketSource.season ?? marketSource['季节'],
+            current_weather: marketSource.current_weather ?? marketSource.weather ?? marketSource['天气'],
+        };
+        for (const [key, value] of Object.entries(marketFields)) {
+            if (typeof value === 'string' && value.trim()) market[key] = value.trim();
+        }
+
+        const requestedAssets = raw.available_assets ?? raw['可用资产'];
+        const availableAssets = Array.isArray(requestedAssets)
+            ? [...new Set(requestedAssets.map(String))].filter(code => this.config.asset_definitions[code])
+            : null;
+        return {
+            cash,
+            starting_cash: startingCash,
+            debt,
+            quick_mode: raw.quick_mode === true || raw.isQuickModeEnabled === true || raw['快速模式'] === true,
+            auto_advance: raw.auto_advance === true || raw.auto_advance?.enabled === true || raw['自动推进'] === true,
+            market,
+            ...(availableAssets?.length ? { available_assets: availableAssets } : {}),
+            source_worldbook: worldbookName,
+            source_entry: entry?.name || 'unknown',
+        };
+    }
+
+    async scanBoundPlayerInitialization() {
+        const scanInfo = await this._getBankAccountScanTargets();
+        const matches = [];
+        for (const worldbookName of scanInfo.targets) {
+            let entries = [];
+            try {
+                entries = await this.th.getWorldbook(worldbookName);
+            } catch (error) {
+                this.logger.warn(`扫描用户账户初始化命令失败: ${worldbookName}`, error);
+                continue;
+            }
+            for (const entry of entries || []) {
+                const initialization = this._extractPlayerInitializationFromEntry(entry, worldbookName);
+                if (initialization) matches.push(initialization);
+            }
+        }
+        if (matches.length > 1) {
+            this.logger.warn(`发现 ${matches.length} 条用户账户初始化命令，仅采用第一条: ${matches[0].source_worldbook}/${matches[0].source_entry}`);
+        }
+        return matches[0] || null;
     }
 
     _extractRoleProfilesFromEntry(entry, worldbookName) {

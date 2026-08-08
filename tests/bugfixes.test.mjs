@@ -9,6 +9,59 @@ import { UIRenderer } from '../modules/ui/uiRenderer.js';
 
 const cloneDeep = value => value == null ? value : structuredClone(value);
 
+test('worldbook player initialization command normalizes safe account and market fields', () => {
+    const warnings = [];
+    const manager = Object.create(DataManager.prototype);
+    manager.config = {
+        multi_account: { player_init_command: 'SillyView.InitPlayer' },
+        asset_definitions: { EURUSD: {}, BTCUSD: {} },
+    };
+    manager.logger = { warn: message => warnings.push(message) };
+
+    const result = manager._extractPlayerInitializationFromEntry({
+        name: '玩家初始账户',
+        content: `[SillyView.InitPlayer({
+          "初始资金": "250万",
+          "初始负债": 50000,
+          "基准资金": 2600000,
+          "初始时间": "2025年09月23日-星期二-09:00",
+          "时段": "上午",
+          "季节": "秋季",
+          "天气": "晴",
+          "自动推进": true,
+          "快速模式": true,
+          "可用资产": ["EURUSD", "UNKNOWN", "BTCUSD"]
+        })]`,
+    }, '角色世界书');
+
+    assert.equal(result.cash, 2500000);
+    assert.equal(result.starting_cash, 2600000);
+    assert.equal(result.debt, 50000);
+    assert.equal(result.quick_mode, true);
+    assert.equal(result.auto_advance, true);
+    assert.deepEqual(result.available_assets, ['EURUSD', 'BTCUSD']);
+    assert.deepEqual(result.market, {
+        current_datetime: '2025年09月23日-星期二-09:00',
+        current_period: '上午',
+        current_season: '秋季',
+        current_weather: '晴',
+    });
+    assert.deepEqual(warnings, []);
+});
+
+test('worldbook player initialization rejects negative balances', () => {
+    const warnings = [];
+    const manager = Object.create(DataManager.prototype);
+    manager.config = { multi_account: {}, asset_definitions: {} };
+    manager.logger = { warn: message => warnings.push(message) };
+    const result = manager._extractPlayerInitializationFromEntry({
+        name: 'bad init',
+        content: '[SillyView.InitPlayer({"cash":-1,"debt":0})]',
+    }, '角色世界书');
+    assert.equal(result, null);
+    assert.equal(warnings.length, 1);
+});
+
 test('AI settings are persisted in extension settings', async () => {
     let saves = 0;
     const manager = Object.create(DataManager.prototype);

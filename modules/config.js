@@ -123,6 +123,7 @@ export const SillyViewConfig = {
         account_state_key: 'sv_account_state',
         role_profile_prefix: 'sv_role_profile',
         role_profile_import_marker: '[SillyView.ImportRoleProfiles()]',
+        player_init_command: 'SillyView.InitPlayer',
         command_entry_key: 'sv_accounts_trade_commands',
         role_output_rules_key: 'sv_role_output_rules',
         auto_event_log_key: 'sv_auto_event_log',
