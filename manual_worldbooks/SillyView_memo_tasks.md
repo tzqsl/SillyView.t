@@ -29,11 +29,12 @@ const affection = {
 };
 
 const unlockedSteps = (score, definitions) => definitions.filter((_, index) => score >= [30, 60, 85][index]);
-const currentText = (score, texts) => score < 30
-  ? '好感度达到 30 后解锁第一阶段。'
-  : score < 60 ? texts[0]
-  : score < 85 ? texts[1]
-  : texts[2];
+const currentText = (score, texts) => ({
+  __memo_stage_content: true,
+  locked: '好感度达到 30 后解锁第一阶段。',
+  stages: texts,
+  current: score < 30 ? '好感度达到 30 后解锁第一阶段。' : score < 60 ? texts[0] : score < 85 ? texts[1] : texts[2],
+});
 const condition = (type, operator, value, label) => ({ type, operator, value, label });
 
 const tasks = [
@@ -212,6 +213,14 @@ const tasks = [
   { id: 'side_profit', name: '插件支线·第一次累计盈利', task_category: 'side', content: '累计盈利达到 100000。任务页会显示当前累计盈利及离 100000 还差多少。', conditions: [condition('profit', 'gte', 100000, '累计盈利 100000')], complete_prompt: '扩写累计盈利十万后的复盘剧情：角色允许{{user}}庆祝，但共同检查盈利来源、风险暴露与是否可重复，明确账面上的顺利不代表下一次必然成功。结尾由{{user}}主动保留部分成果并记录策略，而不是立刻加码。' },
   { id: 'side_debt_control', name: '插件支线·清理负债', task_category: 'side', content: '将负债降至 0。任务页会显示当前负债是否已达到目标。', conditions: [condition('debt', 'eq', 0, '负债保持为 0')], complete_prompt: '扩写债务归零后的安静庆祝：{{user}}与角色核对最后一笔还款和账户变化，回顾负债带来的压力以及曾经的错误冲动。庆祝保持朴素，剧情落点是重新建立预算和底线，不把无债状态当作再次借贷投机的资格。' }
 ];
+
+// 保留全部阶段说明；插件按系列实际进度选择当前文本，好感度只负责开放步骤。
+for (const task of tasks) {
+  if (!task.content?.__memo_stage_content) continue;
+  task.stage_contents = task.content.stages;
+  task.locked_content = task.content.locked;
+  task.content = task.content.current;
+}
 
 // 早期角色支线先建立熟悉感，再在好感度提升后确认完成；保留各角色原有剧情文案。
 const earlyCharacterSides = {

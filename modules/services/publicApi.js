@@ -415,12 +415,22 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
         const taskCategory = normalizeMemoTaskCategory(task, true);
         const taskSubcategory = normalizeMemoTaskSubcategory(task, taskCategory);
         const characterGroup = String(task.character_group || task.character || '').trim() || null;
+        const stageContents = Array.isArray(task.stage_contents) ? task.stage_contents : [];
+        const baseSeriesContent = steps.length === 0
+            ? String(task.locked_content || task.content || '')
+            : String(stageContents[currentIndex] || visibleStep?.content || task.content || '');
+        const seriesPrerequisiteText = visibleStep?.prerequisites?.length
+            ? `前置任务：${visibleStep.prerequisites.map(item => item.name).join('、')}。`
+            : '';
+        const seriesContent = seriesPrerequisiteText && !baseSeriesContent.includes('前置任务：')
+            ? `${baseSeriesContent}${baseSeriesContent ? ' ' : ''}${seriesPrerequisiteText}`
+            : baseSeriesContent;
         return {
             ...visibleStep,
             id,
             type: 'series',
             name: String(task.name || id),
-            content: String(visibleStep?.content || task.content || ''),
+            content: seriesContent,
             status: completed ? 'completed' : failed ? 'failed' : steps.length === 0 ? 'locked' : visibleStep?.status || 'active',
             current_step_id: visibleStep?.id || null,
             current_step_index: currentIndex,

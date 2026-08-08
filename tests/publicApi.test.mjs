@@ -292,7 +292,7 @@ test('memo character groups populate role directory when no role decision exists
 test('series memo tasks expose only the current step and advance progress', async () => {
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
     let memoProgress = null;
-    const memoState = { tasks: [{ id: 'series', type: 'series', name: '系列', steps: [
+    const memoState = { tasks: [{ id: 'series', type: 'series', name: '系列', stage_contents: ['第一阶段说明', '第二阶段说明'], steps: [
         { id: 'one', name: '第一步', deadline: '2099-01-01 00:00', required_amount: 100, complete_prompt: '第一步完成。' },
         { id: 'two', name: '第二步', deadline: '2099-01-01 00:00', required_amount: 200, complete_prompt: '第二步完成。' },
     ] }] };
@@ -303,6 +303,7 @@ test('series memo tasks expose only the current step and advance progress', asyn
     let snapshot = await api.getSnapshot();
     assert.equal(snapshot.memo_tasks[0].type, 'series');
     assert.equal(snapshot.memo_tasks[0].current_step_id, 'one');
+    assert.equal(snapshot.memo_tasks[0].content, '第一阶段说明');
     assert.equal(snapshot.memo_tasks[0].series_total_required_amount, 300);
     assert.equal(snapshot.memo_tasks[0].series_remaining_required_amount, 300);
     const result = await api.completeMemoTask('series');
@@ -310,6 +311,7 @@ test('series memo tasks expose only the current step and advance progress', asyn
     assert.deepEqual(prompts, ['第一步完成。']);
     snapshot = await api.getSnapshot();
     assert.equal(snapshot.memo_tasks[0].current_step_id, 'two');
+    assert.equal(snapshot.memo_tasks[0].content, '第二阶段说明');
     assert.equal(snapshot.memo_tasks[0].series_total_required_amount, 300);
     assert.equal(snapshot.memo_tasks[0].series_remaining_required_amount, 200);
 });
