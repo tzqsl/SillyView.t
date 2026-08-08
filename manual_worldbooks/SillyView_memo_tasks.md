@@ -42,7 +42,7 @@ const tasks = [
     task_category: 'main',
     content: '初始时间以 2025-09-23 为准。医院通知纱夜需要在三个月内完成二次介入手术；第一阶段须在一个月内缴纳 2500000 定金，第二阶段须在三个月内凑齐剩余 87000000。每阶段完成时会从{{user}}账户扣除对应金额；任务页显示当前余额、所需金额和还差金额。',
     steps: [
-      { id: 'saya_surgery_fund_deposit', name: '先交定金，保住手术档期', deadline: '2025-10-23', required_amount: 2500000, completion_mode: 'charge_and_prompt', charge_amount: 2500000, conditions: [condition('cash', 'gte', 2500000, '现金余额 2500000')], complete_prompt: '扩写一段医院通知抵达后的紧急剧情，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：{{user}}收到【XX医科大学附属医院·心脏外科·主治医师 佐藤】发来的正式通知，得知山吹纱夜术后复查发现室间隔残余分流及右心室流出道再狭窄，需要进行二次介入手术（TPVI），最佳手术时间为通知起三个月内，预计手术及住院总费用约 112000000 日元，且须在一个月内先缴纳 2500000 日元定金，否则档期将顺延。扩写{{user}}核对通知、治疗安排与付款记录后，在截止日前缴清定金的过程；纱夜从装作镇定到察觉手术真的会影响未来，既害怕成为负担又本能地想用撒娇掩饰。{{user}}通过行动表达会一起面对现实，但不替纱夜发言或替她决定，结尾医院确认定金到账、手术档期暂时保留，纱夜在病房里紧紧抓住{{user}}的衣角，请{{user}}不要在她睡着后独自离开。' },
+      { id: 'saya_surgery_fund_deposit', name: '先交定金，保住手术档期', deadline: '2025-10-23', required_amount: 2500000, completion_mode: 'charge_and_prompt', charge_amount: 2500000, conditions: [condition('cash', 'gte', 2500000, '现金余额 2500000')], complete_prompt: '扩写缴纳定金后的剧情，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：医院财务窗口确认 2500000 日元定金已经到账，佐藤医生随后通知二次介入手术档期得以保留，并交给两人术前检查、用药调整和余款缴纳安排。纱夜先像往常一样笑着说终于不用担心，回到病房后却盯着付款凭证沉默下来；她意识到{{user}}真的为自己交出一笔巨款，既松了一口气，又因害怕成为永远偿还不完的负担而试图用撒娇和装轻松掩饰。{{user}}没有用言语替她保证一切，只通过整理检查单、放好付款回执和留在床边的行动表示会继续面对现实。纱夜最终主动承认自己不仅怕手术失败，也怕治好以后失去被留下的理由；结尾她把余款期限写进两人共同使用的日历，在睡前紧紧抓住{{user}}的手，请{{user}}明天也陪她一起准备。' },
       { id: 'saya_surgery_fund_balance', name: '三个月内凑齐手术余款', deadline: '2025-12-23', required_amount: 87000000, completion_mode: 'charge_and_prompt', charge_amount: 87000000, conditions: [condition('cash', 'gte', 87000000, '现金余额 87000000')], complete_prompt: '扩写二次介入手术前的最终筹款剧情，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：距离 2025-12-23 的手术期限只剩最后准备时间，{{user}}在不牺牲必要生活与治疗安全的前提下，终于凑齐并缴清剩余 87000000 日元费用。佐藤医生再次说明手术是为修正初次手术遗留问题，成功与否关系到纱夜的长期预后；医院社工也确认贷款、慈善基金和付款资料均已核对。纱夜得知款项到账后先因愧疚崩溃，试图说自己不值得{{user}}承担这么多，随后在{{user}}持续而安静的陪伴下承认真正害怕的是手术后不再被需要。结尾她签下知情同意与康复计划，把“哥哥一个人承担”改成“我们一起接受结果”，在推进室门前主动握住{{user}}的手，请{{user}}等她回来。' }
     ]
   },
@@ -163,7 +163,7 @@ const tasks = [
     steps: unlockedSteps(affection.saya, [
       { id: 'saya_affection_30', name: '哥哥的旧卫衣', complete_prompt: '扩写温暖的居家日常，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：纱夜穿着哥哥的旧卫衣一起做蛋包饭，故意笨手笨脚制造靠近机会，却在被夸奖时露出真正羞涩。饭后她试探哥哥喜欢怎样的人，得到重视她真实想法的回答。结尾两人靠在沙发上分享耳机，她悄悄勾住哥哥手指，把普通陪伴珍藏成只有彼此懂的心动。' },
       { id: 'saya_affection_60', name: '不用装可怜的拥抱', prerequisite_task_ids: ['saya_side_game'], complete_prompt: '扩写纱夜因嫉妒闹别扭后的和解，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：她先用哭腔和装病试图留住哥哥，随后在对方温柔而坚定的追问下承认只是害怕被替代。哥哥没有因威胁妥协，而是主动给予拥抱并说明她可以直接请求陪伴。纱夜第一次不表演虚弱，坦率说想被抱久一点；结尾两人在安静相拥中约定嫉妒和不安都可以说出口。' },
-      { id: 'saya_affection_85', name: '被选择的未来', prerequisite_task_ids: ['saya_side_reserve'], complete_prompt: '扩写一段成熟而克制的关系确认，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：纱夜在经历治疗后拿出自己规划的未来计划，证明她愿意成长不会依赖哥哥，虽然计划全都和哥哥有关，随即却坦白自己从未减少对哥哥的深厚爱意，随后慢慢诉说着自己知道{{user}}为了她选择在股市背水一战只为凑够高昂的治疗费用，感谢{{user}}一直在她身边陪着她，没有像父亲一样抛弃她。双方认真谈清依赖、边界、健康与未来，不以血缘身份、疾病或威胁迫使对方回应。哥哥明确选择继续陪伴，纱夜在得到同意后以长久拥抱和额头相抵回应；结尾她询问问“我们可以一起走吗”，，得到回应后主动亲吻{{user}}。' }
+      { id: 'saya_affection_85', name: '被选择的未来', prerequisite_task_ids: ['saya_side_reserve', 'saya_surgery_fund'], complete_prompt: '扩写一段成熟而克制的关系确认，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：纱夜在经历治疗后拿出自己规划的未来计划，证明她愿意成长不会依赖哥哥，虽然计划全都和哥哥有关，随即却坦白自己从未减少对哥哥的深厚爱意，随后慢慢诉说着自己知道{{user}}为了她选择在股市背水一战只为凑够高昂的治疗费用，感谢{{user}}一直在她身边陪着她，没有像父亲一样抛弃她。双方认真谈清依赖、边界、健康与未来，不以血缘身份、疾病或威胁迫使对方回应。哥哥明确选择继续陪伴，纱夜在得到同意后以长久拥抱和额头相抵回应；结尾她询问问“我们可以一起走吗”，，得到回应后主动亲吻{{user}}。' }
     ])
   },
 
@@ -186,6 +186,20 @@ const tasks = [
   { id: 'saya_side_game', name: '纱夜支线·不装笨的双人通关', task_category: 'character_side', character_group: '山吹纱夜', unlock_affection: 45, unlock_affection_current: affection.saya, content: '好感度达到 45 后解锁。与纱夜完成双人关卡，让她无需装弱也能坦率请求亲近；无金融完成条件。', complete_prompt: '扩写好感度四十五时的双人游戏夜，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：纱夜起初故意装不会以便靠近哥哥，被识破后没有继续扮可怜，而是红着脸直说想坐得近一些。哥哥接受她坦率的请求，也认真称赞她关键时刻的熟练操作。通关后她不再以生病为理由挽留，只问能否再陪一会儿；结尾两人分享耳机和毯子，她安心靠在哥哥肩上睡着。' },
   { id: 'saya_side_reserve', name: '纱夜支线·把未来写成我们', task_category: 'character_side', character_group: '山吹纱夜', unlock_affection: 73, unlock_affection_current: affection.saya, content: '好感度达到 73 且现金余额达到 100000 后解锁剧情。共同建立治疗与生活储备，并谈清依赖、健康和未来边界。', conditions: [condition('cash', 'gte', 100000, '现金余额 100000')], complete_prompt: '扩写好感度七十三时的家庭预算夜，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：纱夜偷偷用过度节省伤害自己的方式减轻哥哥压力，被发现后终于承认她怕自己只是负担。哥哥拒绝她以健康换取被需要，也明确说明亲密不因她逐渐独立而消失。两人并肩重写十万储备的用途，她主动加入治疗、升学和各自空间；结尾纱夜把“哥哥一个人承担”改成“我们自愿一起商量”，请求一个不靠装可怜换来的拥抱。' },
   { id: 'saya_side_independent_plan', name: '纱夜支线·自己的四次选择', task_category: 'character_side', character_group: '山吹纱夜', content: '累计完成 4 笔交易，在哥哥不代替决定的前提下，由纱夜参与制定四项生活选择。', conditions: [condition('trade_count', 'gte', 4, '累计交易 4 笔')], complete_prompt: '扩写延伸出的生活规划，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：纱夜习惯性地让哥哥替她决定，却在每次询问后尝试说出自己的理由。两人把这种练习延伸到复诊安排、课程、休息和兴趣，她发现独立选择并不会让哥哥离开。结尾她完整提出一项自己的计划，也主动为可能的结果负责；哥哥陪伴但不接管，她笑着牵手说想继续这样。' },
+
+  ...(Object.values(affection).every(score => score > 85) ? [{
+    id: 'hidden_affection_ending', name: '隐藏彩蛋·五人的共同答案', task_category: 'main',
+    content: '五名角色的好感度均高于 85 后显现。完成条件：福贺久留美、小金萌智子、山师芽吹、高根康子、山吹纱夜的好感度均达到 100，并完成五人各自的第三阶段好感度任务。',
+    prerequisite_task_ids: ['kurumi_affection_85', 'mochiko_affection_85', 'mebuki_affection_85', 'yasuko_affection_85', 'saya_affection_85'],
+    conditions: [
+      { type: 'affection', operator: 'gte', value: 100, current: affection.kurumi, label: '福贺久留美好感度 100' },
+      { type: 'affection', operator: 'gte', value: 100, current: affection.mochiko, label: '小金萌智子好感度 100' },
+      { type: 'affection', operator: 'gte', value: 100, current: affection.mebuki, label: '山师芽吹好感度 100' },
+      { type: 'affection', operator: 'gte', value: 100, current: affection.yasuko, label: '高根康子好感度 100' },
+      { type: 'affection', operator: 'gte', value: 100, current: affection.saya, label: '山吹纱夜好感度 100' }
+    ],
+    complete_prompt: '扩写隐藏彩蛋的开场梗概，无需一轮对话结束剧情，注意{{user}}没有台词，若{{user}}需应答会用动作和眼神暗示，不以直接方式表现{{user}}的心理，保持沉浸感：五名少女在各自完成最亲密的约定后，因为一份写着{{user}}名字的共同邀请来到同一处安静的聚会。久留美带着坦率而紧张的期待，萌智子用优雅掩饰早已看穿局面的笑意，芽吹试图用热闹玩笑抢占{{user}}身边的位置，康子一边照顾所有人一边坚持划清现实边界，纱夜则没有装病或威胁，只直接表达自己不愿被忽略。她们逐渐发现彼此都与{{user}}建立了无法用普通朋友概括的关系，气氛从试探、吃醋和短暂冲突转为诚实说明各自的伤口、成长与选择。{{user}}不替任何人决定归属，也不以模糊承诺敷衍；结尾由五人共同提出必须认真面对这段复杂关系，聚会在尚未揭晓最终答案的位置停下，为后续剧情留下可以继续扩写的入口。'
+  }] : []),
 
   { id: 'side_first_trade', name: '插件支线·第一份成交记录', task_category: 'side', content: '完成至少 1 笔交易。目标：累计交易 1 笔；任务页会显示当前次数及差距。', conditions: [condition('trade_count', 'gte', 1, '累计交易 1 笔')], complete_prompt: '扩写一段简短的交易复盘剧情：{{user}}完成第一笔成交后，身边角色陪{{user}}查看成交记录、费用与仓位变化，提醒这只是熟悉工具而非证明投资天赋。剧情落点是{{user}}理解每次操作都会留下可复盘的数据。' },
   { id: 'side_trade_volume', name: '插件支线·理解成交额', task_category: 'side', content: '累计成交额达到 100000。任务页会显示当前累计成交额及离 100000 还差多少。', conditions: [condition('total_trade_amount', 'gte', 100000, '累计成交额 100000')], complete_prompt: '扩写一段围绕累计成交额的教学剧情：角色指出成交额不等于盈利，带{{user}}对照多笔订单、手续费和实际盈亏。避免夸大成功，结尾让{{user}}明确频繁交易会放大成本，今后会先确认目的再操作。' },

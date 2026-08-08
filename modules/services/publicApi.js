@@ -256,8 +256,9 @@ function evaluateMemoConditions(data, config, account, task) {
         const type = String(condition.type || condition.metric || '').trim();
         const operator = String(condition.operator || condition.op || 'gte').toLowerCase();
         const target = finiteNumber(condition.value ?? condition.target ?? condition.amount);
-        const current = finiteNumber(metrics[type]);
-        return { type, operator, target, current, met: type in metrics && compareMemoCondition(current, operator, target), label: String(condition.label || labels[type] || type) };
+        const hasExplicitCurrent = condition.current !== undefined && Number.isFinite(Number(condition.current));
+        const current = hasExplicitCurrent ? finiteNumber(condition.current) : finiteNumber(metrics[type]);
+        return { type, operator, target, current, met: (type in metrics || hasExplicitCurrent) && compareMemoCondition(current, operator, target), label: String(condition.label || labels[type] || type) };
     });
 }
 
@@ -370,14 +371,18 @@ function normalizeMemoTasks(data, config, accounts, market, runtime = {}) {
         .map(key => data.getState(key))
         .find(value => Array.isArray(value) || Array.isArray(value?.tasks)) || null;
     const source = Array.isArray(raw) ? raw : (Array.isArray(raw?.tasks) ? raw.tasks : []);
-    const taskNames = Object.fromEntries(source.map((task, index) => [
-        String(task.id || `memo_${index + 1}`),
-        String(task.name || task.title || task.id || `任务 ${index + 1}`),
-    ]));
-    const prerequisiteRuntime = Object.fromEntries(source.map((task, index) => {
+    const taskNames = {};
+    const prerequisiteRuntime = {};
+    source.forEach((task, index) => {
         const id = String(task.id || `memo_${index + 1}`);
-        return [id, { ...task, ...(runtime[id] || {}) }];
-    }));
+        taskNames[id] = String(task.name || task.title || task.id || `任务 ${index + 1}`);
+        prerequisiteRuntime[id] = { ...task, ...(runtime[id] || {}) };
+        (Array.isArray(task.steps) ? task.steps : []).forEach((step, stepIndex) => {
+            const stepId = String(step.id || `${id}_${stepIndex + 1}`);
+            taskNames[stepId] = String(step.name || step.title || stepId);
+            prerequisiteRuntime[stepId] = { ...step, ...(runtime[id]?.steps?.[stepId] || {}) };
+        });
+    });
     return source.map((task, index) => {
         const id = String(task.id || `memo_${index + 1}`);
         if (task.type !== 'series' && !Array.isArray(task.steps)) {

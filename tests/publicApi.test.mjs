@@ -359,6 +359,26 @@ test('memo tasks enforce affection gates and prerequisite side tasks', async () 
     assert.equal(snapshot.memo_tasks.find(task => task.id === 'affection_series').status, 'active');
 });
 
+test('memo task prerequisites can target completed series steps and use explicit condition values', async () => {
+    const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
+    const memoProgress = { version: 1, entries: { 'internal::sv_memo_tasks': { tasks: {
+        role_affection: { steps: { role_affection_85: { completed: true } } },
+    } } } };
+    data.getState = key => key === 'sv_memo_tasks' ? { tasks: [
+        { id: 'role_affection', type: 'series', steps: [{ id: 'role_affection_85', name: '三阶段好感' }] },
+        {
+            id: 'hidden_ending', name: '隐藏结局', prerequisite_task_ids: ['role_affection_85'],
+            conditions: [{ type: 'affection', current: 100, value: 100, label: '角色好感度 100' }],
+        },
+    ] } : key === 'sv_memo_progress' ? structuredClone(memoProgress) : null;
+    const api = createSillyViewPublicAPI({ data, roleDecision: null, config });
+    const task = (await api.getSnapshot()).memo_tasks.find(item => item.id === 'hidden_ending');
+
+    assert.equal(task.status, 'active');
+    assert.deepEqual(task.prerequisites, [{ id: 'role_affection_85', name: '三阶段好感', completed: true }]);
+    assert.deepEqual(task.conditions.map(item => [item.current, item.target, item.met]), [[100, 100, true]]);
+});
+
 test('charge memo task debits and rewards the player account', async () => {
     const data = createData({ current_price: 1.08, kline_hourly: [{ time: 0, close: 1.08 }] });
     const portfolio = { cash: 1000, debt: 0, starting_cash: 1000, assets: {}, pending_orders: [], order_history: [], transaction_log: [] };
