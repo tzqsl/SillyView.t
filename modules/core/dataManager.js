@@ -1913,11 +1913,16 @@ export class DataManager {
         }
 
         let raw;
+        const payload = content.slice(payloadStart, end).trim();
         try {
-            raw = JSON.parse(content.slice(payloadStart, end).trim());
+            raw = JSON.parse(payload);
         } catch (error) {
-            this.logger.warn(`用户账户初始化命令 JSON 无效: ${worldbookName}/${entry?.name || 'unknown'}`, error);
-            return null;
+            try {
+                raw = JSON.parse(payload.replace(/,\s*([}\]])/g, '$1'));
+            } catch (looseError) {
+                this.logger.warn(`用户账户初始化命令 JSON 无效: ${worldbookName}/${entry?.name || 'unknown'}`, looseError);
+                return null;
+            }
         }
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
 

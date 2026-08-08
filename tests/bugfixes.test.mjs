@@ -73,7 +73,7 @@ test('player initialization scan includes the current SillyView worldbook', asyn
     manager._getLorebookName = async () => 'current-sillyview-book';
     manager.th = {
         getWorldbook: async name => name === 'current-sillyview-book'
-            ? [{ name: 'sv_config', content: '[SillyView.InitPlayer({"cash":12345})]' }]
+            ? [{ name: 'sv_config', content: '[SillyView.InitPlayer({"cash":12345,})]' }]
             : [],
     };
     const result = await manager.scanBoundPlayerInitialization();
